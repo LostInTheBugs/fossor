@@ -1,5 +1,6 @@
 import os
 import sys
+import datetime
 
 # Set env vars BEFORE importing app modules
 os.environ["FOSSOR_MASTER_KEY"] = "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v="
@@ -324,41 +325,29 @@ class TestForgedCookie:
     """Verify that a cookie signed with a wrong key is rejected (401)."""
 
     async def test_forged_cookie_with_wrong_key(self, unauth_client):
-        """Forge a cookie using the old default key — must get 401."""
-        from app.auth import _load_or_create_serializer
+        """Forge a cookie using a known wrong key — must get 401."""
+        from app.auth import _load_or_create_serializer, get_current_user
         from itsdangerous import URLSafeTimedSerializer
-        import json, os, secrets
+        import json, os, tempfile, pathlib
 
-        # Save original serializer
-        from app import auth
-        orig_serializer = auth.SERIALIZER
-        auth.SERIALIZER = None
+        # Forge a token with an arbitrary key (never the server's key)
+        forged_key = "forged-test-key-not-a-secret"
+        exp = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=60)).isoformat()
+        payload = {"sub": "admin", "exp": exp}
+        forged = URLSafeTimedSerializer(forged_key).dumps(json.dumps(payload))
 
-        # Generate a key file with a known wrong key
-        data_dir = auth._get_data_dir()
-        key_file = data_dir / "fossor_signing_key"
-        old_key = key_file.read_text().strip() if key_file.exists() else None
+        r = await unauth_client.get("/api/machines", cookies={"fossor_session": forged})
+        assert r.status_code == 401, f"Expected 401, got {r.status_code}: {r.text}"
 
-        try:
-            # Write a known wrong key
-            wrong_key = "forged-test-key-not-a-secret"
-            key_file.write_text(wrong_key)
-            os.chmod(key_file, 0o600)
-            auth.SERIALIZER = None  # force reload
+    async def test_forged_cookie_with_single_char_key(self, unauth_client):
+        """Forge a cookie with a single-char key — must get 401."""
+        from itsdangerous import URLSafeTimedSerializer
+        import json, datetime
 
-            # Forge a token with the wrong key
-            wrong_s = URLSafeTimedSerializer(wrong_key)
-            import datetime
-            from datetime import datetime as dt, timedelta, timezone
-            payload = {"sub": "admin", "exp": (dt.now(timezone.utc) + timedelta(minutes=60)).isoformat()}
-            forged = wrong_s.dumps(json.dumps(payload))
+        forged_key = "x"
+        exp = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=60)).isoformat()
+        payload = {"sub": "admin", "exp": exp}
+        forged = URLSafeTimedSerializer(forged_key).dumps(json.dumps(payload))
 
-            r = await unauth_client.get("/api/machines", cookies={"fossor_session": forged})
-            assert r.status_code == 401, f"Expected 401, got {r.status_code}: {r.text}"
-        finally:
-            # Restore original key
-            auth.SERIALIZER = None
-            if old_key:
-                key_file.write_text(old_key)
-            elif key_file.exists():
-                key_file.unlink()
+        r = await unauth_client.get("/api/machines", cookies={"fossor_session": forged})
+        assert r.status_code == 401, f"Expected 401, got {r.status_code}: {r.text}"
