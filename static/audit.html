@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MineCtl — Audit Log</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#12161c;--card:#1a2029;--border:#2c3544;--txt:#e6edf3;--muted:#8b98a9;--accent:#4f8cff;--green:#3fb950;--red:#f85149;--yellow:#d29922}
+body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;min-height:100vh}
+.wrap{max-width:1100px;margin:0 auto;padding:28px 18px 40px}
+header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
+header h1{font-size:26px}
+header a{color:var(--accent);font-size:13px;text-decoration:none}
+.nav-tabs{display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--border)}
+.nav-tabs a{color:var(--muted);padding:8px 16px;font-size:13.5px;font-weight:600;text-decoration:none;border:1px solid transparent;border-bottom:none;border-radius:10px 10px 0 0;cursor:pointer}
+.nav-tabs a:hover{color:var(--txt)}
+.nav-tabs a.active{background:var(--card);border-color:var(--border);color:var(--txt)}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{background:var(--card);text-align:left;color:var(--muted);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.4px;padding:7px 8px;border-bottom:1px solid var(--border)}
+td{padding:8px;border-bottom:1px solid var(--border);vertical-align:top}
+tr:hover td{background:rgba(79,140,255,.04)}
+.mono{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--muted)}
+.logbox{background:#0d1117;border:1px dashed var(--border);border-radius:8px;padding:10px;font-family:ui-monospace,Consolas,monospace;font-size:11px;line-height:1.5;color:var(--muted);white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto}
+.chip{display:inline-block;font-size:10px;font-weight:700;padding:2px 9px;border-radius:999px;text-transform:uppercase;letter-spacing:.3px}
+.chip.ok{background:#1a3a2a;color:var(--green);border:1px solid var(--green)}
+.chip.err{background:#3a1d1d;color:var(--red);border:1px solid var(--red)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>📋 Audit Log</h1>
+    <div><a href="/machines">← Machines</a></div>
+  </header>
+  <nav class="nav-tabs">
+    <a href="/machines">🖥️ Machines</a>
+    <a href="/audit" class="active">📋 Audit Log</a>
+  </nav>
+  <table><thead><tr><th>Horodatage</th><th>Acteur</th><th>Action</th><th>Machine</th><th>Résultat</th><th>Détails</th></tr></thead><tbody id="logBody"></tbody></table>
+  <div id="emptyMsg" class="mono" style="padding:20px;text-align:center;display:none">Aucune entrée.</div>
+</div>
+<script>
+const $=s=>document.querySelector(s);
+fetch('/api/audit-log',{credentials:'include'}).then(r=>{
+  if(r.status===401){location.href='/';return;}
+  return r.json();
+}).then(data=>{
+  if(!data)return;
+  const tbody=$('#logBody');
+  if(!data.length){$('#emptyMsg').style.display='block';return;}
+  tbody.innerHTML=data.map(l=>{
+    const resultClass=l.result==='ok'?'ok':'err';
+    const ts=new Date(l.ts).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    return `<tr>
+      <td class="mono">${ts}</td>
+      <td>${l.actor}</td>
+      <td><b>${l.action}</b></td>
+      <td class="mono">${l.object_ref||'—'}</td>
+      <td><span class="chip ${resultClass}">${l.result}</span></td>
+      <td>${l.output?`<div class="logbox">${l.output}</div>`:'—'}</td>
+    </tr>`;
+  }).join('');
+});
+</script>
+</body>
+</html>

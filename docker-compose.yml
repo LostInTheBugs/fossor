@@ -1,0 +1,12 @@
+services:
+  minectl:
+    build: .
+    ports:
+      - "${MINECTL_PORT:-8008}:8008"
+    volumes:
+      - ./data:/data
+    environment:
+      - DATABASE_URL=sqlite:////data/minectl.db
+      - MINECTL_ADMIN_PASSWORD=${MINECTL_ADMIN_PASSWORD}
+      - MINECTL_MASTER_KEY=${MINECTL_MASTER_KEY}
+    restart: unless-stopped

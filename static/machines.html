@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MineCtl — Machines</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#12161c;--card:#1a2029;--border:#2c3544;--txt:#e6edf3;--muted:#8b98a9;--accent:#4f8cff;--green:#3fb950;--red:#f85149;--yellow:#d29922}
+body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;min-height:100vh}
+.wrap{max-width:1100px;margin:0 auto;padding:28px 18px 40px}
+header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
+header h1{font-size:26px}
+header a{color:var(--accent);font-size:13px;text-decoration:none}
+header a:hover{color:var(--txt)}
+.nav-tabs{display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--border)}
+.nav-tabs a{color:var(--muted);padding:8px 16px;font-size:13.5px;font-weight:600;text-decoration:none;border:1px solid transparent;border-bottom:none;border-radius:10px 10px 0 0;cursor:pointer}
+.nav-tabs a:hover{color:var(--txt)}
+.nav-tabs a.active{background:var(--card);border-color:var(--border);color:var(--txt)}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{background:var(--card);text-align:left;color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.4px;padding:7px 8px;border-bottom:1px solid var(--border)}
+td{padding:8px;border-bottom:1px solid var(--border);vertical-align:top}
+tr:hover td{background:rgba(79,140,255,.04)}
+.chip{display:inline-block;font-size:10px;font-weight:700;padding:2px 9px;border-radius:999px;text-transform:uppercase;letter-spacing:.3px}
+.chip.on{background:#1a3a2a;color:var(--green);border:1px solid var(--green)}
+.chip.off{background:#24292f;color:var(--muted);border:1px solid var(--border)}
+.chip.cpu{background:#1a2a3a;color:var(--accent);border:1px solid var(--accent)}
+.chip.gpu{background:#3a1a3a;color:#d2a8ff;border:1px solid #d2a8ff}
+.chip.both{background:#3a2f1a;color:var(--yellow);border:1px solid var(--yellow)}
+.chip.none{background:#24292f;color:var(--muted);border:1px solid var(--border)}
+.btn{background:var(--accent);color:#fff;border:none;padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
+.btn:hover{opacity:.85}
+.btn.danger{background:var(--red)}
+.btn.sm{padding:4px 10px;font-size:11px}
+.btn.outline{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+.empty{color:var(--muted);font-size:13px;padding:20px;text-align:center}
+.modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center}
+.modal.open{display:flex}
+.modal-box{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px;width:500px;max-width:90vw;max-height:80vh;overflow-y:auto}
+.modal-box h2{font-size:18px;margin-bottom:16px}
+.field{margin-bottom:14px}
+.field label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px;font-weight:600}
+.field input,.field select,.field textarea{width:100%;background:var(--bg);color:var(--txt);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit}
+.field input:focus,.field select:focus{border-color:var(--accent);outline:none}
+.field select{cursor:pointer}
+.row{display:flex;gap:10px}.row .field{flex:1}
+.actions{display:flex;gap:6px;margin-top:8px}
+.toast{position:fixed;bottom:20px;right:20px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 18px;font-size:13px;z-index:200;display:none}
+.toast.ok{border-color:var(--green)}.toast.err{border-color:var(--red)}
+.mono{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;color:var(--muted)}
+.masked{color:var(--muted);font-style:italic}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div><h1>⛏️ MineCtl</h1><span style="color:var(--muted);font-size:13px">Gestion des machines</span></div>
+    <div style="display:flex;gap:10px;align-items:center">
+      <span id="userBadge" class="chip on">admin</span>
+      <button class="btn sm outline" id="logoutBtn">Déconnexion</button>
+    </div>
+  </header>
+
+  <nav class="nav-tabs">
+    <a href="/machines" class="active">🖥️ Machines</a>
+    <a href="/audit">📋 Audit Log</a>
+  </nav>
+
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+    <h2 style="font-size:16px;font-weight:700">Machines en ligne</h2>
+    <button class="btn" id="addBtn">+ Ajouter</button>
+  </div>
+
+  <div id="tableWrap"><table><thead><tr><th>Nom</th><th>Hôte</th><th>Port SSH</th><th>User</th><th>Auth</th><th>Usage</th><th>OS</th><th>Sudo</th><th>Enabled</th><th>Actions</th></tr></thead><tbody id="machBody"></tbody></table></div>
+  <div id="emptyMsg" class="empty" style="display:none">Aucune machine configurée.</div>
+</div>
+
+<!-- Modal -->
+<div class="modal" id="modal">
+  <div class="modal-box">
+    <h2 id="modalTitle">Ajouter une machine</h2>
+    <input type="hidden" id="editId">
+    <div class="field"><label>Nom</label><input id="fName" placeholder="rig7095FA"></div>
+    <div class="row">
+      <div class="field"><label>Hôte (IP)</label><input id="fHost" placeholder="192.0.2.10"></div>
+      <div class="field"><label>Port SSH</label><input id="fPort" type="number" value="22" min="1" max="65535"></div>
+    </div>
+    <div class="row">
+      <div class="field"><label>User SSH</label><input id="fUser" value="root"></div>
+      <div class="field"><label>Type auth</label><select id="fAuthType"><option value="key">Clé SSH</option><option value="password">Mot de passe</option></select></div>
+    </div>
+    <div class="field"><label id="secretLabel">Clé SSH / Mot de passe</label><input id="fSecret" type="password" placeholder="••• modifier" autocomplete="off"></div>
+    <div class="row">
+      <div class="field"><label>Sudo</label><select id="fSudo"><option value="none">Aucun</option><option value="sudo without password">Sudo sans mot de passe</option><option value="sudo with password">Sudo avec mot de passe</option></select></div>
+      <div class="field"><label>Usage</label><select id="fUsage"><option value="both">CPU+GPU</option><option value="cpu">CPU seul</option><option value="gpu">GPU seul</option><option value="none">Aucun</option></select></div>
+    </div>
+    <div class="row">
+      <div class="field"><label>OS</label><select id="fOs"><option value="other">Autre</option><option value="hiveos">HiveOS</option><option value="ubuntu">Ubuntu</option><option value="proxmox">Proxmox</option></select></div>
+      <div class="field"><label>VM host</label><select id="fVmHost"><option value="false">Non</option><option value="true">Oui</option></select></div>
+    </div>
+    <div class="field"><label>Host key (empreinte épinglée)</label><input id="fHostKey" placeholder="SHA256:..."></div>
+    <div class="row">
+      <div class="field"><label>Enabled</label><select id="fEnabled"><option value="true">Oui</option><option value="false">Non</option></select></div>
+    </div>
+    <div class="actions" style="justify-content:flex-end;margin-top:20px">
+      <button class="btn outline" id="cancelBtn" style="margin-right:8px">Annuler</button>
+      <button class="btn" id="saveBtn">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $=s=>document.querySelector(s);
+const $$=s=>document.querySelectorAll(s);
+const api=async(url,opts={})=>{
+  const res=await fetch(url,{...opts,credentials:'include'});
+  if(res.status===401){location.href='/';return null;}
+  return res.json();
+};
+const toast=(msg,type='ok')=>{
+  const t=$('#toast');t.textContent=msg;t.className='toast '+type;t.style.display='block';
+  setTimeout(()=>t.style.display='none',3000);
+};
+const loadMachines=async()=>{
+  const data=await api('/api/machines');
+  if(!data)return;
+  const tbody=$('#machBody');
+  if(!data.length){$('#tableWrap').style.display='none';$('#emptyMsg').style.display='block';return;}
+  $('#tableWrap').style.display='';$('#emptyMsg').style.display='none';
+  tbody.innerHTML=data.map(m=>{
+    const usageChips={cpu:'cpu',gpu:'gpu',both:'both',none:'none'};
+    const enabledChip=m.enabled?'on':'off';
+    const authLabel=m.auth_type==='key'?'Clé':'Mdp';
+    return `<tr>
+      <td><b>${m.name}</b></td>
+      <td class="mono">${m.host}</td>
+      <td>${m.ssh_port}</td>
+      <td>${m.ssh_user}</td>
+      <td>${authLabel}</td>
+      <td><span class="chip ${usageChips[m.usage]||'none'}">${m.usage}</span></td>
+      <td>${m.os_kind}</td>
+      <td>${m.sudo}</td>
+      <td><span class="chip ${enabledChip}">${m.enabled?'Oui':'Non'}</span></td>
+      <td><button class="btn sm" onclick="editMachine(${m.id})">✏️</button> <button class="btn sm danger" onclick="deleteMachine(${m.id},'${m.name}')">🗑️</button></td>
+    </tr>`;
+  }).join('');
+};
+const openModal=(editId)=>{
+  $('#modal').classList.add('open');
+  $('#modalTitle').textContent=editId?'Modifier':'Ajouter une machine';
+  $('#editId').value=editId||'';
+  if(editId){
+    fetch('/api/machines/'+editId,{credentials:'include'}).then(r=>r.json()).then(m=>{
+      if(!m)return;
+      $('#fName').value=m.name;$('#fHost').value=m.host;$('#fPort').value=m.ssh_port;
+      $('#fUser').value=m.ssh_user;$('#fAuthType').value=m.auth_type;
+      $('#fSudo').value=m.sudo;$('#fUsage').value=m.usage;$('#fOs').value=m.os_kind;
+      $('#fVmHost').value=String(m.vm_host);$('#fHostKey').value=m.host_key||'';
+      $('#fEnabled').value=String(m.enabled);
+      $('#secretLabel').textContent=m.auth_type==='key'?'Nouvelle clé SSH (laisser vide pour garder l\'ancienne)':'Nouveau mot de passe (laisser vide pour garder l\'ancien)';
+      $('#fSecret').value='';
+    });
+  }else{
+    $('#fName').value='';$('#fHost').value='';$('#fPort').value='22';$('#fUser').value='root';
+    $('#fAuthType').value='key';$('#fSudo').value='none';$('#fUsage').value='both';
+    $('#fOs').value='other';$('#fVmHost').value='false';$('#fHostKey').value='';
+    $('#fEnabled').value='true';$('#fSecret').value='';
+    $('#secretLabel').textContent='Clé SSH / Mot de passe';
+  }
+};
+const closeModal=$('#modal').classList.remove.bind($('#modal').classList);
+$('#addBtn').onclick=()=>openModal(null);
+$('#cancelBtn').onclick=closeModal;
+$('#modal').onclick=e=>{if(e.target===$('#modal'))closeModal();};
+$('#saveBtn').onclick=async()=>{
+  const id=$('#editId').value;
+  const data={
+    name:$('#fName').value.trim(),host:$('#fHost').value.trim(),
+    ssh_port:parseInt($('#fPort').value)||22,ssh_user:$('#fUser').value.trim(),
+    auth_type:$('#fAuthType').value,sudo:$('#fSudo').value,
+    usage:$('#fUsage').value,os_kind:$('#fOs').value,
+    vm_host:$('#fVmHost').value==='true',host_key:$('#fHostKey').value.trim(),
+    enabled:$('#fEnabled').value==='true'
+  };
+  const secret=$('#fSecret').value;
+  if(secret) data.secret=secret;
+  const url=id?'/api/machines/'+id:'/api/machines';
+  const opts={method:id?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data),credentials:'include'};
+  const result=await api(url,opts);
+  if(result){closeModal();loadMachines();toast(id?'Machine mise à jour':'Machine ajoutée');}
+};
+const deleteMachine=async(id,name)=>{
+  if(!confirm('Supprimer '+name+' ?'))return;
+  const ok=await api('/api/machines/'+id,{method:'DELETE',credentials:'include'});
+  if(ok){loadMachines();toast('Machine supprimée');}
+};
+$('#logoutBtn').onclick=async()=>{
+  await fetch('/api/logout',{method:'POST',credentials:'include'});
+  location.href='/';
+};
+// Show login if not authenticated
+const checkAuth=async()=>{
+  const m=await api('/api/machines');
+  if(m===null){location.href='/';return false;}
+  return true;
+};
+checkAuth().then(ok=>{if(ok)loadMachines();});
+</script>
+</body>
+</html>
