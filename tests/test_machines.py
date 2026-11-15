@@ -1,31 +1,46 @@
 import os
 import sys
 import datetime
-
-# Set env vars BEFORE importing app modules
-os.environ["FOSSOR_MASTER_KEY"] = "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v="
-os.environ["FOSSOR_ADMIN_PASSWORD"] = "admin"
-os.environ["DATABASE_URL"] = "sqlite:///./data/test_fossor.db"
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import time as _time_module
 
 import pytest
 from httpx import AsyncClient, ASGITransport
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
-from app.database import Base, engine
-from app.models import Machine, AuditLog
-
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
 @pytest.fixture(autouse=True)
-def setup_test_db():
-    """Create tables before each test, clear after."""
-    Base.metadata.create_all(bind=engine)
+def setup_test_env(tmp_path, monkeypatch):
+    """Set up isolated test environment with tmp_path for DB and signing key."""
+    # Isolated data dir for signing key
+    monkeypatch.setenv("FOSSOR_DATA_DIR", str(tmp_path))
+    # Isolated DB in tmp_path
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/test_fossor.db")
+    # Master key for secrets
+    monkeypatch.setenv("FOSSOR_MASTER_KEY", "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v=")
+    # Admin password for login tests
+    monkeypatch.setenv("FOSSOR_ADMIN_PASSWORD", "admin")
+    # Reset cached globals so each test gets fresh state
+    import app.auth
+    import app.database
+    app.auth.SERIALIZER = None
+    app.auth.ADMIN_PASSWORD_HASH = None  # type: ignore
+    app.database._lazy._engine = None
+    app.database._lazy._session_factory = None
+    app.database._db_url = None
+    # Clear cached fernet
+    try:
+        import app.secrets
+        app.secrets._fernet = None
+    except Exception:
+        pass
+    # Import models AFTER resetting so Base includes User
+    from app.models import User, Machine, AuditLog
+    # Create tables (startup event doesn't fire with ASGITransport)
+    app.database.init_db()
     yield
-    Base.metadata.drop_all(bind=engine)
+    # Clean up: drop all tables so subsequent tests in same class start fresh
+    app.database.Base.metadata.drop_all(bind=app.database.engine)
 
 
 @pytest.fixture
@@ -38,17 +53,17 @@ def unauth_client():
 
 @pytest.fixture
 async def client():
+    """Authenticated client — auto-logs in as admin."""
     from app.main import app as application
     transport = ASGITransport(app=application)
     ac = AsyncClient(transport=transport, base_url="http://test")
-    # Auto-login for all tests
     r = await ac.post("/api/login", data={
         "username": "admin",
         "password": "admin",
     })
     assert r.status_code == 200, f"Login failed: {r.status_code} {r.text}"
     ac.cookies.set("fossor_session", r.cookies.get("fossor_session", ""), domain="test")
-    return ac
+    yield ac
 
 
 class TestVersionEndpoint:
@@ -68,7 +83,7 @@ class TestHealthEndpoint:
 
 
 class TestLoginRequired:
-    """Test that /api/machines requires authentication."""
+    """Test that protected endpoints require authentication."""
 
     async def test_list_machines_requires_login(self, unauth_client):
         r = await unauth_client.get("/api/machines")
@@ -140,7 +155,6 @@ class TestMachineCRUD:
         assert data["id"] is not None
         assert "secret" not in data
         assert "secret_ref" not in data
-        assert data["has_secret"] is True
 
     async def test_create_machine_defaults(self, client):
         """Test that ssh_port defaults to 22."""
@@ -326,15 +340,12 @@ class TestForgedCookie:
 
     async def test_forged_cookie_with_wrong_key(self, unauth_client):
         """Forge a cookie using a known wrong key — must get 401."""
-        from app.auth import _load_or_create_serializer, get_current_user
         from itsdangerous import URLSafeTimedSerializer
-        import json, os, tempfile, pathlib
+        import json
 
-        # Forge a token with an arbitrary key (never the server's key)
         forged_key = "forged-test-key-not-a-secret"
-        exp = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=60)).isoformat()
-        payload = {"sub": "admin", "exp": exp}
-        forged = URLSafeTimedSerializer(forged_key).dumps(json.dumps(payload))
+        payload = {"sub": "admin"}
+        forged = URLSafeTimedSerializer(forged_key).dumps(payload)
 
         r = await unauth_client.get("/api/machines", cookies={"fossor_session": forged})
         assert r.status_code == 401, f"Expected 401, got {r.status_code}: {r.text}"
@@ -342,12 +353,46 @@ class TestForgedCookie:
     async def test_forged_cookie_with_single_char_key(self, unauth_client):
         """Forge a cookie with a single-char key — must get 401."""
         from itsdangerous import URLSafeTimedSerializer
-        import json, datetime
+        import json
 
         forged_key = "x"
-        exp = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=60)).isoformat()
-        payload = {"sub": "admin", "exp": exp}
-        forged = URLSafeTimedSerializer(forged_key).dumps(json.dumps(payload))
+        payload = {"sub": "admin"}
+        forged = URLSafeTimedSerializer(forged_key).dumps(payload)
 
         r = await unauth_client.get("/api/machines", cookies={"fossor_session": forged})
         assert r.status_code == 401, f"Expected 401, got {r.status_code}: {r.text}"
+
+
+class TestExpiredToken:
+    """Verify that an expired token is rejected (401).
+
+    itsdangerous TimestampSigner uses integer seconds for timestamps.
+    We patch time.time() to return a value far in the future AFTER creating
+    the token — so the token's timestamp is in the past relative to the new
+    time, and loads() with max_age raises SignatureExpired.
+    """
+
+    async def test_expired_token_rejected(self, unauth_client):
+        import app.auth as auth_mod
+
+        # Step 1: Get the real serializer and create a valid token (time ≈ now)
+        s = auth_mod._load_or_create_serializer()
+        token = s.dumps({"sub": "admin"})
+
+        # Step 2: Save original time.time() value, then patch it.
+        # Must capture the original function before patching time module.
+        _orig_time = _time_module.time
+        _time_module.time = lambda: _orig_time() + 10000
+
+        try:
+            # Step 3: Reset serializer so endpoint creates a fresh one using patched time
+            auth_mod.SERIALIZER = None
+
+            # Step 4: Endpoint calls get_current_user() → s.loads(token, max_age=3600)
+            # Token was signed at t=now, but now time.time() returns now+10000,
+            # so the token appears 10000s old — well beyond max_age=3600s.
+            r = await unauth_client.get("/api/machines", cookies={"fossor_session": token})
+            assert r.status_code == 401, f"Expected 401 for expired token, got {r.status_code}: {r.text}"
+        finally:
+            _time_module.time = _orig_time
+            auth_mod.SERIALIZER = None

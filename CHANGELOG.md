@@ -4,6 +4,21 @@
 
 All notable changes to fossor are documented in this file.
 
+## [2026.11.001-c1] — 2026-11-15
+
+### Security fixes
+- Sessions expire correctly: `URLSafeTimedSerializer` with `max_age` enforcement in `get_current_user()`; removed hand-rolled `exp` claim
+- Forged cookies rejected (wrong signing key → 401)
+- Test: expired token → 401, forged cookie → 401
+
+### Bug fixes
+- Admin account persisted in database on startup (via `FOSSOR_ADMIN_PASSWORD`)
+- Test isolation: all tests use `tmp_path` for DB and signing key — pass on fresh `git clone`
+- Test teardown drops tables between test classes
+
+### Tests
+- 25 passing tests: CRUD, auth-required, no-secret-leak, forged-cookie, expired-token
+
 ## [2026.11.001] — 2026-11-15
 
 ### Added
