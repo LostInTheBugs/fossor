@@ -91,9 +91,21 @@ def login(request: Request, response: Response, username: str = Form(...), passw
     admin_hash = os.environ.get("FOSSOR_ADMIN_PASSWORD_HASH")
     if not admin_hash:
         pw_env = os.environ.get("FOSSOR_ADMIN_PASSWORD")
-        if not pw_env:
-            raise HTTPException(status_code=500, detail="Admin password not configured")
-        admin_hash = hash_password(pw_env)
+        if pw_env:
+            admin_hash = hash_password(pw_env)
+        else:
+            # No env var: read admin hash from database
+            from app.models import User
+            from app.database import SessionLocal
+            db = SessionLocal()
+            try:
+                admin = db.query(User).filter(User.username == "admin").first()
+                if admin is None:
+                    db.close()
+                    raise HTTPException(status_code=500, detail="Admin user not found in database")
+                admin_hash = admin.password_hash
+            finally:
+                db.close()
     if username == "admin" and verify_password(password, admin_hash):
         token = create_access_token({"sub": "admin"})
         response.set_cookie(
