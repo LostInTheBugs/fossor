@@ -143,7 +143,7 @@ const loadMachines=async()=>{
       <td>${m.os_kind}</td>
       <td>${m.sudo}</td>
       <td><span class="chip ${enabledChip}">${m.enabled?'Oui':'Non'}</span></td>
-      <td><button class="btn sm" onclick="editMachine(${m.id})">✏️</button> <button class="btn sm danger" onclick="deleteMachine(${m.id},'${m.name}')">🗑️</button></td>
+      <td><button class="btn sm" onclick="testMachine(${m.id},this)" title="Tester la connexion SSH">🔌</button> <button class="btn sm" onclick="editMachine(${m.id})">✏️</button> <button class="btn sm danger" onclick="deleteMachine(${m.id},'${m.name}')">🗑️</button></td>
     </tr>`;
   }).join('');
 };
@@ -199,6 +199,22 @@ const deleteMachine=async(id,name)=>{
 $('#logoutBtn').onclick=async()=>{
   await fetch('/api/logout',{method:'POST',credentials:'include'});
   location.href='/';
+};
+
+// ── Test SSH connection ─────────────────────────────────────────────
+const testMachine=async(id,btn)=>{
+  btn.disabled=true;btn.textContent='⏳';
+  try{
+    const r=await fetch('/api/machines/'+id+'/test',{method:'POST',credentials:'include'});
+    if(r.status===401){location.href='/';return;}
+    const d=await r.json();
+    const color=d.ok?'var(--green)':'var(--red)';
+    const status=d.ok?'Connecté':'Échec';
+    const info=`${status} · ${d.latency_ms||'?'}ms · ${d.hostname||'?'} @ ${d.user||'?'} · ${d.os_kind||'?'} · ${d.host_key_fingerprint?d.host_key_fingerprint.substring(0,28)+'…':''}`;
+    toast(info,color==='var(--green)'?'ok':'err');
+    if(!d.ok && d.error) toast('Erreur: '+d.error,'err');
+  }catch(e){toast('Erreur réseau','err');}
+  btn.disabled=false;btn.textContent='🔌';
 };
 // Show login if not authenticated
 const checkAuth=async()=>{

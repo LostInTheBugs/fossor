@@ -139,3 +139,58 @@ def delete_machine(machine_id: int, request: Request, db: Session = Depends(get_
     db.delete(machine)
     db.commit()
     return {"ok": True}
+
+
+@router.post("/{machine_id}/test")
+async def test_machine_connection(
+    machine_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    _user=Depends(require_login),
+):
+    """Test SSH connection to a machine. Returns connection result."""
+    import asyncio
+    from app.ssh_client import ssh_test_machine
+
+    machine = db.query(Machine).filter(Machine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=404, detail="Machine not found")
+
+    try:
+        result = await asyncio.wait_for(ssh_test_machine(machine), timeout=30)
+    except asyncio.TimeoutError:
+        result = {"ok": False, "error": "SSH test timed out (30s)", "os_kind": "other"}
+
+    # Build safe response — no secrets ever
+    response = {
+        "ok": result.get("ok", False),
+        "latency_ms": result.get("latency_ms"),
+        "hostname": result.get("hostname", ""),
+        "user": result.get("user", ""),
+        "uname": result.get("uname", ""),
+        "os_kind": result.get("os_kind", "other"),
+        "host_key_fingerprint": result.get("host_key_fingerprint", ""),
+    }
+    if "error" in result:
+        response["error"] = result["error"]
+    return response
+
+
+@router.post("/{machine_id}/reset-host-key")
+async def reset_machine_host_key(
+    machine_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    _user=Depends(require_login),
+):
+    """Reset the pinned host key for a machine (admin action)."""
+    import asyncio
+    from app.ssh_client import reset_machine_host_key as _reset
+
+    machine = db.query(Machine).filter(Machine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=404, detail="Machine not found")
+
+    result = await asyncio.wait_for(_reset(machine_id), timeout=5)
+    _audit(db, machine, "host-key-reset", result.get("ok") and "ok" or "fail")
+    return result
