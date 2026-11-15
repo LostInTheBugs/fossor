@@ -9,7 +9,7 @@ _fernet: Fernet | None = None
 
 def _derive_key(master_key: str) -> bytes:
     """Derive a Fernet key from the master key string using PBKDF2."""
-    salt = b"minectl_salt_v1"
+    salt = b"fossor_salt_v1"
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=32,
@@ -22,9 +22,9 @@ def _derive_key(master_key: str) -> bytes:
 def get_fernet() -> Fernet:
     global _fernet
     if _fernet is None:
-        master = os.environ.get("MINECTL_MASTER_KEY")
+        master = os.environ.get("FOSSOR_MASTER_KEY")
         if not master:
-            raise RuntimeError("MINECTL_MASTER_KEY environment variable is required")
+            raise RuntimeError("FOSSOR_MASTER_KEY environment variable is required")
         key = _derive_key(master)
         _fernet = Fernet(key)
     return _fernet

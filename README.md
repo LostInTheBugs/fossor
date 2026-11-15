@@ -1,12 +1,12 @@
-# MineCtl
+# Fossor
 
 Mining management application — machines, monitoring, and pilotage.
 
-**Version:** [2026.11.001](https://github.com/LostInTheBugs/minectl/releases/tag/2026.11.001)
+**Version:** [2026.11.001](https://github.com/LostInTheBugs/fossor/releases/tag/2026.11.001)
 
 ## Description
 
-MineCtl replaces the ad-hoc `mining.html` dashboard with a proper application for managing mining machines, monitoring hardware, and piloting mining campaigns.
+Fossor (ex-MineCtl) replaces the ad-hoc `mining.html` dashboard with a proper application for managing mining machines, monitoring hardware, and piloting mining campaigns.
 
 ## Installation
 
@@ -14,9 +14,9 @@ MineCtl replaces the ad-hoc `mining.html` dashboard with a proper application fo
 
 ```bash
 # Required environment variables:
-# MINECTL_ADMIN_PASSWORD — admin password (hashed on first startup)
-# MINECTL_MASTER_KEY   — Fernet key for secret encryption (32 url-safe base64 bytes)
-# MINECTL_PORT         — host port (default 8008)
+# FOSSOR_ADMIN_PASSWORD — admin password (hashed on first startup)
+# FOSSOR_MASTER_KEY   — Fernet key for secret encryption (32 url-safe base64 bytes)
+# FOSSOR_PORT         — host port (default 8008)
 
 cp .env.example .env
 # Edit .env with your secrets
@@ -34,12 +34,12 @@ uvicorn app.main:app --reload --port 8008
 
 ## Configuration
 
-| Variable            | Description                              | Default     |
-|---------------------|------------------------------------------|-------------|
-| `MINECTL_ADMIN_PASSWORD` | Admin password (hashed on startup)  | *(required)*|
-| `MINECTL_MASTER_KEY`    | Fernet encryption key             | *(required)*|
-| `MINECTL_PORT`          | Host port mapping              | `8008`      |
-| `DATABASE_URL`          | SQLite connection string       | `sqlite:///./data/minectl.db` |
+| Variable              | Description                              | Default     |
+|-----------------------|------------------------------------------|-------------|
+| `FOSSOR_ADMIN_PASSWORD` | Admin password (hashed on startup)  | *(required)*|
+| `FOSSOR_MASTER_KEY`     | Fernet encryption key             | *(required)*|
+| `FOSSOR_PORT`           | Host port mapping              | `8008`      |
+| `DATABASE_URL`          | SQLite connection string       | `sqlite:////data/fossor.db` |
 
 ## API Endpoints
 

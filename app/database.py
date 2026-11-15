@@ -1,7 +1,9 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
-DATABASE_URL = "sqlite:///./data/minectl.db"
+import os
+
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:////data/fossor.db")
 
 engine = create_engine(
     DATABASE_URL,

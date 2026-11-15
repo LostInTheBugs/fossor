@@ -4,42 +4,53 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Response, Request
-from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
+from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
 
 router = APIRouter(prefix="/api", tags=["auth"])
 
-SECRET_KEY = os.environ.get("MINECTL_SECRET_KEY", "forged-test-key-not-a-secret")
-ALGORITHM = "HS256"
+SERIALIZER: URLSafeTimedSerializer | None = None
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 ADMIN_PASSWORD_HASH: str | None = None
-ADMIN_PASSWORD_SALT: bytes | None = None
+
+
+def _get_data_dir() -> Path:
+    """Return the /data directory (volume mount point)."""
+    p = Path("/data")
+    if p.is_dir():
+        return p
+    # Fallback for dev / tests
+    return Path(__file__).resolve().parent.parent / "data"
+
+
+def _load_or_create_serializer() -> URLSafeTimedSerializer:
+    global SERIALIZER
+    if SERIALIZER is not None:
+        return SERIALIZER
+    data_dir = _get_data_dir()
+    data_dir.mkdir(parents=True, exist_ok=True)
+    key_file = data_dir / "fossor_signing_key"
+    if key_file.exists():
+        key = key_file.read_text().strip()
+    else:
+        import secrets
+        key = secrets.token_urlsafe(48)
+        key_file.write_text(key)
+        os.chmod(key_file, 0o600)
+    SERIALIZER = URLSafeTimedSerializer(key)
+    return SERIALIZER
 
 
 def get_admin_password_hash() -> str | None:
-    global ADMIN_PASSWORD_HASH, ADMIN_PASSWORD_SALT
+    global ADMIN_PASSWORD_HASH
     if ADMIN_PASSWORD_HASH is None:
-        ADMIN_PASSWORD_HASH = os.environ.get("MINECTL_ADMIN_PASSWORD_HASH")
-        if not ADMIN_PASSWORD_HASH and os.environ.get("MINECTL_ADMIN_PASSWORD"):
-            pw = os.environ["MINECTL_ADMIN_PASSWORD"].encode("utf-8")
-            ADMIN_PASSWORD_SALT = bcrypt.gensalt()
-            ADMIN_PASSWORD_HASH = bcrypt.hashpw(pw, ADMIN_PASSWORD_SALT).decode("utf-8")
-            # Persist it for subsequent starts
-            env_path = Path("/home/administrator/work/minectl/.env")
-            if env_path.exists():
-                lines = env_path.read_text().splitlines()
-                found = False
-                new_lines = []
-                for line in lines:
-                    if line.startswith("MINECTL_ADMIN_PASSWORD_HASH="):
-                        new_lines.append(f"MINECTL_ADMIN_PASSWORD_HASH={ADMIN_PASSWORD_HASH}")
-                        found = True
-                    else:
-                        new_lines.append(line)
-                if not found:
-                    new_lines.append(f"MINECTL_ADMIN_PASSWORD_HASH={ADMIN_PASSWORD_HASH}")
-                env_path.write_text("\n".join(new_lines) + "\n")
+        ADMIN_PASSWORD_HASH = os.environ.get("FOSSOR_ADMIN_PASSWORD_HASH")
+        pw_env = os.environ.get("FOSSOR_ADMIN_PASSWORD")
+        if not ADMIN_PASSWORD_HASH and pw_env:
+            salt = bcrypt.gensalt()
+            ADMIN_PASSWORD_HASH = bcrypt.hashpw(pw_env.encode("utf-8"), salt).decode("utf-8")
+        elif not ADMIN_PASSWORD_HASH and not pw_env:
+            ADMIN_PASSWORD_HASH = None
     return ADMIN_PASSWORD_HASH
 
 
@@ -48,20 +59,23 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 def create_access_token(data: dict) -> str:
-    to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    s = _load_or_create_serializer()
+    payload = {**data, "exp": datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)}
+    import json
+    return s.dumps(json.dumps(payload))
 
 
 def get_current_user(request: Request) -> str | None:
-    token = request.cookies.get("minectl_session")
+    token = request.cookies.get("fossor_session")
     if not token:
         return None
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        s = _load_or_create_serializer()
+        payload_str = s.loads(token)
+        import json
+        payload = json.loads(payload_str)
         return payload.get("sub")
-    except JWTError:
+    except (SignatureExpired, BadSignature, ValueError):
         return None
 
 
@@ -80,7 +94,7 @@ def login(request: Request, response: Response, username: str = Form(...), passw
     if username == "admin" and verify_password(password, admin_hash):
         token = create_access_token({"sub": "admin"})
         response.set_cookie(
-            key="minectl_session",
+            key="fossor_session",
             value=token,
             httponly=True,
             samesite="strict",
@@ -93,5 +107,5 @@ def login(request: Request, response: Response, username: str = Form(...), passw
 
 @router.post("/logout")
 def logout(response: Response):
-    response.delete_cookie(key="minectl_session", path="/")
+    response.delete_cookie(key="fossor_session", path="/")
     return {"ok": True}

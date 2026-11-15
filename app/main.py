@@ -8,7 +8,7 @@ from app.routers.audit import router as audit_router
 from app.routers.ui import router as ui_router
 from pathlib import Path
 
-app = FastAPI(title="MineCtl")
+app = FastAPI(title="Fossor")
 
 app.add_middleware(
     CORSMiddleware,

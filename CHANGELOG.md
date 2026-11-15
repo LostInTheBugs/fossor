@@ -1,6 +1,8 @@
 # Changelog
 
-All notable changes to minectl are documented in this file.
+> MineCtl a été renommé **Fossor**. Les fonctionnalités et l'API restent identiques.
+
+All notable changes to fossor are documented in this file.
 
 ## [2026.11.001] — 2026-11-15
 
@@ -8,7 +10,7 @@ All notable changes to minectl are documented in this file.
 - FastAPI application with SQLite backend
 - Docker deployment (port 8008, ./data:/data volume)
 - Admin login with bcrypt password hashing, HttpOnly + SameSite=Strict cookie
-- Fernet-encrypted secrets storage (master key from MINECTL_MASTER_KEY)
+- Fernet-encrypted secrets storage (master key from FOSSOR_MASTER_KEY)
 - Machine CRUD API (/api/machines) and Machines management screen
 - Machine fields: name, host, ssh_port (default 22), ssh_user, auth_type, secret_ref, sudo, os_kind, host_key, usage, vm_host, enabled
 - Audit log table and screen (masked secrets)

@@ -2,10 +2,9 @@ import os
 import sys
 
 # Set env vars BEFORE importing app modules
-os.environ["MINECTL_MASTER_KEY"] = "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v="
-os.environ["MINECTL_SECRET_KEY"] = "test-secret-key-for-jwt-signing"
-os.environ["MINECTL_ADMIN_PASSWORD"] = "admin"
-os.environ["DATABASE_URL"] = "sqlite:///./data/test_minectl.db"
+os.environ["FOSSOR_MASTER_KEY"] = "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v="
+os.environ["FOSSOR_ADMIN_PASSWORD"] = "admin"
+os.environ["DATABASE_URL"] = "sqlite:///./data/test_fossor.db"
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -47,7 +46,7 @@ async def client():
         "password": "admin",
     })
     assert r.status_code == 200, f"Login failed: {r.status_code} {r.text}"
-    ac.cookies.set("minectl_session", r.cookies.get("minectl_session", ""), domain="test")
+    ac.cookies.set("fossor_session", r.cookies.get("fossor_session", ""), domain="test")
     return ac
 
 
@@ -319,3 +318,47 @@ class TestNoSecretLeak:
 
         r3 = await client.patch(f"/api/machines/{r1.json()['id']}", json={"host": "10.0.0.3"})
         assert r3.json()["has_secret"] is True
+
+
+class TestForgedCookie:
+    """Verify that a cookie signed with a wrong key is rejected (401)."""
+
+    async def test_forged_cookie_with_wrong_key(self, unauth_client):
+        """Forge a cookie using the old default key — must get 401."""
+        from app.auth import _load_or_create_serializer
+        from itsdangerous import URLSafeTimedSerializer
+        import json, os, secrets
+
+        # Save original serializer
+        from app import auth
+        orig_serializer = auth.SERIALIZER
+        auth.SERIALIZER = None
+
+        # Generate a key file with a known wrong key
+        data_dir = auth._get_data_dir()
+        key_file = data_dir / "fossor_signing_key"
+        old_key = key_file.read_text().strip() if key_file.exists() else None
+
+        try:
+            # Write a known wrong key
+            wrong_key = "forged-test-key-not-a-secret"
+            key_file.write_text(wrong_key)
+            os.chmod(key_file, 0o600)
+            auth.SERIALIZER = None  # force reload
+
+            # Forge a token with the wrong key
+            wrong_s = URLSafeTimedSerializer(wrong_key)
+            import datetime
+            from datetime import datetime as dt, timedelta, timezone
+            payload = {"sub": "admin", "exp": dt.now(timezone.utc) + timedelta(minutes=60)}
+            forged = wrong_s.dumps(json.dumps(payload))
+
+            r = await unauth_client.get("/api/machines", cookies={"fossor_session": forged})
+            assert r.status_code == 401, f"Expected 401, got {r.status_code}: {r.text}"
+        finally:
+            # Restore original key
+            auth.SERIALIZER = None
+            if old_key:
+                key_file.write_text(old_key)
+            elif key_file.exists():
+                key_file.unlink()

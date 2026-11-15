@@ -3,7 +3,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
-name = "minectl"
+name = "fossor"
 version = "2026.11.001"
 requires-python = ">=3.12"
 dependencies = [
@@ -12,7 +12,7 @@ dependencies = [
     "sqlalchemy>=2.0",
     "alembic>=1.14",
     "python-multipart>=0.0.18",
-    "python-jose[cryptography]>=3.3",
+    "itsdangerous>=2.2",
     "passlib[bcrypt]>=1.7",
     "cryptography>=44",
 ]
