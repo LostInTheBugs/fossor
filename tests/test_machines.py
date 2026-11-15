@@ -350,7 +350,7 @@ class TestForgedCookie:
             wrong_s = URLSafeTimedSerializer(wrong_key)
             import datetime
             from datetime import datetime as dt, timedelta, timezone
-            payload = {"sub": "admin", "exp": dt.now(timezone.utc) + timedelta(minutes=60)}
+            payload = {"sub": "admin", "exp": (dt.now(timezone.utc) + timedelta(minutes=60)).isoformat()}
             forged = wrong_s.dumps(json.dumps(payload))
 
             r = await unauth_client.get("/api/machines", cookies={"fossor_session": forged})
