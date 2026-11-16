@@ -8,6 +8,14 @@ router = APIRouter()
 STATIC_DIR = Path(__file__).resolve().parent.parent.parent / "static"
 
 
+@router.get("/dashboard", response_class=HTMLResponse)
+def dashboard_page(request: Request):
+    if not get_current_user(request):
+        return RedirectResponse(url="/", status_code=303)
+    require_login(request)
+    return HTMLResponse((STATIC_DIR / "dashboard.html").read_text())
+
+
 @router.get("/machines", response_class=HTMLResponse)
 def machines_page(request: Request):
     # Redirect unauthenticated users to login

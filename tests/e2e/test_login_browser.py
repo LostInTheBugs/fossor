@@ -42,9 +42,9 @@ async def test_login_flow_zero_console_errors(e2e_server):
 
         await page.locator("button[type=submit]").click()
 
-        # 3. Lands on /machines
-        await page.wait_for_url("**/machines", timeout=15000)
-        assert page.url.endswith("/machines"), page.url
+        # 3. Lands on /dashboard (§6 écran 1 is the landing page)
+        await page.wait_for_url("**/dashboard", timeout=15000)
+        assert page.url.endswith("/dashboard"), page.url
         await page.wait_for_load_state("networkidle")
 
         # 4. No browser error at all

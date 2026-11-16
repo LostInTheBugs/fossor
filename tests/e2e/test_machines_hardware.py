@@ -29,7 +29,8 @@ async def test_detect_hardware_button_visible(e2e_server):
         await page.fill("#username", "admin")
         await page.fill("#password", ADMIN_PASSWORD)
         await page.locator("button[type=submit]").click()
-        await page.wait_for_url("**/machines", timeout=15000)
+        await page.wait_for_url("**/dashboard", timeout=15000)
+        await page.goto(E2E_URL + "/machines", wait_until="domcontentloaded", timeout=15000)
 
         # Create a machine from the authenticated page (unique name per run).
         created = await page.evaluate(

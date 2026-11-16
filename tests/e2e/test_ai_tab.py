@@ -28,7 +28,7 @@ async def test_ai_tab_visible_presets_and_globals(e2e_server):
         await page.fill("#username", "admin")
         await page.fill("#password", ADMIN_PASSWORD)
         await page.locator("button[type=submit]").click()
-        await page.wait_for_url("**/machines", timeout=15000)
+        await page.wait_for_url("**/dashboard", timeout=15000)
 
         await page.goto(E2E_URL + "/settings", wait_until="domcontentloaded", timeout=15000)
 

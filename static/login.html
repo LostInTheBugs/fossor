@@ -43,7 +43,7 @@ $('#loginForm').addEventListener('submit', async (event) => {
   try {
     const resp = await fetch('/api/login', { method: 'POST', body });
     if (resp.ok) {
-      window.location.href = '/machines';
+      window.location.href = '/dashboard';
       return;
     }
   } catch (err) {
