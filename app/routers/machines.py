@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db, SessionLocal
 from app.dependencies import require_login
-from app.models import Machine, AuditLog, ActorEnum
+from app.models import Machine, Device, AuditLog, ActorEnum
 
 router = APIRouter(prefix="/api/machines", tags=["machines"])
 
@@ -13,6 +13,7 @@ def _mask_secret(machine: Machine) -> dict:
     """Convert a Machine to a dict, masking secrets."""
     d = {
         "id": machine.id,
+        "uuid": machine.uuid,
         "name": machine.name,
         "host": machine.host,
         "ssh_port": machine.ssh_port,
@@ -174,6 +175,87 @@ async def test_machine_connection(
     if "error" in result:
         response["error"] = result["error"]
     return response
+
+
+@router.post("/{machine_id}/detect")
+async def detect_machine_hardware(
+    machine_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    _user=Depends(require_login),
+):
+    """Detect CPU/GPU/RAM/virtualisation over SSH and upsert the devices."""
+    import asyncio
+    from app.devices import apply_detection, device_to_dict
+    from app.ssh_client import ssh_detect_hw
+
+    machine = db.query(Machine).filter(Machine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=404, detail="Machine not found")
+
+    try:
+        result = await asyncio.wait_for(ssh_detect_hw(machine), timeout=40)
+    except asyncio.TimeoutError:
+        result = {"ok": False, "error": "Détection matérielle expirée (40 s)"}
+
+    if not result.get("ok"):
+        error = result.get("error", "Détection impossible")
+        _audit(db, machine, "detect", "fail", error)
+        return {
+            "ok": False,
+            "error": error,
+            "host_key_fingerprint": result.get("host_key_fingerprint", ""),
+        }
+
+    stats = apply_detection(db, machine, result)
+    db.refresh(machine)
+    devices = (
+        db.query(Device)
+        .filter(Device.machine_id == machine.id)
+        .order_by(Device.kind.asc(), Device.index.asc())
+        .all()
+    )
+    cpu = next((d for d in devices if d.kind == "cpu" and d.present), None)
+    gpus = [d for d in devices if d.kind == "gpu" and d.present]
+    cpu_label = f"{cpu.model} ({cpu.cores}c/{cpu.threads}t)" if cpu else "aucun"
+    summary = (
+        f"cpu={cpu_label}, "
+        f"gpus={len(gpus)}, vm_host={machine.vm_host}, os={machine.os_kind}, "
+        f"crees={stats['created']}, disparus={stats['missing']}"
+    )
+    _audit(db, machine, "detect", "ok", summary)
+
+    return {
+        "ok": True,
+        "latency_ms": result.get("latency_ms"),
+        "host_key_fingerprint": result.get("host_key_fingerprint", ""),
+        "vm_host": machine.vm_host,
+        "os_kind": machine.os_kind,
+        "virt": result.get("virt", {}),
+        "stats": stats,
+        "devices": [device_to_dict(d) for d in devices],
+    }
+
+
+@router.get("/{machine_id}/devices")
+def list_machine_devices(
+    machine_id: int,
+    db: Session = Depends(get_db),
+    _user=Depends(require_login),
+):
+    """Devices of a machine (absent ones included, flagged present=false)."""
+    from app.devices import device_to_dict
+
+    machine = db.query(Machine).filter(Machine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=404, detail="Machine not found")
+    devices = (
+        db.query(Device)
+        .filter(Device.machine_id == machine_id)
+        .order_by(Device.kind.asc(), Device.index.asc())
+        .all()
+    )
+    return [device_to_dict(d) for d in devices]
 
 
 @router.post("/{machine_id}/reset-host-key")

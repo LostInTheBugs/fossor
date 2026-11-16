@@ -5,6 +5,7 @@ from app.database import init_db
 from app.auth import router as auth_router
 from app.routers.machines import router as machines_router
 from app.routers.audit import router as audit_router
+from app.routers.devices import router as devices_router
 from app.routers.ui import router as ui_router
 from pathlib import Path
 
@@ -22,6 +23,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(machines_router)
 app.include_router(audit_router)
+app.include_router(devices_router)
 app.include_router(ui_router)
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
