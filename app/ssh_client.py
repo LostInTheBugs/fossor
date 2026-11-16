@@ -66,6 +66,24 @@ WHITELISTED_COMMANDS: dict[str, str] = {
         test -d /hive && echo HIVEOS=1
         exit 0
     """).strip(),
+    # Live mining snapshot (§8 phase 2). Read-only, no sudo: HiveOS dumps are
+    # world-readable, nvidia-smi and ps are unprivileged. Every tool is
+    # optional; a missing file/tool leaves its section empty (exit 0).
+    "collect_stats": textwrap.dedent("""\
+        echo '### HIVE_STAT'
+        cat /run/hive/last_stat.json 2>/dev/null
+        echo '### HIVE_GPU'
+        cat /run/hive/gpu-stats.json 2>/dev/null
+        echo '### NVSMI'
+        if command -v nvidia-smi >/dev/null 2>&1; then
+          nvidia-smi --query-gpu=index,pci.bus_id,temperature.gpu,power.draw,fan.speed,utilization.gpu --format=csv,noheader,nounits 2>/dev/null
+        fi
+        echo '### PS_MINERS'
+        ps -eo args 2>/dev/null | grep -Ei 'srbminer|xmrig|t-rex|lolminer|gminer|nbminer|phoenixminer|teamredminer' | grep -v grep
+        echo '### UPTIME'
+        cat /proc/uptime 2>/dev/null
+        exit 0
+    """).strip(),
 }
 
 
@@ -436,6 +454,37 @@ async def ssh_detect_hw(machine: Any) -> dict[str, Any]:
         "host_key_fingerprint": raw["host_key_fingerprint"],
         **parse_detect_hw(raw["stdout"]),
     }
+
+
+async def ssh_collect_stats(machine: Any) -> dict[str, Any]:
+    """Run the whitelisted ``collect_stats`` snapshot through the pinned host key.
+
+    Returns ``{"ok": True, "stdout": ...}`` (raw sections, parsed by
+    :func:`app.stats_parser.parse_collect_stats`) or an ``ok: False`` failure.
+    Nothing is audited on success: a 60 s collector would flood the log.
+    """
+    pinned_fp = (getattr(machine, "host_key", None) or "").strip() or None
+    pinned_public_key = (getattr(machine, "host_key_public", None) or "").strip() or None
+
+    secret = ""
+    if machine.secret_ref:
+        try:
+            secret = decrypt_secret(machine.secret_ref)
+        except Exception:
+            secret = ""
+
+    return await _run_whitelisted(
+        host=machine.host,
+        port=machine.ssh_port,
+        username=machine.ssh_user,
+        secret=secret,
+        auth_type=machine.auth_type,
+        pinned_fp=pinned_fp,
+        pinned_public_key=pinned_public_key,
+        command=WHITELISTED_COMMANDS["collect_stats"],
+        machine_id=machine.id,
+        audit_kind="collect",
+    )
 
 
 async def reset_machine_host_key(machine_id: int) -> dict[str, Any]:

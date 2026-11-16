@@ -1,0 +1,22 @@
+{
+  "id": 1,
+  "result": {
+    "miner": "SRBMiner-Multi",
+    "version": "2.6.6",
+    "algorithm": "pearlhash",
+    "coin": "PEARL",
+    "uptime": 38211,
+    "shares": {
+      "accepted": 1420,
+      "rejected": 3
+    },
+    "hashrate": {
+      "total": 136940000000000,
+      "devices": [68540000000000, 68400000000000]
+    },
+    "devices": [
+      {"index": 0, "name": "NVIDIA GeForce RTX 3070", "hashrate": 68540000000000},
+      {"index": 1, "name": "NVIDIA GeForce RTX 3070", "hashrate": 68400000000000}
+    ]
+  }
+}

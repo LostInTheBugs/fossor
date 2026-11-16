@@ -1,0 +1,15 @@
+### HIVE_STAT
+{"method":"stats","params":{"v":2,"rig_id":"RIG-FAKE-ABC123","passwd":"S3CR3T-HIVE-PASS","meta":{"fs_id":123,"srbminer":{"coin":"PEARL","algo":"pearlhash"}},"temp":[0,42,39,36,39,39],"fan":[0,100,100,100,100,100],"power":[0,93,99,91,97,120],"df":"29G","mem":[7649,2336],"cputemp":[54],"cpuavg":[3.78,3.79,3.82],"jtemp":[0,58,51,48,51,50],"mtemp":[0,0,0,0,0,44],"miner":"srbminer","total_khs":328947000000,"miner_stats":{"status":"running","total_khs":328947000000,"hs":[68538879630,68471219000,68550028912,68539715754,54829685687],"hs_units":"khs","temp":[42,39,36,39,39],"fan":[100,100,100,100,100],"ar":[8969,0],"uptime":183419}}}
+### HIVE_GPU
+{"temp":[0,42,39,36,39,39],"fan":[0,100,100,100,100,100],"power":[0,93,99,91,97,120],"busids":["00:02.0","01:00.0","02:00.0","04:00.0","05:00.0","06:00.0"],"brand":["cpu","nvidia","nvidia","nvidia","nvidia","nvidia"],"load":[0,100,99,98,97,95]}
+### NVSMI
+0, 00000000:01:00.0, 42, 93.18, 100, 100
+1, 00000000:02:00.0, 39, 99.02, 100, 99
+2, 00000000:04:00.0, 36, 91.44, 100, 98
+3, 00000000:05:00.0, 39, 97.31, 100, 97
+4, 00000000:06:00.0, 39, 120.07, 100, 95
+### PS_MINERS
+/hive/miners/custom/srbminer/srbminer --algorithm pearlhash --pool stratum+tcp://pearl.example.invalid:3333 --wallet pearl1fake --api-port 21550 --api-rig-name rig
+grep -Ei srbminer|xmrig|t-rex|lolminer|gminer|nbminer|phoenixminer|teamredminer
+### UPTIME
+183455.12 720112.33

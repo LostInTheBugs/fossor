@@ -1,0 +1,9 @@
+### HIVE_STAT
+### HIVE_GPU
+### NVSMI
+0, 00000000:01:00.0, 61, 148.32, 55, 100
+1, 00000000:02:00.0, 58, 142.10, 54, 99
+### PS_MINERS
+/opt/srbminer/srbminer --algorithm pearlhash --pool stratum+tcp://pearl.example.invalid:3333 --wallet pearl1fake --api-port 21550 -g 0,1
+### UPTIME
+38211.42 720112.33

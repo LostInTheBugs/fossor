@@ -95,7 +95,14 @@ def _patch_key():
 # ── Whitelist ─────────────────────────────────────────────────────────
 class TestWhitelist:
     def test_only_whitelisted_commands(self):
-        assert set(WHITELISTED_COMMANDS.keys()) == {"identify", "detect_hw"}
+        assert set(WHITELISTED_COMMANDS.keys()) == {"identify", "detect_hw", "collect_stats"}
+
+    def test_collect_stats_has_five_sections_and_no_sudo(self):
+        cmd = WHITELISTED_COMMANDS["collect_stats"]
+        for section in ("HIVE_STAT", "HIVE_GPU", "NVSMI", "PS_MINERS", "UPTIME"):
+            assert f"### {section}" in cmd
+        assert "sudo" not in cmd
+        assert cmd.rstrip().endswith("exit 0")
 
     def test_identify_has_expected_parts(self):
         cmd = WHITELISTED_COMMANDS["identify"]
