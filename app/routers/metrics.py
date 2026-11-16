@@ -1,0 +1,188 @@
+"""Metrics API — live snapshot and history (§6 écran 1, §7)."""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import and_, func
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.dependencies import require_login
+from app.models import Device, Machine, MachineStatus, Metric
+from app.stats_parser import format_hashrate
+
+router = APIRouter(prefix="/api/metrics", tags=["metrics"])
+
+
+def _age_seconds(ts: str | None, now: datetime) -> int | None:
+    if not ts:
+        return None
+    try:
+        moment = datetime.fromisoformat(ts)
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return max(0, int((now - moment).total_seconds()))
+
+
+def _latest_metrics(db: Session, machine_uuid: str) -> dict[str, Any]:
+    """Most recent metric row per device_uuid for one machine."""
+    sub = (
+        db.query(Metric.device_uuid.label("device_uuid"), func.max(Metric.ts).label("ts"))
+        .filter(Metric.machine_uuid == machine_uuid)
+        .group_by(Metric.device_uuid)
+        .subquery()
+    )
+    rows = (
+        db.query(Metric)
+        .join(
+            sub,
+            and_(
+                Metric.device_uuid == sub.c.device_uuid,
+                Metric.ts == sub.c.ts,
+                Metric.machine_uuid == machine_uuid,
+            ),
+        )
+        .all()
+    )
+    return {row.device_uuid: row for row in rows}
+
+
+def _metric_dict(row: Metric | None) -> dict[str, Any]:
+    if row is None:
+        return {
+            "hashrate_hs": None,
+            "hashrate_human": "—",
+            "temp_c": None,
+            "fan_pct": None,
+            "power_w": None,
+            "load_pct": None,
+        }
+    return {
+        "hashrate_hs": row.hashrate_hs,
+        "hashrate_human": format_hashrate(row.hashrate_hs),
+        "temp_c": row.temp_c,
+        "fan_pct": row.fan_pct,
+        "power_w": row.power_w,
+        "load_pct": row.load_pct,
+    }
+
+
+@router.get("/live")
+def metrics_live(
+    db: Session = Depends(get_db),
+    _user=Depends(require_login),
+):
+    """Last known state of every machine and its devices."""
+    now = datetime.now(timezone.utc)
+    statuses = {
+        status.machine_uuid: status for status in db.query(MachineStatus).all()
+    }
+    machines = db.query(Machine).order_by(Machine.name.asc()).all()
+
+    payload: list[dict[str, Any]] = []
+    for machine in machines:
+        status = statuses.get(machine.uuid)
+        collected = bool(machine.enabled) and str(machine.usage) != "none"
+        latest = _latest_metrics(db, machine.uuid) if machine.uuid else {}
+
+        devices = (
+            db.query(Device)
+            .filter(Device.machine_id == machine.id, Device.present == True)  # noqa: E712
+            .all()
+        )
+        devices.sort(key=lambda d: (0 if d.kind == "cpu" else 1, d.index if d.index is not None else 0))
+
+        device_rows = []
+        for device in devices:
+            metric = _metric_dict(latest.get(device.uuid))
+            device_rows.append({
+                "uuid": device.uuid,
+                "kind": device.kind,
+                "index": device.index,
+                "vendor": device.vendor,
+                "model": device.model,
+                "pci_bus": device.pci_bus,
+                "integrated": device.integrated,
+                "enabled_for_mining": device.enabled_for_mining,
+                **metric,
+            })
+
+        total_hs = status.total_hashrate_hs if status else None
+        if total_hs is None:
+            values = [d["hashrate_hs"] for d in device_rows if d["hashrate_hs"]]
+            total_hs = sum(values) if values else None
+        total_w = status.total_power_w if status else None
+        if total_w is None:
+            values = [d["power_w"] for d in device_rows if d["power_w"]]
+            total_w = sum(values) if values else None
+
+        payload.append({
+            "uuid": machine.uuid,
+            "name": machine.name,
+            "host": machine.host,
+            "os_kind": machine.os_kind,
+            "usage": machine.usage,
+            "enabled": machine.enabled,
+            "collected": collected,
+            "online": bool(status.online) if status else False,
+            "error": status.error if status else None,
+            "miner": status.miner if status else "",
+            "algo": status.algo if status else "",
+            "coin": status.coin if status else "",
+            "uptime_s": status.uptime_s if status else None,
+            "accepted": status.accepted if status else None,
+            "rejected": status.rejected if status else None,
+            "api_port": status.api_port if status else None,
+            "total_hashrate_hs": total_hs,
+            "total_hashrate_human": format_hashrate(total_hs),
+            "total_power_w": total_w,
+            "last_ts": status.ts if status else None,
+            "age_s": _age_seconds(status.ts if status else None, now),
+            "devices": device_rows,
+        })
+    return payload
+
+
+@router.get("/history")
+def metrics_history(
+    machine: str = Query(..., description="machine UUID"),
+    hours: int = Query(24, ge=1, le=168),
+    db: Session = Depends(get_db),
+    _user=Depends(require_login),
+):
+    """Metric points of one machine over the last *hours* hours."""
+    target = db.query(Machine).filter(Machine.uuid == machine).first()
+    if target is None:
+        raise HTTPException(status_code=404, detail="Machine not found")
+
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    rows = (
+        db.query(Metric)
+        .filter(Metric.machine_uuid == machine, Metric.ts >= since)
+        .order_by(Metric.ts.asc())
+        .limit(20000)
+        .all()
+    )
+    return {
+        "machine": machine,
+        "name": target.name,
+        "hours": hours,
+        "count": len(rows),
+        "points": [
+            {
+                "ts": row.ts,
+                "device_uuid": row.device_uuid,
+                "hashrate_hs": row.hashrate_hs,
+                "temp_c": row.temp_c,
+                "fan_pct": row.fan_pct,
+                "power_w": row.power_w,
+                "load_pct": row.load_pct,
+            }
+            for row in rows
+        ],
+    }

@@ -10,6 +10,7 @@ from app.routers.config import router as config_router
 from app.routers.ai import router as ai_router
 from app.routers.hermes import router as hermes_router
 from app.routers.update import router as update_router
+from app.routers.metrics import router as metrics_router
 from app.routers.ui import router as ui_router
 from pathlib import Path
 
@@ -32,6 +33,7 @@ app.include_router(config_router)
 app.include_router(ai_router)
 app.include_router(hermes_router)
 app.include_router(update_router)
+app.include_router(metrics_router)
 app.include_router(ui_router)
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -43,14 +45,17 @@ async def startup():
     # §4.18: best-effort background check, jittered, never blocking startup.
     from app import update_checker
     update_checker.start()
+    # §8 phase 2a: metrics collection every FOSSOR_COLLECT_INTERVAL seconds.
+    from app import collector
+    collector.start()
 
 
 @app.get("/", response_class=HTMLResponse)
 def login_page(request: Request):
-    # If already logged in, redirect to machines page
+    # If already logged in, land on the dashboard (§6 écran 1)
     from app.auth import get_current_user
     if get_current_user(request):
-        return RedirectResponse(url="/machines", status_code=303)
+        return RedirectResponse(url="/dashboard", status_code=303)
     return HTMLResponse((STATIC_DIR / "login.html").read_text())
 
 

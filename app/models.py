@@ -1,4 +1,4 @@
-from sqlalchemy import String, Integer, Boolean, DateTime, Text, ForeignKey, JSON
+from sqlalchemy import String, Integer, Boolean, DateTime, Text, ForeignKey, JSON, Float, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime, timezone
 import enum
@@ -133,6 +133,43 @@ class AppSetting(Base):
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     value: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class MachineStatus(Base):
+    """Last known machine-level state, rewritten by every collection round."""
+
+    __tablename__ = "machine_status"
+
+    machine_uuid: Mapped[str] = mapped_column(String(36), primary_key=True)
+    ts: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+    online: Mapped[bool] = mapped_column(Boolean, default=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    miner: Mapped[str] = mapped_column(String(50), default="")
+    algo: Mapped[str] = mapped_column(String(50), default="")
+    coin: Mapped[str] = mapped_column(String(20), default="")
+    uptime_s: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    accepted: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    rejected: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    api_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_hashrate_hs: Mapped[float | None] = mapped_column(Float, nullable=True)
+    total_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class Metric(Base):
+    """One row per device (or per machine when no device matched) per round."""
+
+    __tablename__ = "metrics"
+    __table_args__ = (Index("ix_metrics_machine_ts", "machine_uuid", "ts"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    machine_uuid: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    device_uuid: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    ts: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+    hashrate_hs: Mapped[float | None] = mapped_column(Float, nullable=True)
+    temp_c: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fan_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    load_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class AuditLog(Base):
