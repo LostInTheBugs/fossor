@@ -4,6 +4,28 @@
 
 All notable changes to fossor are documented in this file.
 
+## 2026.11.004-dev — 2026-11-16
+
+### Étape 2b — tokens minés, prix, soldes de pool, import de l'historique
+
+- Catalogue `coins` (§4.3) et `wallets` (§4.4) : tables, API CRUD, écran (adresse,
+  emplacement, chemin de sauvegarde — jamais de seed ni de mot de passe).
+- `POST /api/import/legacy` (+ `/api/import/legacy/upload`) : import idempotent de
+  `mining-status.json` / `mining-live.json` → coins, wallets, campagnes en cours
+  (`current`, `current_cpu`, `*_spec`, plus Pearl/Luckypool du fichier live) et
+  historique (`history` : montant miné parsé, verdict, liens). `dry_run` par défaut.
+- Prix CoinGecko `simple/price` (usd, eur, variation 24 h), cache 5 min, uniquement
+  pour les `coingecko_id` vérifiés (PRL `pearl-2`, QTC `quantus` ; WAM et QWC non
+  cotés, prix manuel optionnel par coin).
+- Connecteur Luckypool (`app/pools.py`) : `GET /api/stats` public → seuil de paiement
+  et agrégats du pool ; aucune statistique par wallet n'est exposée par l'API, les
+  soldes restent `null` avec la raison écrite — jamais inventés.
+- Écran « Tokens minés » (§6 écran 3) : valeur totale €/$, cartes des campagnes en
+  cours, historique dépliable, catalogue et wallets éditables, import.
+- `GET /api/mined`, `POST /api/mined/refresh`.
+- Collecte : une machine sans device est détectée automatiquement à sa première
+  collecte (audit `scheduler`), les métriques GPU se rattachent par bus PCI.
+
 ## 2026.11.003 — (en préparation)
 
 Étape 2a : collecteurs et tableau de bord en direct.

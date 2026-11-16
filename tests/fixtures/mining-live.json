@@ -1,0 +1,74 @@
+{
+ "ts": "2026-11-16T16:00:25Z",
+ "mode": "spec",
+ "rig": {
+  "name": "rig7095FA",
+  "hashrate_ths": null,
+  "power_w": null,
+  "gpus": null,
+  "algo": null,
+  "pool": null
+ },
+ "pcr": {
+  "name": "PCRyzen (RTX4080)",
+  "hashrate_ths": 217.02,
+  "power_w": 311.9
+ },
+ "gpu_spec": {
+  "name": "Spec GPU · BigCoin (BIG)",
+  "hashrate_hs": null,
+  "pool": null,
+  "balance": null,
+  "ticker": "BIG"
+ },
+ "wam": {
+  "name": "WAM (WAM Coin) · specbox-wam + rig .50 CPU",
+  "alive": true,
+  "hashrate_khs": 1.2,
+  "vm_khs": null,
+  "rig_khs": 1.2,
+  "threads": null,
+  "balance": null,
+  "ticker": "WAM",
+  "adresse": "wam1qtest7a2b4c6d8e0f1g3h5j7k9m2n4p6r8s0t2v4w",
+  "pool": "pool.wamcoin.org:3333 (PPLNS 0 % + dev 5 %)"
+ },
+ "korsh": {
+  "name": "KSH (Korsh) · rig .50 CPU",
+  "hashrate_hs": 6250.0,
+  "height": 76668,
+  "balance": 79.80055443,
+  "peers": 11,
+  "network_hs": 3937594.118579235,
+  "blocks_found": 82,
+  "ticker": "KSH",
+  "adresse": "Sfake1TestWalletAbCdEfGhIjKlMnOpQrStUvWx",
+  "pool": "solo (nœud local, 1 thread Yespower — scan 200k nonces/template)",
+  "threads": 1
+ },
+ "athlon": {
+  "name": "athlon-3000g (3×RTX 5060 Ti)",
+  "hashrate_ths": 303.4,
+  "power_w": 461,
+  "gpus": 3,
+  "algo": "pearlhash",
+  "pool": "pearl-eu2.luckypool.io:3360",
+  "worker": "SRBMiner-Multi-Rig",
+  "version": "3.8.3",
+  "shares": {
+   "accepted": 3823,
+   "rejected": 0
+  },
+  "latency_ms": 111
+ },
+ "athlon_spec": {
+  "name": "Athlon-3000G · CPU (KORSH, Yespower 1.0)",
+  "hashrate_mhs": 239.45,
+  "threads": 2,
+  "algo": "KORSH (yespower 1.0, N=256, R=8)",
+  "pool": "pool.korsh.org:3333 (KORSH PPLNS 1%)",
+  "worker": "athlon-korsh",
+  "temp_c": null,
+  "freq_ghz": null
+ }
+}

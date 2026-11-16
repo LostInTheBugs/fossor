@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fossor — Tokens minés</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#12161c;--card:#1a2029;--border:#2c3544;--txt:#e6edf3;--muted:#8b98a9;--accent:#4f8cff;--green:#3fb950;--red:#f85149;--yellow:#d29922}
+body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;min-height:100vh}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 18px 40px}
+header{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;gap:12px}
+header h1{font-size:26px}
+.nav-tabs{display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.nav-tabs a,.nav-tabs button{color:var(--muted);padding:8px 16px;font-size:13.5px;font-weight:600;text-decoration:none;border:1px solid transparent;border-bottom:none;border-radius:10px 10px 0 0;cursor:pointer;background:transparent;font-family:inherit}
+.nav-tabs a:hover,.nav-tabs button:hover{color:var(--txt)}
+.nav-tabs a.active,.nav-tabs button.active{background:var(--card);border-color:var(--border);color:var(--txt)}
+.btn{background:var(--accent);color:#fff;border:none;padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
+.btn:hover{opacity:.85}
+.btn.sm{padding:4px 10px;font-size:11px}
+.btn.outline{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+.btn.danger{background:transparent;color:var(--red);border:1px solid var(--red)}
+.summary{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px}
+.summary .box{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 16px;min-width:170px;flex:1}
+.summary .k{display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.4px;font-weight:600;margin-bottom:3px}
+.summary .v{font-size:20px;font-weight:700}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:16px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 18px}
+.card.pad0{padding:0;overflow:hidden}
+.card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px}
+.card-head .name{font-size:16px;font-weight:700}
+.card-head .sub{color:var(--muted);font-size:12px;margin-top:2px}
+.chip{display:inline-block;font-size:10px;font-weight:700;padding:2px 9px;border-radius:999px;text-transform:uppercase;letter-spacing:.3px}
+.chip.on{background:#1a3a2a;color:var(--green);border:1px solid var(--green)}
+.chip.off{background:#3a1a1a;color:var(--red);border:1px solid var(--red)}
+.chip.idle{background:#24292f;color:var(--muted);border:1px solid var(--border)}
+.totals{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0}
+.totals .k{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.4px;font-weight:600}
+.totals .v{font-size:15px;font-weight:700}
+.mk-bar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px}
+.mk-ex{display:inline-block;font-size:11px;color:var(--accent);text-decoration:none;border:1px solid var(--border);border-radius:999px;padding:2px 9px}
+.mk-ex.dex{border-style:dashed}
+.mk-ex.none{color:var(--muted)}
+.up{color:var(--green)}.dn{color:var(--red)}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{text-align:left;color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;padding:9px 10px;border-bottom:1px solid var(--border)}
+td{padding:8px 10px;border-bottom:1px solid #232b37;vertical-align:top}
+tr:last-child td{border-bottom:none}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+.mono{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--muted)}
+.verdict{color:var(--muted);font-size:11.5px;line-height:1.5;white-space:pre-wrap}
+.err{margin-top:10px;padding:8px 10px;border:1px solid #5a2a2a;border-radius:8px;background:#241618;color:#f0a1a1;font-size:11.5px;word-break:break-word}
+.empty{color:var(--muted);font-size:13px;padding:26px;text-align:center;border:1px dashed var(--border);border-radius:12px}
+h2.sec{font-size:15px;margin:24px 0 10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-size:12px}
+form.inline{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px}
+form.inline label{display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--muted)}
+input,select,textarea{background:#0e1218;border:1px solid var(--border);color:var(--txt);border-radius:7px;padding:6px 9px;font-size:12.5px;font-family:inherit}
+input[type=checkbox]{width:auto}
+.panel{display:none}
+.panel.active{display:block}
+.toast{position:fixed;bottom:20px;right:20px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 18px;font-size:13px;z-index:200;display:none;max-width:420px}
+pre.out{background:#0e1218;border:1px solid var(--border);border-radius:8px;padding:10px;font-size:11px;max-height:280px;overflow:auto;white-space:pre-wrap;margin-top:10px}
+.foot{color:var(--muted);font-size:11px;margin-top:16px;text-align:right}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🪙 Tokens minés</h1>
+    <div style="display:flex;gap:8px">
+      <button class="btn outline" id="btnRefresh">Actualiser prix &amp; soldes</button>
+    </div>
+  </header>
+
+  <nav class="nav-tabs">
+    <a href="/dashboard">📊 Tableau de bord</a>
+    <a href="/machines">🖥️ Machines</a>
+    <a href="/mined" class="active">🪙 Tokens minés</a>
+    <a href="/settings">⚙️ Configuration</a>
+    <a href="/audit">📋 Audit Log</a>
+  </nav>
+
+  <div class="nav-tabs" style="border-bottom:none;margin-bottom:10px">
+    <button data-panel="mined" class="active">Campagnes &amp; historique</button>
+    <button data-panel="coins">Catalogue</button>
+    <button data-panel="wallets">Wallets</button>
+    <button data-panel="import">Import</button>
+  </div>
+
+  <div class="summary">
+    <div class="box"><span class="k">Valeur totale</span><span class="v" id="totalEur">—</span></div>
+    <div class="box"><span class="k">Valeur totale ($)</span><span class="v" id="totalUsd">—</span></div>
+    <div class="box"><span class="k">Campagnes en cours</span><span class="v" id="countActive">0</span></div>
+    <div class="box"><span class="k">Sans prix</span><span class="v" id="countUnpriced">0</span></div>
+  </div>
+
+  <!-- ── Tokens minés ─────────────────────────────────────────── -->
+  <section class="panel active" id="panel-mined">
+    <div class="empty" id="emptyMsg" style="display:none">
+      Aucune campagne. Importez l'historique (onglet « Import ») ou ajoutez un coin et un wallet.
+    </div>
+    <div class="grid" id="campaigns"></div>
+    <h2 class="sec">Historique</h2>
+    <div class="card pad0">
+      <table>
+        <thead><tr><th>Période</th><th>Coin</th><th class="num">Miné</th><th class="num">Prix</th><th class="num">Valeur</th><th>Exchanges</th><th>Bilan</th></tr></thead>
+        <tbody id="historyBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Catalogue ────────────────────────────────────────────── -->
+  <section class="panel" id="panel-coins">
+    <form class="inline" id="coinForm">
+      <label>Ticker<input id="cTicker" required maxlength="20" style="width:90px"></label>
+      <label>Nom<input id="cName" style="width:150px"></label>
+      <label>Algo<input id="cAlgo" style="width:150px"></label>
+      <label>Type<select id="cKind"><option value="both">both</option><option value="cpu">cpu</option><option value="gpu">gpu</option></select></label>
+      <label>CoinGecko id<input id="cCg" style="width:130px" placeholder="ex. pearl-2"></label>
+      <label style="flex-direction:row;align-items:center;gap:5px"><input type="checkbox" id="cCgVerified"> id vérifié</label>
+      <label>Prix manuel $<input id="cUsd" type="number" step="any" style="width:105px"></label>
+      <label>Prix manuel €<input id="cEur" type="number" step="any" style="width:105px"></label>
+      <button class="btn" type="submit">Ajouter au catalogue</button>
+    </form>
+    <div class="card pad0">
+      <table>
+        <thead><tr><th>Ticker</th><th>Nom</th><th>Type</th><th>CoinGecko</th><th class="num">Prix manuel</th><th>Exchanges</th><th class="num">Wallets</th><th></th></tr></thead>
+        <tbody id="coinBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Wallets ──────────────────────────────────────────────── -->
+  <section class="panel" id="panel-wallets">
+    <form class="inline" id="walletForm">
+      <label>Coin<select id="wCoin"></select></label>
+      <label>Adresse<input id="wAddress" required style="width:330px" class="mono"></label>
+      <label>Libellé<input id="wLabel" style="width:130px"></label>
+      <label>Emplacement<input id="wLocation" style="width:150px"></label>
+      <label>Chemin de sauvegarde<input id="wBackup" style="width:220px" placeholder="/chemin/vers/backup.dat"></label>
+      <label>Pool<select id="wPool"><option value=""></option><option value="luckypool">luckypool</option><option value="rplant">rplant</option><option value="solo">solo</option></select></label>
+      <button class="btn" type="submit">Ajouter le wallet</button>
+    </form>
+    <p class="mono" style="margin-bottom:10px">Fossor ne stocke jamais de seed, de phrase ou de mot de passe de wallet — uniquement l'adresse, l'emplacement et le chemin de sauvegarde.</p>
+    <div class="card pad0">
+      <table>
+        <thead><tr><th>Coin</th><th>Adresse</th><th>Libellé</th><th>Emplacement</th><th>Sauvegarde</th><th>Pool</th><th></th></tr></thead>
+        <tbody id="walletBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Import ───────────────────────────────────────────────── -->
+  <section class="panel" id="panel-import">
+    <div class="card">
+      <div class="card-head"><div><div class="name">Importer l'historique (mining-status.json + mining-live.json)</div>
+        <div class="sub">Idempotent : un second import ne crée aucun doublon. Commencez par un <code>dry_run</code>.</div></div></div>
+      <form class="inline" id="importForm">
+        <label>mining-status.json<input type="file" id="fStatus" accept="application/json"></label>
+        <label>mining-live.json<input type="file" id="fLive" accept="application/json"></label>
+        <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="dryRun" checked> dry_run (aucune écriture)</label>
+        <button class="btn" type="submit">Importer</button>
+      </form>
+      <pre class="out" id="impOut" style="display:none"></pre>
+    </div>
+  </section>
+
+  <div class="foot" id="foot"></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const nf = (v, d) => v === null || v === undefined ? '—' : Number(v).toLocaleString('fr-FR', {maximumFractionDigits: d});
+const fmtAmt = v => v === null || v === undefined ? '—' : nf(v, Math.abs(v) >= 1000 ? 2 : (Math.abs(v) >= 1 ? 4 : 8));
+const fmtEur = v => v === null || v === undefined ? '—' : nf(v, 2) + ' €';
+const fmtUsd = v => v === null || v === undefined ? '—' : nf(v, 2) + ' $';
+const fmtPrice = (v, cur) => v === null || v === undefined ? '—' : (Math.abs(v) >= 1 ? nf(v, v >= 100 ? 0 : 2) : Number(v).toPrecision(3)) + (cur === 'eur' ? ' €' : ' $');
+const shortAddr = a => !a ? '—' : (a.length > 24 ? a.slice(0, 10) + '…' + a.slice(-6) : a);
+const fmtDate = iso => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso);
+  return d.toLocaleDateString('fr-FR', {day: '2-digit', month: '2-digit', year: '2-digit'});
+};
+
+let toastTimer = null;
+function toast(msg, bad) {
+  const el = $('#toast');
+  el.textContent = msg;
+  el.style.borderColor = bad ? 'var(--red)' : 'var(--border)';
+  el.style.display = 'block';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.style.display = 'none'; }, 4200);
+}
+
+async function api(path, options) {
+  const opts = Object.assign({headers: {'Content-Type': 'application/json'}}, options || {});
+  const res = await fetch(path, opts);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || res.statusText);
+  return data;
+}
+
+function exChips(exchanges) {
+  if (!exchanges || !exchanges.length) return '<span class="mk-ex none">non listé</span>';
+  return exchanges.map(e => '<a class="mk-ex' + (e.dex ? ' dex' : '') + '" href="' + esc(e.url || '#') + '" target="_blank" rel="noopener" title="' + esc(e.pair || '') + '">' + esc(e.name) + '</a>').join('');
+}
+
+function campaignCard(c) {
+  const pool = c.pool_balance;
+  let poolHtml = '';
+  if (pool) {
+    const parts = [];
+    if (pool.available) {
+      parts.push('payé ' + fmtAmt(pool.paid) + ' · non payé ' + fmtAmt(pool.unpaid) + ' · immature ' + fmtAmt(pool.immature));
+    } else {
+      parts.push(esc(pool.note || 'API du pool : pas de donnée par wallet'));
+    }
+    if (pool.threshold !== null && pool.threshold !== undefined) parts.push('seuil ' + fmtAmt(pool.threshold) + ' ' + esc(c.ticker));
+    poolHtml = '<div class="err" style="border-color:var(--border);background:#0e1218;color:var(--muted)">'
+      + '<strong>Pool ' + esc(c.pool_balance ? 'Luckypool' : '') + '</strong> — ' + parts.join(' · ')
+      + (pool.source_url ? ' <a class="mk-ex" href="' + esc(pool.source_url) + '" target="_blank" rel="noopener">API</a>' : '')
+      + '</div>';
+  }
+  const change = c.change_24h === null || c.change_24h === undefined ? ''
+    : '<span class="' + (c.change_24h >= 0 ? 'up' : 'dn') + '">' + (c.change_24h >= 0 ? '▲' : '▼') + ' ' + nf(Math.abs(c.change_24h), 1) + ' %</span>';
+  return '<div class="card">'
+    + '<div class="card-head"><div><div class="name">' + esc(c.coin) + ' <span class="chip ' + (c.state === 'active' ? 'on' : 'idle') + '">' + esc(c.state) + '</span></div>'
+    + '<div class="sub mono">' + esc(c.ticker) + ' · ' + esc(c.machine || 'machine inconnue') + (c.pool ? ' · ' + esc(String(c.pool).slice(0, 42)) : '') + '</div></div>'
+    + '<div style="text-align:right"><div style="font-size:18px;font-weight:700">' + fmtEur(c.value_eur) + '</div>'
+    + '<div class="mono">' + fmtUsd(c.value_usd) + '</div></div></div>'
+    + '<div class="totals">'
+    + '<div><span class="k">Solde</span><span class="v">' + fmtAmt(c.balance) + '</span></div>'
+    + '<div><span class="k">Prix</span><span class="v">' + fmtPrice(c.price_eur, 'eur') + '</span></div>'
+    + '<div><span class="k">Depuis</span><span class="v">' + fmtDate(c.start_iso) + '</span></div>'
+    + '<div><span class="k">24 h</span><span class="v">' + (change || '—') + '</span></div>'
+    + '</div>'
+    + '<div class="mk-bar">' + exChips(c.exchanges) + (c.listed ? '' : '<span class="chip idle">non listé</span>')
+    + (c.price_source ? '<span class="chip idle">' + esc(c.price_source) + '</span>' : '') + '</div>'
+    + (c.wallet ? '<div class="mono" style="margin-top:8px">' + esc(shortAddr(c.wallet)) + '</div>' : '')
+    + poolHtml
+    + '</div>';
+}
+
+function historyRow(h) {
+  return '<tr>'
+    + '<td>' + fmtDate(h.start_iso) + ' → ' + fmtDate(h.end_iso) + '</td>'
+    + '<td>' + esc(h.coin) + '<div class="mono">' + esc(h.ticker) + '</div></td>'
+    + '<td class="num">' + fmtAmt(h.mined_amount) + '<div class="mono">' + esc(h.mined_raw || '') + '</div></td>'
+    + '<td class="num">' + fmtPrice(h.price_eur, 'eur') + '</td>'
+    + '<td class="num">' + fmtEur(h.value_eur) + '</td>'
+    + '<td>' + exChips(h.exchanges) + '</td>'
+    + '<td><button class="btn sm outline" data-verdict="' + h.id + '">Bilan</button></td>'
+    + '</tr>'
+    + '<tr id="verdict-' + h.id + '" style="display:none"><td colspan="7"><div class="verdict">' + esc(h.verdict || 'aucun bilan enregistré') + '</div></td></tr>';
+}
+
+async function loadMined() {
+  const data = await api('/api/mined');
+  $('#totalEur').textContent = fmtEur(data.total.eur);
+  $('#totalUsd').textContent = fmtUsd(data.total.usd);
+  $('#countActive').textContent = data.counts.campaigns;
+  $('#countUnpriced').textContent = data.total.unpriced_campaigns;
+  $('#emptyMsg').style.display = data.counts.campaigns ? 'none' : 'block';
+  $('#campaigns').innerHTML = data.campaigns.map(campaignCard).join('');
+  $('#historyBody').innerHTML = data.history.length
+    ? data.history.map(historyRow).join('')
+    : '<tr><td colspan="7" style="color:var(--muted)">Aucun historique importé.</td></tr>';
+  $('#foot').textContent = 'au ' + new Date(data.as_of).toLocaleString('fr-FR')
+    + ' · ' + data.counts.coins + ' coins · ' + data.counts.wallets + ' wallets'
+    + (data.offline ? ' · réseau désactivé' : '');
+  document.querySelectorAll('[data-verdict]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const row = document.getElementById('verdict-' + btn.dataset.verdict);
+      if (row) row.style.display = row.style.display === 'none' ? '' : 'none';
+    });
+  });
+}
+
+async function loadCoins() {
+  const coins = await api('/api/coins');
+  $('#coinBody').innerHTML = coins.length ? coins.map(c =>
+    '<tr><td><strong>' + esc(c.ticker) + '</strong></td><td>' + esc(c.name) + '</td><td>' + esc(c.kind) + '</td>'
+    + '<td class="mono">' + esc(c.coingecko_id || '—') + (c.coingecko_verified ? ' ✔' : '') + '</td>'
+    + '<td class="num">' + (c.manual_price_eur === null && c.manual_price_usd === null ? '—' : fmtPrice(c.manual_price_eur, 'eur')) + '</td>'
+    + '<td>' + exChips(c.exchanges) + '</td><td class="num">' + c.wallets + '</td>'
+    + '<td><button class="btn sm danger" data-delcoin="' + esc(c.ticker) + '">Suppr.</button></td></tr>'
+  ).join('') : '<tr><td colspan="8" style="color:var(--muted)">Catalogue vide.</td></tr>';
+
+  const select = $('#wCoin');
+  select.innerHTML = coins.map(c => '<option value="' + esc(c.ticker) + '">' + esc(c.ticker) + '</option>').join('');
+  document.querySelectorAll('[data-delcoin]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      try {
+        await api('/api/coins/' + encodeURIComponent(btn.dataset.delcoin), {method: 'DELETE'});
+        toast('Coin supprimé'); await loadCoins(); await loadMined();
+      } catch (err) { toast(err.message, true); }
+    });
+  });
+}
+
+async function loadWallets() {
+  const wallets = await api('/api/wallets');
+  $('#walletBody').innerHTML = wallets.length ? wallets.map(w =>
+    '<tr><td><strong>' + esc(w.coin_ticker) + '</strong></td>'
+    + '<td class="mono" title="' + esc(w.address) + '">' + esc(w.address) + '</td>'
+    + '<td>' + esc(w.label) + '</td><td>' + esc(w.location) + '</td>'
+    + '<td class="mono">' + esc(w.backup_path || '—') + '</td><td>' + esc(w.pool || '—') + '</td>'
+    + '<td><button class="btn sm danger" data-delwallet="' + w.id + '">Suppr.</button></td></tr>'
+  ).join('') : '<tr><td colspan="7" style="color:var(--muted)">Aucun wallet.</td></tr>';
+  document.querySelectorAll('[data-delwallet]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      try {
+        await api('/api/wallets/' + btn.dataset.delwallet, {method: 'DELETE'});
+        toast('Wallet supprimé'); await loadWallets(); await loadMined();
+      } catch (err) { toast(err.message, true); }
+    });
+  });
+}
+
+document.querySelectorAll('.nav-tabs button[data-panel]').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.nav-tabs button').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    const panel = document.getElementById('panel-' + tab.dataset.panel);
+    if (panel) panel.classList.add('active');
+  });
+});
+
+$('#btnRefresh').addEventListener('click', async () => {
+  try {
+    const res = await api('/api/mined/refresh', {method: 'POST'});
+    const pools = (res.pools || []).map(p => p.ticker + ':' + (p.ok ? 'ok' : 'échec')).join(', ');
+    toast('Prix : ' + Object.keys(res.prices.received || {}).length + ' · pools : ' + (pools || 'aucun'));
+    await loadMined();
+  } catch (err) { toast(err.message, true); }
+});
+
+$('#coinForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  const body = {
+    ticker: $('#cTicker').value.trim().toUpperCase(),
+    name: $('#cName').value.trim(),
+    algo: $('#cAlgo').value.trim(),
+    kind: $('#cKind').value,
+    coingecko_id: $('#cCg').value.trim() || null,
+    coingecko_verified: $('#cCgVerified').checked,
+    manual_price_usd: $('#cUsd').value === '' ? null : Number($('#cUsd').value),
+    manual_price_eur: $('#cEur').value === '' ? null : Number($('#cEur').value)
+  };
+  try {
+    await api('/api/coins', {method: 'POST', body: JSON.stringify(body)});
+    $('#coinForm').reset(); toast('Coin ajouté'); await loadCoins(); await loadMined();
+  } catch (err) { toast(err.message, true); }
+});
+
+$('#walletForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  const body = {
+    coin_ticker: $('#wCoin').value,
+    address: $('#wAddress').value.trim(),
+    label: $('#wLabel').value.trim(),
+    location: $('#wLocation').value.trim(),
+    backup_path: $('#wBackup').value.trim(),
+    pool: $('#wPool').value
+  };
+  try {
+    await api('/api/wallets', {method: 'POST', body: JSON.stringify(body)});
+    $('#walletForm').reset(); toast('Wallet ajouté'); await loadWallets(); await loadMined();
+  } catch (err) { toast(err.message, true); }
+});
+
+$('#importForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  const statusFile = $('#fStatus').files[0];
+  const liveFile = $('#fLive').files[0];
+  if (!statusFile || !liveFile) { toast('Deux fichiers JSON sont nécessaires', true); return; }
+  const form = new FormData();
+  form.append('status_file', statusFile);
+  form.append('live_file', liveFile);
+  form.append('dry_run', $('#dryRun').checked ? 'true' : 'false');
+  try {
+    const res = await fetch('/api/import/legacy/upload', {method: 'POST', body: form});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    $('#impOut').style.display = 'block';
+    $('#impOut').textContent = JSON.stringify(data, null, 1);
+    toast(data.dry_run ? 'dry_run : rien écrit' : 'Import terminé', false);
+    if (!data.dry_run) { await loadCoins(); await loadWallets(); await loadMined(); }
+  } catch (err) { toast(err.message, true); }
+});
+
+(async function init() {
+  try {
+    await loadMined();
+    await loadCoins();
+    await loadWallets();
+  } catch (err) {
+    toast(err.message, true);
+  }
+})();
+</script>
+</body>
+</html>

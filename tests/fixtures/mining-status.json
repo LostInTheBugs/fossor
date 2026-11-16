@@ -1,0 +1,194 @@
+{
+ "mode": "spec",
+ "current": {
+  "coin": "BigCoin",
+  "ticker": "BIG",
+  "algo": "SHA-256d → yespower 1.0 (transition bloc 19 500, ~95 blocs/16 h)",
+  "machine": "Host .51 (AMD Ryzen 5 3600, 6c/12t, CPU mining — 11 workers via mine-bigcoin.sh)",
+  "pool": "SOLO via nœud local bigcoind (getblocktemplate + generatetoaddress)",
+  "start_iso": "2026-11-14T00:39:00Z",
+  "end_iso": "2026-11-23T12:00:00Z",
+  "wallet_path": "/home/miner/bigcoin-mine/bigcoin/data/wallet-backup.dat",
+  "adresse": "REDACTED-WALLET",
+  "mined": "4300,00132350 BIG (11 adresses, solde au 15/11 12:30Z)",
+  "hashrate": "~7 kH/s (11 workers × ~650 H/s) ; réseau ~26,6 kH/s → part ~26 % (dominant)",
+  "lien_ann": "https://bitcointalk.org/index.php?topic=5598334.0",
+  "note": "Lancé 14/11 00:39Z — 11 workers yespower 1.0 actifs. Hashrate stable ~7 kH/s. Réseau ~26,6 kH/s, part ~26 %. Block 20000, difficulté 0,002474. txcount wallet: 152. 2 peers, chaîne synchro. Non listé, prix inconnu. SOLDE: 4300 BIG (11 adresses, balance RPC non accessible car wallet locked). Sauce prend : blocks réguliers ~2/h, yespower 1.0 stable depuis bloc 19500, hashrate réseau stable en croissance. End_iso 23/11 12:00Z (inchangé). 4080 .51 occupé Pearl (100% GPU util, P2, 314 W). NEB corrigé RETENU (mainnet 18/11 14h UTC, Suprminer 1.9.42 confirme GPU-mineable NEBHASH v2 KEP1/RET2) — LANÇABLE mais BLOCKED: .50 SSH KO, .51 4080 occupé Pearl, .1.15 SSH KO. À relancer dès retour Pearl 4080."
+ },
+ "updated": "2026-11-16T11:30:00Z.000000+00:00",
+ "last_tick": "2026-11-16T11:30:00Z",
+ "wam_spec": {
+  "coin": "WAM Coin",
+  "ticker": "WAM",
+  "algo": "RandomX CPU (clé rotative 2048 blocs) — wam-miner v0.1.8, 2 threads par machine",
+  "machine": "VM specbox-wam (PCRyzen .52, IP 192.0.2.93) + CPU du rig .50 (/root/wam/, screen 'wam') — hôte .52 off (burst seulement)",
+  "pool": "pool.wamcoin.org:3333 (PPLNS, frais 0 %, dev fee consensus 5 %) — 3 autres pools indépendants (ariabrain:3333, cryptopickaxe:6040, liquidpool:4333)",
+  "start_iso": "2026-09-15T00:00:00Z",
+  "end_iso": null,
+  "wallet_path": "specbox-wam:/home/miner/wam/backup/wam-wallet-backup-20260913.dat + copie Hermes ~/wallets/wam/ — phrase de récupération conservée hors ligne",
+  "adresse": "wam1qtest7a2b4c6d8e0f1g3h5j7k9m2n4p6r8s0t2v4w",
+  "hashrate": "VM ~0,57-0,61 kH/s + rig .50 CPU 1,26 kH/s ≈ 1,84 kH/s cumulés (~0,47 % du réseau 394,5 kH/s)",
+  "lien_ann": "https://bitcointalk.org/index.php?topic=5591218.0",
+  "note": "Fenêtre mainnet 96 h (15/09 00:00Z → 19/09 04:00Z) échue — jugement NEUTRE au tick 19/09 04:0xZ → campagne CPU CONTINUE sans limite (pas d'arrêt CPU sans chaîne morte/Fred). Watchdogs (auto-launch VM + wam-cron rig) auto-retirés à 04:00Z comme prévu ; couverture = ticks 6 h + @reboot (relance manuelle si mort). Solde wallet 411,75114022 WAM (19/09 04:0xZ ; ~+156/j) ; pool 790 blocs confirmés + 24 pending ; v0.1.9 = nMinimumChainWork (non mandatory). Non listé (« no market value » — confirmé). Ré-éval sauce/sapin à chaque tick ; arrêt = touch campaign-stop (VM ~/wam/ + rig /root/wam/) + quit screens. | 20/09 04:0xZ : sain — VM 519 H/s + rig .50 1,25 kH/s (≈ 1,77 kH/s cumulés) ; wallet 618,30630434 WAM (+~206/24 h) ; carte hub + collecteur v2.13 déployés. | 20/09 16:0xZ : sain — VM 575 H/s + rig 1,26 kH/s ; wallet 749,72 WAM (+131/12 h). | 21/09 00:0xZ : sain — VM 574 H/s + rig 1,26 kH/s ≈ 1,84 kH/s ; wallet 820,26325948 WAM (+70,5/6 h) ; réseau 237,7 kH/s (repli continu) ; pool 1 284 blocs confirmés + 48 pending / 1 orphelin ; post #17 (rapport J+4 : 17 finders, largest 61,2 %, v0.1.9). | 21/09 04:0xZ : sain — VM 521 H/s + rig .50 1,26 kH/s ; wallet 888,83115071 WAM (+68,6/6 h ≈ +274/j). | 22/09 04:0xZ : sain — VM 566,8 H/s + rig 1,21 kH/s ; wallet 1 117,85 WAM (+52,3/6 h). | 22/09 10:0xZ : sain — VM 504,6 H/s + rig 1,21 kH/s ; wallet 1 181,93766521 WAM (+64,1/6 h ≈ +256/j). | 23/09 00:0xZ : sain — VM 500 H/s + rig 1,20 kH/s ; wallet 1 315,63890620 WAM (+74,1/6 h ≈ +296/j). | 23/09 04:0xZ : sain — VM 510,9 H/s + rig 1,20 kH/s ; wallet 1 391,45458995 WAM (+75,8/6 h ~ +303/j) ; non liste. | 23/09 22:0xZ : reboot — rig relancé (gate fin-de-fenêtre retiré du wam-start.sh v2), VM wallet rechargé (boot-wam.sh v2 loadwallet auto) ; solde 1 576,74303520 WAM (+114,04/12 h) ; réseau 192,6 kH/s. | 24/09 04:0xZ : sain — VM 570,3 H/s (3 222 acc.) + rig .50 1,21 kH/s (1 482 acc., 6 rej, 2 blocs) ; wallet 1 617,34327644 WAM (+40,6/5,8 h) ; h 6 314 ; non listé. | 24/09 10... [truncated]"
+ },
+ "korsh_spec": {
+  "coin": "Korsh",
+  "ticker": "KSH",
+  "algo": "Yespower 1.0 CPU-only (N=256, r=8) — minage solo via daemon korshd v0.0.1 (generatetoaddress)",
+  "machine": "CPU du rig7095FA (.119, i5-4570, 1 thread — screen 'korsh-miner') ; nœud /root/korsh/",
+  "pool": "SOLO via nœud local (aucun pool utilisé ; endpoint stratum dev :3333 existe depuis v0.0.2 — non retenu, espérance solo ~18 h ≪ seuil 14 j)",
+  "start_iso": "2026-09-21T10:10:00Z",
+  "end_iso": null,
+  "wallet_path": "rig .50 : /root/korsh/backups/ (korsh-wallet-spec.dat + korsh-keys-dump.txt) + copie Hermes ~/wallets/korsh/ (600)",
+  "adresse": "Sfake1TestWalletAbCdEfGhIjKlMnOpQrStUvWx",
+  "hashrate": "~6,7 kH/s (1 thread) ; réseau ~573 kH/s → part ~1,2 %, bloc espéré ~1,4 h ; reward 2 KSH/bloc",
+  "lien_ann": "https://bitcointalk.org/index.php?topic=5594696.0",
+  "explorer": "https://explorer.195-26-244-209.sslip.io/",
+  "note": "Lancé 21/09 10:10Z (règle 07/09). Fork Smartiecoin/Dash (port Bitcoin v30.x), genèse 20/09 06:33Z vérifiée sur notre nœud (000017ec…), chaîne live. Binaires Linux officiels v0.0.1 SHA256 34e888d7… vérifiés vs SHA256SUMS.txt ; libs apt installées (libdb5.3++, libminiupnpc17, libnatpmp1, libevent-2.1-7, libevent-pthreads-2.1-7, libsodium23). Scripts : korsh-miner.sh, korsh-cron.sh (watchdog */5 + @reboot) ; arrêt = touch /root/korsh/campaign-stop + screen quit. Pas de limite (CPU). TODO prochain tick : intégrer carte au collecteur + page hub. | 21/09 22:1xZ : 4 KSH murs (h 415 + h 569) ; pas de nouveau bloc (normal — reseau monte a 4,25 MH/s, part ~0,16 %, esperance ~10 h/bloc) ; h 1 110, peers 4, watchdog */5 OK ; ANN sans reponse (topic neuf). | 22/09 04:0xZ : 3e bloc h 1 034 (21/09 20:50:20Z) → 6 KSH mûrs ; h 1 439, réseau ~3,14 MH/s (part ~0,13 %) ; solo maintenu. | 22/09 10:0xZ : 2 NOUVEAUX blocs (07:57:01Z, 08:16:52Z) → 5 blocs, solde 10,00003221 KSH ; h 1 785, réseau ~4,81 MH/s (part ~0,13 %) ; solo maintenu. | 23/09 00:0xZ : pas de nouveau bloc (dernier 11:01:49Z) ; h 2 465, réseau 7,13 MH/s (part ~0,09 %, espéré ~18 h), peers 4 ; watchdog OK ; solo maintenu. | 23/09 04:0xZ : pas de nouveau bloc (6 blocs = 12,00003221 KSH, dernier 22/09 11:01:49Z) ; h 2 801 (~64 s/bloc), reseau ~3,87 MH/s, peers 4, watchdog OK ; GitHub du OP (KorshDev/Korsh) 404 mais repo actif Korsh-Dev/Korsh-Code-Mainnet (cree 23/09 01:30Z, pousse 01:50Z, C++ 68 Mo) -> source demenagee, pas de sapin. | 23/09 22:0xZ : post-reboot — wallet rechargé (loadwallet) + korsh-cron.sh v2 ; solde 14,00003221 KSH, h 3 820, réseau ~7,69 MH/s. | 24/09 04:0xZ : sain — 7 blocs = 14,00003221 KSH (pas de nouveau bloc depuis 23/09 04:29Z — variance), h 4 163, réseau ~5,76 MH/s (part ~0,12 %), peers 4 ; watchdog OK ; solo maintenu. | 24/09 10:0xZ : 8e bloc TROUVÉ 09:55:26Z (h 4 492, 000000019562b6cf…) mais ORPHELIN — course perdue d'une sec... [truncated]"
+ },
+ "history": [
+  {
+   "coin": "BigCoin",
+   "ticker": "BIG",
+   "algo": "yespower 1.0",
+   "start_iso": "2026-11-14T00:39:00Z",
+   "end_iso": "2026-11-15T11:18:28.862320+00:00",
+   "mined": "4300,00132350 BIG (solde au 15/11 12:30Z)",
+   "verdict": "prolongation — sauce prend"
+  },
+  {
+   "coin": "ONE MILLION SATOSHIS",
+   "ticker": "OMS",
+   "algo": "BLAKE2b (format BTCB2) — supryolo v0.2.1-oms1 (CUDA) — RTX 3080 (rig .50) + RTX 4080 (PCRyzen .52)",
+   "start_iso": "2026-09-13T10:21:00Z",
+   "end_iso": "2026-09-17T10:02:00Z",
+   "mined": "59 BTC (59 blocs solo : 44 mûrs + 15 immatures) — non listé",
+   "adresse": "REDACTED-WALLET",
+   "verdict": "Fin 96 h (clôture neutre : non listé, réseau en repli) — retour Pearl 2 GPU vérifié (355,8 + 198,6 TH/s)",
+   "lien_ann": "https://bitcointalk.org/index.php?topic=5593862.0"
+  },
+  {
+   "coin": "QDAY",
+   "ticker": "QDAY",
+   "algo": "BLAKE2b-256 PoW (fork Sia) — miner CPU natif du wallet QDAY-Wallet 1.0.0 (solo, 5 threads)",
+   "start_iso": "2026-09-11T10:12:00Z",
+   "end_iso": "2026-10-01T22:12:00Z",
+   "mined": "64 QDAY (mûrs, wallet dédié — non listé)",
+   "adresse": "REDACTED-WALLET",
+   "verdict": "Arrêt anticipé 02/10 (sapin) : chaîne figée au bloc 24 689 depuis le 28/09 14:14:13Z (3,3 j sans bloc, blocs vides), pool officiel pqday.com hors ligne, dev muet depuis le 23/09 — relançable en 1 commande (retirer ~/qday/campaign-stop + boot-qday.sh)",
+   "lien_ann": "https://bitcointalk.org/index.php?topic=5594351.0"
+  },
+  {
+   "ticker": "CMFD",
+   "algo": "ForgeMatrix v4 / ProductionV4 (pipeline : Rust challenge -> CUDA replay/search INT8 -> re-verification Rust, 'matrix attempts/s')",
+   "wallet": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+   "adresse": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+   "lien_ann": "https://bitcointalk.org/index.php?topic=5595093.0",
+   "start_iso": "2026-10-03T10:35:34Z",
+   "end_iso": null,
+   "status": "bloqué",
+   "mined": "0 CMFD (miner n'a jamais démarré — modèle bank HTTP 416)",
+   "notes": "cmfd-launch fetch --wait bloqué : V4-MODEL-V2.bank parts 02-04 HTTP 416. Mainnet beacon 17:00Z passé, miner n'a jamais joint 'pool'. screen 'cmfd' existait mais aucun process cmfd-miner. Arrêté 03/10 ~19:40Z via cmfd-stop.sh. Retour Pearl 365,7 TH/s @ 699 W — 5 GPU, 0 rejet. | 04/10 04:0xZ : sapin confirme (pool TCP refused Hermes+rig ; BCT : mainnet failed/p2p broken ; bans Discord) — ne pas relancer."
+  },
+  {
+   "coin": "NACRE",
+   "ticker": "NACR",
+   "algo": "Pearl-PoUW (merge-miné) — SRBMiner-Multi 3.7.1 pearlhash (5 GPU, rig .50, HimPool)",
+   "start_iso": "2026-10-11T16:07:01Z",
+   "end_iso": "2026-10-12T16:00:00Z",
+   "mined": "4,7463 NACR (2 payouts on-chain, pool HimPool, adresses REDACTED-WALLET — 474630000 × 10⁻⁸)",
+   "adresse": "REDACTED-WALLET",
+   "lien_ann": "https://bitcointalk.org/index.php?topic=5596330.0",
+   "verdict": "Burst 24h clos — retour Pearl vérifié 304,14 TH/s. NACRE: 4,7463 NACR minés via HimPool. Réseau NACRE: 3595 blocs, 5 miners sur HimPool. Non listé/pas de prix → valeur inconnue. Sauce en cours (blocks réguliers, pool actif, dev BCT actif), mais pas encore listé. Option: Pearl merge NACR via HimPool pour accumuler sans basculer."
+  },
+  {
+   "coin": "Athlon-3000G",
+   "ticker": "ATHLON",
+   "algo": "3×RTX 5060 Ti 8Go + AMD Athlon 3000G CPU — disponible pour Pearl (pearlhash) et Spec Mining (GPU/CPU)",
+   "hardware": {
+    "name": "Athlon-3000G",
+    "ip": "192.0.2.147",
+    "gpus": [
+     "RTX 5060 Ti 8Go x3",
+     "AMD Athlon 3000G CPU"
+    ],
+    "ssh": "configuré"
+   },
+   "pearl": {
+    "algo": "pearlhash — SRBMiner-Multi 3.7.1",
+    "pool": "pearl-eu2.luckypool.io:3360",
+    "hashrate_est_ths": 900.0,
+    "power_w": 480,
+    "wallet": "même wallet que rig7095FA (.119)"
+   },
+   "spec": {
+    "note": "Disponible pour future campagne Spec Mining (GPU CUDA + CPU)"
+   },
+   "status": "ready",
+   "verdict": "PC ajouté le 31/10 — disponible Pearl + Spec Mining"
+  }
+ ],
+ "events": [
+  {
+   "ts": "2026-11-15T11:18:28.862320+00:00",
+   "type": "prolongation",
+   "msg": "BigCoin : la sauce prend (blocks réguliers ~2/h, yespower 1.0 stable, réseau 25,4 kH/s stable, 2 peers). End_iso prolongé de 18/11 23:14Z → 23/11 12:00Z (+96 h). Solde wallet: 4 300,00132350 BIG."
+  },
+  {
+   "ts": "2026-11-14T00:39:00Z",
+   "type": "bascule",
+   "msg": "BASCULE BigCoin (BIG) — LANÇÉ sur host .51. CPU mining via mine-bigcoin.sh (11 workers, ~366 MH/s). Wallet dédié REDACTED-WALLET (backup: data/wallet-backup.dat). SHA-256d → yespower 1.0 au bloc 19 500 (~16 h). Difficulté 13,3 (réseau ~105 MH/s, nous ~348 %). Non listé. Fin adaptative 96 h (18/11 00:39Z). Pearl .50 intact."
+  },
+  {
+   "ts": "2026-11-13T12:00Z",
+   "type": "tick",
+   "msg": "TICK 12h (13/11) — mode=pearl. Scan: Opacra 12j SURVEILLANCE (RandomOPCA/CPU, 3 pools, Monero-based, hors fenêtre) ; BitMonero 10 mois SURVEILLANCE ; Aegis 14j SURVEILLANCE (Windows-only) ; Blazecoin REJETÉ (Scrypt ASIC). Aucun LANÇABLE. SHEAR jobs armés 16/11. Rig .50 WAM/KORSH actifs. .52 DOWN."
+  },
+  {
+   "ts": "2026-11-13T00:00Z",
+   "type": "tick",
+   "msg": "TICK 00h (13/11) — mode=pearl. Rig .50 sain : Pearl 326.95 TH/s @ 503 W (5 GPU, shares acceptées, 0 rejet). WAM actif, KORSH sain. Scan ANN (5 candidats) : GROX (RandomX ~1.5h, aucune trace web = risque malware → REJETÉ), NEXC (Ethash ~2.5h, auteur supprimé, pas de pool/miner → REJETÉ), NORTH (32j, pool IronPool actif → SURVEILLANCE), VMRX (8j, .52 down → SURVEILLANCE), KWD (SHA-256 ASIC-only → REJETÉ). Aucun lançable. Guet SHEAR : jobs armés pour 16/11 14:00Z."
+  },
+  {
+   "ts": "2026-11-11T17:46Z",
+   "type": "tick",
+   "msg": "Scan ANN/miningpoolstats/releases: 5 candidats, aucun lançable. VMRX SURVEILLANCE (VM .52 DOWN, WAM CPU .50). Opacra SURVEILLANCE (10j, hors fenêtre). NEXC REJETÉ (red flags). BRVA REJETÉ (72j)."
+  },
+  {
+   "ts": "2026-11-05T05:07:00Z",
+   "type": "tick",
+   "msg": "TICK 05h (05:07Z) — mode=pearl. Rig .50 OK (SRBMiner 3.8.3, ~305 TH/s, 0 rejet, 5 GPU). Scan BCT ANN (72h) + miningpoolstats/newcoins + releases miners. AUCUN candidat lançable. BTCMOI (SHA-256, mainnet 5 Nov) → ASIC-only rejete. Boing Network (PoS+HotStuff) → pas de PoW, rejete. CHAMBY → pas de PoW, rejete. TENERO/MIDWIMBLE/VMRX/ZQV/GENORYN/SUMUWW statuts inchangés (surveillance). SRBMiner 3.8.0 (22/10) = pearlhash/quantus améliorés, AUCUN nouvel algo coin. miningpoolstats rien <72h (QTC 42j, QWC 33j, BTGS 30j — tous hors fenêtre ou ASIC). INFRA : .51 UP ; .52 toujours KO (8,8 j depuis 09/10 09:51Z — campagnes CPU/VMs en pause). Guets : SHEAR 16/11 14:00Z (jobs armés), QDAY explorer injoignable (TCP 443 KO), NACRE/VELA/OMS clos. SRBMiner 3.8.3 sur rig — 3.8.0 disponible (pearlhash/quantus, pas de nouveau coin signalé) — pas de bascule à chaud."
+  },
+  {
+   "ts": "2026-11-14T06:00Z",
+   "type": "tick",
+   "msg": "TICK 06h (14/11) — mode=spec BigCoin. 9 blocs trouvés = 450 BIG (immatures, 100 confs). h 19443/19500 → transition yespower dans ~9,5 h. Workers SHA-256d ~366 MH/s (domination ~348 %, réseau ~105 MH/s). Wallet mining (mine1-11) ≠ wallet-backup.dat (à corriger). Aucun nouveau coin lançable (ANN: QIE PoS-only REJETÉ; miningpoolstats: tous SHA-256/Scrypt/ETH ou >72h). SHEAR jobs armés. Rig .50/.121 injoignables. Pearl .51 UP."
+  },
+  {
+   "ts": "2026-11-14T17:01:00Z",
+   "type": "prolongation",
+   "msg": "BigCoin : sauce prend (yespower stable, 48 blocs, blocks réguliers ~2/h, domination réseau intacte). Prolongation +96 h → fin 18/11 17:01Z."
+  },
+  {
+   "ts": "2026-11-14T23:14:00Z",
+   "type": "prolongation",
+   "msg": "BigCoin : sauce prend (2650 BIG minés, 19671 blocs, réseau 29,4 kH/s en croissance, blocks réguliers ~2/h, hashrate stable ~7 kH/s, part ~24 %). Prolongation +96 h → fin 18/11 23:14Z. Host .51 UP, 11 workers actifs."
+  },
+  {
+   "ts": "2026-11-15T23:40:22Z",
+   "type": "tick",
+   "msg": "TICK 12h (16/11) — mode=spec BigCoin (end_iso 23/11 12:00Z, blocks réguliers ~2/h, ~2650 BIG). Scan BCT ANN (72h) : TING SURVEILLANCE (GPU mineable SHA-256 custom, pool tiers, ~220 GH/s, 26j hors fenêtre mais signaux frais). GROX SURVEILLANCE (RandomX variant, 5% premine + 5% devfund). BTCOIN REJETÉ (SHA-256 ASIC-only). OBSC SURVEILLANCE (testnet, dev connu Bahnsen). NEB SURVEILLANCE (mainnet 18/11, algo neural network probablement ASIC-only). Orange 52j hors fenêtre. Aucun LANÇABLE ce tick. .50/.155 SSH KO (auth), ping OK. wam_spec et korsh_spec actifs sur .50."
+  },
+  {
+   "ts": "2026-11-16T11:30:00Z",
+   "type": "tick",
+   "msg": "TICK 12h (16/11) — mode=spec BigCoin (end_iso 23/11 12:00Z, blocks réguliers ~2/h). Scan BCT ANN: TING SURVEILLANCE (GPU mineable SHA-256 custom, pool tiers, ~220 GH/s). GROX SURVEILLANCE (RandomX, 5% premine+5% devfund). BTCOIN REJETÉ (SHA-256 ASIC-only). OBSC SURVEILLANCE (testnet, dev connu). NEB SURVEILLANCE (mainnet 18/11, algo neural probablement ASIC-only). Orange 52j hors fenêtre. Aucun LANÇABLE."
+  },
+  {
+   "ts": "2026-11-16T06:00:00Z",
+   "type": "tick",
+   "msg": "TICK 06h (16/11) — mode=spec BigCoin (end_iso 23/11 12:00Z, blocks réguliers ~2/h, block 20000, 152 tx). NEB corrigé: RETENU (auparavant SURVEILLANCE 'algo probablement ASIC-only' — correction: NEBHASH v2/KEP1/RET2 CUDA confirmé GPU-mineable via Suprminer 1.9.42 + nebx-miner, mainnet 18/11 14h UTC, pools Suprnova/NurseryPool). LANÇABLE mais BLOCKED: .50 SSH KO (auth), .1.15 SSH KO, .51 4080 occupé Pearl (100% GPU, P2, 314 W). KpowBIT 38j SURVEILLANCE. QWC 2mois SURVEILLANCE. TING 28j SURVEILLANCE. GROX 5j SURVEILLANCE (RandomX, 5% premine). SSH .50/.195 persistamment KO. BigCoin: sauce prend, end_iso 23/11 inchangé."
+  }
+ ],
+ "analyses": []
+}

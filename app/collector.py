@@ -75,6 +75,65 @@ def _numeric(value: float | None) -> float | None:
     return float(value) if isinstance(value, (int, float)) else None
 
 
+async def _ensure_devices(db, machine) -> bool:
+    """Detect a machine once when it has no device row yet (§4.2).
+
+    A machine that was never « detected » stores its GPU metrics with
+    ``device_uuid = NULL`` and nothing shows per card.  The first successful
+    collection therefore runs one whitelisted ``detect_hw`` (audited, actor
+    ``scheduler``); the metrics of the same round then attach by PCI bus.
+    """
+    from app.devices import apply_detection
+    from app.models import AuditLog, Device
+    from app.ssh_client import ssh_detect_hw
+
+    present = (
+        db.query(Device)
+        .filter(Device.machine_id == machine.id, Device.present == True)  # noqa: E712
+        .count()
+    )
+    if present:
+        return False
+
+    try:
+        raw = await ssh_detect_hw(machine)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("détection automatique de %s en échec: %s", machine.name, exc)
+        return False
+
+    if not raw.get("ok"):
+        logger.info("détection automatique de %s impossible: %s", machine.name, raw.get("error"))
+        db.add(AuditLog(
+            actor="scheduler",
+            action="detect",
+            machine_id=machine.id,
+            object_ref=machine.name,
+            result="fail",
+            output=str(raw.get("error") or "")[:500],
+        ))
+        db.commit()
+        return False
+
+    # ssh_detect_hw already returns the parsed detection; older shapes carry stdout.
+    detected = raw
+    if "cpu" not in raw and "gpus" not in raw and raw.get("stdout"):
+        from app.hw_parser import parse_detect_hw
+
+        detected = parse_detect_hw(raw.get("stdout", ""))
+
+    summary = apply_detection(db, machine, detected)
+    db.add(AuditLog(
+        actor="scheduler",
+        action="detect",
+        machine_id=machine.id,
+        object_ref=machine.name,
+        result="ok",
+        output=("détection automatique (1re collecte) " + str(summary))[:500],
+    ))
+    db.commit()
+    return True
+
+
 def _store_metrics(db, machine, stats: dict[str, Any], ts: str) -> int:
     """Insert one metric row per parsed device, then upsert ``machine_status``."""
     from app.models import Device, MachineStatus, Metric
@@ -233,6 +292,9 @@ async def collect_machine(machine_id: int) -> dict[str, Any]:
             return {"machine_id": machine_id, "name": machine.name, "online": False, "error": error}
 
         stats = parse_collect_stats(raw.get("stdout", ""))
+        # §4.2: first collection of a machine without devices → detect once,
+        # so this round's GPU metrics attach by PCI bus instead of NULL.
+        await _ensure_devices(db, machine)
         if stats.get("api_port"):
             api = await fetch_srbminer(machine.host, int(stats["api_port"]))
             if api:

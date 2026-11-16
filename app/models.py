@@ -1,4 +1,4 @@
-from sqlalchemy import String, Integer, Boolean, DateTime, Text, ForeignKey, JSON, Float, Index
+from sqlalchemy import String, Integer, Boolean, DateTime, Text, ForeignKey, JSON, Float, Index, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime, timezone
 import enum
@@ -170,6 +170,101 @@ class Metric(Base):
     fan_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
     load_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class Coin(Base):
+    """Token catalogue (§4.3): ticker, links, verified CoinGecko id, exchanges, manual price."""
+
+    __tablename__ = "coins"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ticker: Mapped[str] = mapped_column(String(20), unique=True, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(120), default="")
+    algo: Mapped[str] = mapped_column(String(160), default="")
+    kind: Mapped[str] = mapped_column(String(10), default="both")  # cpu | gpu | both
+    site_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    ann_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    explorer_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Only a *verified* id may be used for pricing: a wrong id silently prices another coin.
+    coingecko_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    coingecko_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    exchanges: Mapped[list] = mapped_column(JSON, default=list)
+    manual_price_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    manual_price_eur: Mapped[float | None] = mapped_column(Float, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class Wallet(Base):
+    """Wallet address (§4.4). Never a seed, a password or a private key."""
+
+    __tablename__ = "wallets"
+    __table_args__ = (UniqueConstraint("coin_ticker", "address", name="uq_wallet_coin_address"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    coin_ticker: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    address: Mapped[str] = mapped_column(String(255), nullable=False)
+    label: Mapped[str] = mapped_column(String(100), default="")
+    location: Mapped[str] = mapped_column(String(200), default="")  # machine / VM where the wallet lives
+    backup_path: Mapped[str] = mapped_column(String(500), default="")  # path only
+    pool: Mapped[str] = mapped_column(String(30), default="")  # luckypool | rplant | solo | ""
+    created_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class MinedCampaign(Base):
+    """A mining campaign — running (``active``) or imported from the legacy history."""
+
+    __tablename__ = "mined_campaigns"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Stable identity for idempotent imports (``current``, ``wam_spec``, ``history:<hash>``).
+    legacy_key: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    source: Mapped[str] = mapped_column(String(20), default="legacy")
+    coin_ticker: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    coin_name: Mapped[str] = mapped_column(String(160), default="")
+    state: Mapped[str] = mapped_column(String(16), default="active")  # active | ended | blocked
+    start_iso: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    end_iso: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    mined_raw: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mined_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    mined_unit: Mapped[str] = mapped_column(String(20), default="")
+    verdict: Mapped[str | None] = mapped_column(Text, nullable=True)
+    machine: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pool: Mapped[str | None] = mapped_column(Text, nullable=True)
+    algo: Mapped[str | None] = mapped_column(Text, nullable=True)
+    wallet_address: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    hashrate: Mapped[str | None] = mapped_column(Text, nullable=True)
+    links: Mapped[dict] = mapped_column(JSON, default=dict)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_balance: Mapped[float | None] = mapped_column(Float, nullable=True)
+    balance_note: Mapped[str] = mapped_column(String(160), default="")
+    created_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class PoolBalance(Base):
+    """Last known pool balance of one wallet (§4.16) — one row per wallet."""
+
+    __tablename__ = "pool_balances"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    wallet_id: Mapped[int] = mapped_column(Integer, ForeignKey("wallets.id"), unique=True, nullable=False)
+    pool: Mapped[str] = mapped_column(String(30), nullable=False)
+    coin_ticker: Mapped[str] = mapped_column(String(20), nullable=False)
+    available: Mapped[bool] = mapped_column(Boolean, default=False)
+    paid: Mapped[float | None] = mapped_column(Float, nullable=True)
+    unpaid: Mapped[float | None] = mapped_column(Float, nullable=True)
+    immature: Mapped[float | None] = mapped_column(Float, nullable=True)
+    threshold: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_payment_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    last_payment_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_payment_tx: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    source_url: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    raw: Mapped[dict] = mapped_column(JSON, default=dict)
+    fetched_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
 
 
 class AuditLog(Base):

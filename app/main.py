@@ -11,6 +11,8 @@ from app.routers.ai import router as ai_router
 from app.routers.hermes import router as hermes_router
 from app.routers.update import router as update_router
 from app.routers.metrics import router as metrics_router
+from app.routers.coins import router as coins_router
+from app.routers.mined import router as mined_router
 from app.routers.ui import router as ui_router
 from pathlib import Path
 
@@ -34,7 +36,19 @@ app.include_router(ai_router)
 app.include_router(hermes_router)
 app.include_router(update_router)
 app.include_router(metrics_router)
+app.include_router(coins_router)
+app.include_router(mined_router)
 app.include_router(ui_router)
+
+
+@app.get("/mined", response_class=HTMLResponse)
+def mined_page(request: Request):
+    """Écran « Tokens minés » (§6 écran 3)."""
+    from app.auth import get_current_user
+
+    if not get_current_user(request):
+        return RedirectResponse(url="/", status_code=303)
+    return HTMLResponse((STATIC_DIR / "mined.html").read_text())
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
