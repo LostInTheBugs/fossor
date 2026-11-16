@@ -18,6 +18,14 @@ def machines_page(request: Request):
     return HTMLResponse(html)
 
 
+@router.get("/settings", response_class=HTMLResponse)
+def settings_page(request: Request):
+    if not get_current_user(request):
+        return RedirectResponse(url="/", status_code=303)
+    require_login(request)
+    return HTMLResponse((STATIC_DIR / "settings.html").read_text())
+
+
 @router.get("/audit", response_class=HTMLResponse)
 def audit_page(request: Request):
     if not get_current_user(request):

@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fossor — Configuration</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#12161c;--card:#1a2029;--border:#2c3544;--txt:#e6edf3;--muted:#8b98a9;--accent:#4f8cff;--green:#3fb950;--red:#f85149;--yellow:#d29922}
+body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;min-height:100vh}
+.wrap{max-width:1100px;margin:0 auto;padding:28px 18px 40px}
+header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
+header h1{font-size:26px}
+.nav-tabs{display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--border)}
+.nav-tabs a{color:var(--muted);padding:8px 16px;font-size:13.5px;font-weight:600;text-decoration:none;border:1px solid transparent;border-bottom:none;border-radius:10px 10px 0 0}
+.nav-tabs a:hover{color:var(--txt)}
+.nav-tabs a.active{background:var(--card);border-color:var(--border);color:var(--txt)}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:18px}
+.card h2{font-size:15px;margin-bottom:4px}
+.card .sub{color:var(--muted);font-size:12px;margin-bottom:14px}
+.kv{display:grid;grid-template-columns:180px 1fr;gap:6px 14px;font-size:13px;margin-bottom:12px}
+.kv dt{color:var(--muted)}
+.kv dd{font-family:ui-monospace,Consolas,monospace;font-size:12px}
+.chip{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 9px;border-radius:999px;text-transform:uppercase;letter-spacing:.3px}
+.chip.on{background:#1a3a2a;color:var(--green);border:1px solid var(--green)}
+.chip.off{background:#24292f;color:var(--muted);border:1px solid var(--border)}
+.chip.warn{background:#3a2f1a;color:var(--yellow);border:1px solid var(--yellow)}
+.chip.err{background:#3a1a1a;color:var(--red);border:1px solid var(--red)}
+.btn{background:var(--accent);color:#fff;border:none;padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
+.btn:hover{opacity:.85}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.outline{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+.btn.sm{padding:4px 10px;font-size:11.5px}
+.field{margin-bottom:12px}
+.field label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px;font-weight:600}
+.field input,.field select{background:var(--bg);color:var(--txt);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit;width:100%;max-width:420px}
+.field input[type=checkbox]{width:auto;margin-right:6px;accent-color:var(--accent)}
+.row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+.actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.notes{font-size:12.5px;line-height:1.5}
+.note{border-left:2px solid var(--accent);padding:6px 0 6px 12px;margin-bottom:12px}
+.note h3{font-size:13px;margin-bottom:4px}
+.note .body{color:var(--muted);white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace;font-size:11.5px;max-height:220px;overflow:auto}
+.diff{font-size:12.5px;margin-top:12px;display:none}
+.diff table{width:100%;border-collapse:collapse}
+.diff td,.diff th{padding:4px 6px;border-bottom:1px solid var(--border);text-align:left;font-size:12px}
+.diff th{color:var(--muted);font-size:10.5px;text-transform:uppercase}
+.diff .add{color:var(--green)}.diff .mod{color:var(--yellow)}.diff .del{color:var(--red)}
+.empty{color:var(--muted);font-size:12.5px}
+.toast{position:fixed;bottom:20px;right:20px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 18px;font-size:13px;z-index:200;display:none;max-width:480px}
+.toast.ok{border-color:var(--green)}.toast.err{border-color:var(--red)}
+.mono{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div><h1>⛏️ Fossor</h1><span style="color:var(--muted);font-size:13px">Configuration</span></div>
+    <button class="btn sm outline" id="logoutBtn">Déconnexion</button>
+  </header>
+
+  <nav class="nav-tabs">
+    <a href="/machines">🖥️ Machines</a>
+    <a href="/settings" class="active">⚙️ Configuration</a>
+    <a href="/audit">📋 Audit Log</a>
+  </nav>
+
+  <div class="card">
+    <h2>Mise à jour</h2>
+    <div class="sub">Vérification automatique des releases GitHub (intervalle réglable par <span class="mono">FOSSOR_UPDATE_CHECK_INTERVAL</span>, 0 = désactivé).</div>
+    <dl class="kv">
+      <dt>Version installée</dt><dd id="vInstalled">…</dd>
+      <dt>Dernière version publiée</dt><dd id="vLatest">…</dd>
+      <dt>État</dt><dd id="vState">…</dd>
+      <dt>Dernier contrôle</dt><dd id="vChecked">—</dd>
+      <dt>Requêtes GitHub restantes</dt><dd id="vRate">—</dd>
+      <dt>Prochaine vérification</dt><dd id="vInterval">—</dd>
+    </dl>
+    <div class="actions">
+      <button class="btn outline" id="checkBtn">Vérifier maintenant</button>
+    </div>
+    <div id="updateError" class="empty" style="margin-top:10px;color:var(--red)"></div>
+    <div id="notesWrap" style="margin-top:14px"></div>
+  </div>
+
+  <div class="card">
+    <h2>Exporter la configuration</h2>
+    <div class="sub">JSON versionné : machines, devices, réglages. Les secrets ne sont <b>jamais</b> exportés en clair ; pour les inclure, ils sont chiffrés avec une phrase de passe (PBKDF2-SHA256 600 000 itérations + sel aléatoire, Fernet).</div>
+    <div class="field"><label><input type="checkbox" id="expSecrets"> Inclure les secrets (chiffrés)</label></div>
+    <div class="row">
+      <div class="field" style="flex:1"><label>Phrase de passe (si secrets inclus)</label><input type="password" id="expPass" autocomplete="new-password" placeholder="phrase de passe"></div>
+    </div>
+    <div class="actions"><button class="btn" id="exportBtn">Exporter</button></div>
+  </div>
+
+  <div class="card">
+    <h2>Importer une configuration</h2>
+    <div class="sub">Aperçu des différences (ajouts / modifications / suppressions par UUID) avant toute écriture ; sauvegarde automatique de la configuration courante dans <span class="mono">/data/backups/</span>.</div>
+    <div class="field"><label>Fichier JSON exporté</label><input type="file" id="impFile" accept="application/json,.json"></div>
+    <div class="row">
+      <div class="field" style="flex:1"><label>Phrase de passe (si le fichier contient des secrets)</label><input type="password" id="impPass" autocomplete="off" placeholder="laisser vide sinon"></div>
+      <div class="field"><label>Mode</label><select id="impMode"><option value="merge">Fusionner</option><option value="replace">Remplacer</option></select></div>
+    </div>
+    <div class="actions">
+      <button class="btn outline" id="previewBtn">Aperçu des différences</button>
+      <button class="btn" id="applyBtn" disabled>Appliquer</button>
+    </div>
+    <div class="diff" id="diffBox"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $=s=>document.querySelector(s);
+let importedDoc=null;
+const toast=(msg,type='ok')=>{
+  const t=$('#toast');t.textContent=msg;t.className='toast '+type;t.style.display='block';
+  setTimeout(()=>t.style.display='none',4500);
+};
+const fmtDate=v=>v?new Date(v).toLocaleString('fr-FR'):'—';
+
+const loadUpdate=async()=>{
+  const r=await fetch('/api/update/status',{credentials:'include'});
+  if(r.status===401){location.href='/';return;}
+  const d=await r.json();
+  $('#vInstalled').textContent=d.installed_version;
+  $('#vLatest').textContent=d.latest_version||'inconnue';
+  $('#vChecked').textContent=fmtDate(d.last_check_at);
+  $('#vRate').textContent=d.rate_limit_remaining===null||d.rate_limit_remaining===undefined?'—':d.rate_limit_remaining;
+  $('#vInterval').textContent=d.check_enabled?(d.check_interval_seconds+' s'):'désactivée';
+  if(d.update_available){
+    $('#vState').innerHTML=`<span class="chip warn">Nouvelle version ${d.latest_version} disponible</span>`;
+  }else if(d.latest_version){
+    $('#vState').innerHTML='<span class="chip on">À jour</span>';
+  }else{
+    $('#vState').innerHTML='<span class="chip off">Jamais vérifié</span>';
+  }
+  $('#updateError').textContent=d.error||'';
+  $('#notesWrap').innerHTML=d.notes.length
+    ? '<div class="notes">'+d.notes.map(n=>`<div class="note"><h3>${n.version} — ${n.name}</h3><div class="body">${(n.body||'(pas de notes)').replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</div></div>`).join('')+'</div>'
+    : '<div class="empty">Aucune note de version manquante.</div>';
+};
+$('#checkBtn').onclick=async()=>{
+  $('#checkBtn').disabled=true;$('#checkBtn').textContent='Vérification…';
+  try{await fetch('/api/update/check',{method:'POST',credentials:'include'});await loadUpdate();toast('Vérification terminée');}
+  catch(e){toast('Vérification impossible','err');}
+  $('#checkBtn').disabled=false;$('#checkBtn').textContent='Vérifier maintenant';
+};
+
+const download=(doc)=>{
+  const blob=new Blob([JSON.stringify(doc,null,2)],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='fossor-config-'+new Date().toISOString().replace(/[:.]/g,'-')+'.json';
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+};
+$('#exportBtn').onclick=async()=>{
+  const include=$('#expSecrets').checked, pass=$('#expPass').value;
+  if(include&&!pass){toast('Phrase de passe requise pour inclure les secrets','err');return;}
+  const r=await fetch('/api/config/export',{method:'POST',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({include_secrets:include,passphrase:pass})});
+  if(r.status===401){location.href='/';return;}
+  if(!r.ok){const e=await r.json().catch(()=>({}));toast(e.detail||'Export impossible','err');return;}
+  download(await r.json());
+  toast(include?'Export généré (secrets chiffrés)':'Export généré (sans secrets)');
+};
+
+const readDoc=async()=>{
+  const f=$('#impFile').files[0];
+  if(!f){toast('Choisissez un fichier','err');return null;}
+  try{return JSON.parse(await f.text());}
+  catch(e){toast('Fichier JSON illisible','err');return null;}
+};
+const sendImport=async(dryRun)=>{
+  const pass=$('#impPass').value;
+  const url='/api/config/import?dry_run='+(dryRun?'true':'false')+'&mode='+$('#impMode').value;
+  const r=await fetch(url,{method:'POST',credentials:'include',
+    headers:{'Content-Type':'application/json','X-Fossor-Passphrase':pass},
+    body:JSON.stringify(importedDoc)});
+  if(r.status===401){location.href='/';return null;}
+  const body=await r.json().catch(()=>({}));
+  if(!r.ok){toast(body.detail||'Import refusé','err');return null;}
+  return body;
+};
+const renderDiff=(diff)=>{
+  const list=(arr,cls,label)=>arr.length?`<tr><td class="${cls}">${label}</td><td>${arr.map(x=>x.name||x.model||x.uuid||x).join(', ')}</td></tr>`:'';
+  $('#diffBox').innerHTML=`<table>
+    ${list(diff.machines.added,'add','Machines ajoutées')}
+    ${list(diff.machines.modified,'mod','Machines modifiées')}
+    ${list(diff.machines.removed,'del','Machines supprimées')}
+    ${list(diff.devices.added,'add','Devices ajoutés')}
+    ${list(diff.devices.modified,'mod','Devices modifiés')}
+    ${list(diff.devices.removed,'del','Devices supprimés')}
+    ${list(diff.settings.added,'add','Réglages ajoutés')}
+    ${list(diff.settings.modified,'mod','Réglages modifiés')}
+    ${list(diff.settings.removed,'del','Réglages supprimés')}
+  </table>`;
+  $('#diffBox').style.display='block';
+};
+$('#previewBtn').onclick=async()=>{
+  importedDoc=await readDoc();
+  if(!importedDoc)return;
+  const r=await sendImport(true);
+  if(!r)return;
+  renderDiff(r.diff);
+  $('#applyBtn').disabled=false;
+  toast('Aperçu calculé — rien n\'a été écrit');
+};
+$('#applyBtn').onclick=async()=>{
+  if(!importedDoc){toast('Aperçu requis avant d\'appliquer','err');return;}
+  if(!confirm('Appliquer l\'import ('+$('#impMode').value+') ? Une sauvegarde sera créée avant.'))return;
+  const r=await sendImport(false);
+  if(!r)return;
+  toast('Import appliqué — sauvegarde : '+r.backup);
+  $('#applyBtn').disabled=true;
+  await loadUpdate();
+};
+$('#logoutBtn').onclick=async()=>{
+  await fetch('/api/logout',{method:'POST',credentials:'include'});
+  location.href='/';
+};
+loadUpdate();
+</script>
+</body>
+</html>
