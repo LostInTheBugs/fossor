@@ -60,6 +60,7 @@ class Machine(Base):
     sudo: Mapped[SudoTypeEnum] = mapped_column(String(30), default=SudoTypeEnum.none)
     os_kind: Mapped[OsKindEnum] = mapped_column(String(20), default=OsKindEnum.other)
     host_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    host_key_public: Mapped[str | None] = mapped_column(Text, nullable=True)
     usage: Mapped[UsageEnum] = mapped_column(String(10), default=UsageEnum.both)
     vm_host: Mapped[bool] = mapped_column(Boolean, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)

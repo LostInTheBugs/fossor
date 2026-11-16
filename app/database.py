@@ -63,6 +63,33 @@ def get_db():
 def init_db():
     Base.metadata.create_all(bind=engine)
     _ensure_admin()
+    _migrate_host_key_public_column()
+
+
+def _migrate_host_key_public_column():
+    """Add host_key_public column if it doesn't exist (SQLite migration)."""
+    import os
+    db_url = _get_db_url()
+    if not db_url.startswith("sqlite"):
+        return
+    from sqlalchemy import text
+    db_path = db_url.replace("sqlite:///", "").replace("sqlite://", "")
+    if not os.path.exists(db_path):
+        return
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    try:
+        cols = conn.execute(
+            "PRAGMA table_info(machines)"
+        ).fetchall()
+        col_names = [c[1] for c in cols]
+        if "host_key_public" not in col_names:
+            conn.execute(
+                "ALTER TABLE machines ADD COLUMN host_key_public TEXT"
+            )
+            conn.commit()
+    finally:
+        conn.close()
 
 
 def reset_engine():
