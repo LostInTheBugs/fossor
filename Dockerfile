@@ -9,7 +9,14 @@ COPY . .
 
 ENV PYTHONPATH=/app
 
-RUN mkdir -p /app/data
+# Non-root runtime user (uid 1000): files created under /data (backups, DB)
+# belong to fossor on the host instead of root.  The image stays readable and
+# /data writable for it.
+RUN useradd --uid 1000 --create-home --shell /bin/bash fossor \
+ && mkdir -p /app/data /data \
+ && chown -R fossor:fossor /app /data
+
+USER fossor
 
 EXPOSE 8008
 
