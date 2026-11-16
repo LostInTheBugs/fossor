@@ -4,6 +4,33 @@
 
 All notable changes to fossor are documented in this file.
 
+## 2026.11.003 — (en préparation)
+
+Étape 2a : collecteurs et tableau de bord en direct.
+
+### Ajouté
+- **Commande `collect_stats`** (liste blanche, lecture seule, jamais sudo) : sections
+  `HIVE_STAT`, `HIVE_GPU`, `NVSMI`, `PS_MINERS`, `UPTIME`, chaque outil optionnel
+  (section vide au lieu d'un échec)
+- **Parseur pur** `app/stats_parser.py` : devices rapprochés par bus PCI normalisé
+  (l'indice 0 CPU/iGPU de HiveOS est ignoré pour le hashrate), hashrate normalisé en H/s
+  depuis `hs_units`, temp/ventilo/conso/charge par device, mineur, algo/coin, uptime,
+  shares acceptées/rejetées, port d'API découvert dans `ps`. `params.passwd` et
+  `params.rig_id` ne sont jamais lus, donc jamais stockés ni journalisés
+- **API SRBMiner-Multi** : si `--api-port N` est découvert, `GET http://<hôte>:N/`
+  depuis Fossor (timeout 5 s) complète les hashrates absents ; port fermé = échec
+  silencieux
+- **Collecteur** : toutes les `FOSSOR_COLLECT_INTERVAL` secondes (60 s par défaut), 5
+  machines en parallèle (asyncio), timeout par machine, échec → machine « hors ligne »
+  avec l'erreur ; les machines `usage=none` ne sont jamais contactées
+- **Stockage** : table `metrics` (une ligne par device et par tour) et table
+  `machine_status` (dernier état), rétention `FOSSOR_METRICS_RETENTION_DAYS` (7 jours),
+  purge quotidienne
+- **API** : `GET /api/metrics/live`, `GET /api/metrics/history?machine=<uuid>&hours=24`
+- **Tableau de bord** : page d'accueil après connexion, une carte par machine (en ligne /
+  hors ligne, mineur, hashrate total avec unité adaptée, conso, uptime, âge de la
+  dernière collecte) et une ligne par device, rafraîchi toutes les 30 s
+
 ## 2026.11.002 — 2026-11-16
 
 Étape 1 terminée : de l'inventaire à la configuration complète de l'application.
