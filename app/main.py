@@ -71,6 +71,9 @@ async def startup():
     # §4.18: best-effort background check, jittered, never blocking startup.
     from app import update_checker
     update_checker.start()
+    # §4.18: mise à jour automatique (désactivée par défaut, plage horaire).
+    from app import auto_update
+    auto_update.start()
     # §8 phase 2a: metrics collection every FOSSOR_COLLECT_INTERVAL seconds.
     from app import collector
     collector.start()

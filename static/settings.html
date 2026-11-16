@@ -98,8 +98,21 @@ header h1{font-size:26px}
       </dl>
       <div class="actions">
         <button class="btn outline" id="checkBtn">Vérifier maintenant</button>
+        <button class="btn" id="applyBtn" disabled>Mettre à jour</button>
       </div>
-      <div id="updateError" class="empty" style="margin-top:10px;color:var(--red)"></div>
+      <div id="updError" class="empty" style="margin-top:10px;color:var(--red)"></div>
+      <div id="updBanner" class="empty" style="display:none;margin-top:10px;border:1px solid var(--warn,#a60);border-radius:8px;padding:10px"></div>
+      <div id="updLive" style="margin-top:14px"></div>
+      <div class="row" style="margin-top:16px;align-items:flex-end">
+        <div class="field"><label><input type="checkbox" id="autoEnabled"> Mise à jour automatique</label></div>
+        <div class="field"><label>De</label><input type="time" id="autoStart" value="03:00" style="width:110px"></div>
+        <div class="field"><label>À</label><input type="time" id="autoEnd" value="05:00" style="width:110px"></div>
+        <div class="field"><label>Fuseau</label><input id="autoTz" value="Europe/Paris" style="width:170px"></div>
+        <div class="field"><button class="btn outline" id="autoSave">Enregistrer</button></div>
+      </div>
+      <div class="sub" id="autoHint">Désactivée par défaut. La demande n'est déposée que dans la plage horaire (une plage qui traverse minuit est acceptée).</div>
+      <h3 style="margin-top:18px">Historique des mises à jour</h3>
+      <div id="updHistory" class="empty">Aucune mise à jour demandée.</div>
       <div id="notesWrap" style="margin-top:14px"></div>
     </div>
 
@@ -210,6 +223,54 @@ const toast=(msg,type='ok')=>{
 };
 const fmtDate=v=>v?new Date(v).toLocaleString('fr-FR'):'—';
 
+const STATE_LABELS={idle:'En attente',pulling:'Téléchargement de l\'image',backing_up:'Sauvegarde',
+  switching:'Bascule de l\'image',health_check:'Contrôle de santé',done:'Terminée',
+  rolled_back:'Retour arrière',failed:'Échec',absent:'Compagnon absent'};
+const esc=s=>String(s==null?'':s).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+
+const renderUpdater=(d)=>{
+  const u=d.updater||{}, a=d.auto||{};
+  const btn=$('#applyBtn');
+  $('#updError').textContent=d.error||'';
+  const banner=$('#updBanner');
+  if(!u.present){
+    banner.style.display='block';
+    banner.innerHTML='<b>Service <span class="mono">fossor-updater</span> absent.</b> Cette installation '
+      +'n\'a pas le conteneur compagnon : la mise à jour pilotée depuis l\'interface est indisponible '
+      +'(bouton grisé). Installez les deux services de <span class="mono">docker-compose.yml</span>, ou '
+      +'mettez à jour à la main avec <span class="mono">docker compose pull &amp;&amp; docker compose up -d</span>. '
+      +'Les sauvegardes et la vérification de version restent actives.';
+    btn.disabled=true; btn.textContent='Mettre à jour';
+    $('#updLive').innerHTML='';
+  }else{
+    banner.style.display='none';
+    const target=d.latest_version;
+    const busy=['pulling','backing_up','switching','health_check'].includes(u.state);
+    btn.disabled=!d.update_available||busy;
+    btn.textContent=busy?'Mise à jour en cours…':(d.update_available?`Mettre à jour vers ${target}`:'À jour');
+    $('#updLive').innerHTML=`<dl class="kv">
+      <dt>Compagnon</dt><dd><span class="chip ${u.present?'on':'off'}">${u.present?'joignable':'absent'}</span></dd>
+      <dt>État</dt><dd>${esc(STATE_LABELS[u.state]||u.state)}</dd>
+      <dt>Étape</dt><dd class="mono">${esc(u.step||'—')}</dd>
+      <dt>Version</dt><dd class="mono">${esc(u.from||'—')} → ${esc(u.to||'—')}</dd>
+      <dt>Message</dt><dd>${esc(u.message||'—')}</dd>
+      <dt>Dernier battement</dt><dd>${u.heartbeat_age_seconds==null?'—':u.heartbeat_age_seconds+' s'}</dd>
+      <dt>Sauvegarde avant mise à jour</dt><dd class="mono">${esc(u.directory||'')}</dd></dl>`;
+  }
+  $('#updHistory').innerHTML=(u.history&&u.history.length)
+    ? '<div class="notes">'+u.history.map(h=>`<div class="note"><h3>${esc(h.at||'')} — ${esc(h.event||'')}</h3>`
+        +`<div class="body">${esc(h.message||h.reason||'')}${h.from?' '+esc(h.from)+' → '+esc(h.to):''}</div></div>`).join('')+'</div>'
+    : '<div class="empty">Aucune mise à jour demandée.</div>';
+  if(a.window){
+    $('#autoEnabled').checked=!!a.enabled;
+    $('#autoStart').value=a.window.start; $('#autoEnd').value=a.window.end;
+    $('#autoTz').value=a.window.timezone;
+  }
+  $('#autoHint').textContent=a.enabled
+    ? `Activée : demande déposée entre ${a.window.start} et ${a.window.end} (${a.window.timezone}) quand une version est disponible.`
+    : 'Désactivée par défaut : aucune demande automatique n\'est déposée.';
+};
+
 const loadUpdate=async()=>{
   const r=await fetch('/api/update/status',{credentials:'include'});
   if(r.status===401){location.href='/';return;}
@@ -220,16 +281,39 @@ const loadUpdate=async()=>{
   $('#vRate').textContent=d.rate_limit_remaining===null||d.rate_limit_remaining===undefined?'—':d.rate_limit_remaining;
   $('#vInterval').textContent=d.check_enabled?(d.check_interval_seconds+' s'):'désactivée';
   if(d.update_available){
-    $('#vState').innerHTML=`<span class="chip warn">Nouvelle version ${d.latest_version} disponible</span>`;
+    $('#vState').innerHTML=`<span class="chip warn">Nouvelle version ${esc(d.latest_version)} disponible</span>`;
   }else if(d.latest_version){
     $('#vState').innerHTML='<span class="chip on">À jour</span>';
   }else{
     $('#vState').innerHTML='<span class="chip off">Jamais vérifié</span>';
   }
-  $('#updateError').textContent=d.error||'';
+  renderUpdater(d);
   $('#notesWrap').innerHTML=d.notes.length
-    ? '<div class="notes">'+d.notes.map(n=>`<div class="note"><h3>${n.version} — ${n.name}</h3><div class="body">${(n.body||'(pas de notes)').replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</div></div>`).join('')+'</div>'
+    ? '<div class="notes">'+d.notes.map(n=>`<div class="note"><h3>${esc(n.version)} — ${esc(n.name)}</h3><div class="body">${esc(n.body||'(pas de notes)')}</div></div>`).join('')+'</div>'
     : '<div class="empty">Aucune note de version manquante.</div>';
+};
+$('#applyBtn').onclick=async()=>{
+  const d=await (await fetch('/api/update/status',{credentials:'include'})).json();
+  const target=d.latest_version;
+  if(!target)return;
+  if(!confirm(`Mettre à jour vers ${target} ?\n\nUne sauvegarde de la base et de la configuration est prise avant la bascule ; en cas d'échec du contrôle de santé, l'ancienne version est restaurée automatiquement.`))return;
+  $('#applyBtn').disabled=true;
+  const r=await fetch('/api/update/apply',{method:'POST',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({target})});
+  const body=await r.json().catch(()=>({}));
+  if(!r.ok){toast(body.detail||'Mise à jour refusée','err');await loadUpdate();return;}
+  toast(`Mise à jour vers ${target} demandée`);
+  await loadUpdate();
+};
+$('#autoSave').onclick=async()=>{
+  const r=await fetch('/api/update/auto',{method:'PUT',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      enabled:$('#autoEnabled').checked,
+      window:{start:$('#autoStart').value,end:$('#autoEnd').value,timezone:$('#autoTz').value.trim()||'Europe/Paris'}}) });
+  const body=await r.json().catch(()=>({}));
+  if(!r.ok){toast(body.detail||'Réglage refusé','err');return;}
+  toast('Mise à jour automatique enregistrée');
+  await loadUpdate();
 };
 $('#checkBtn').onclick=async()=>{
   $('#checkBtn').disabled=true;$('#checkBtn').textContent='Vérification…';
@@ -580,6 +664,14 @@ $('#logoutBtn').onclick=async()=>{
   location.href='/';
 };
 loadUpdate();
+// §4.18 : le status.json de l'updater est relu toutes les 5 s pendant une mise
+// à jour, toutes les 30 s au repos — l'écran n'a pas besoin de rechargement.
+let updTick=0;
+setInterval(()=>{
+  const busy=document.querySelector('#applyBtn')&&/en cours/.test($('#applyBtn').textContent||'');
+  updTick++; if(updTick%(busy?1:6)!==0)return;
+  if(document.visibilityState==='visible')loadUpdate();
+},5000);
 </script>
 </body>
 </html>
