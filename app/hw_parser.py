@@ -249,7 +249,32 @@ def _vendor_of(text: str) -> str:
         return "Intel"
     if re.search(r"\bati\b", low):
         return "AMD"
+    if "aspeed" in low:
+        return "ASPEED"
+    if "matrox" in low:
+        return "Matrox"
     return ""
+
+
+_INTEGRATED_INTEL = re.compile(r"\b(uhd|iris)\b|\bhd graphics\b", re.IGNORECASE)
+_INTEGRATED_AMD = re.compile(r"\bradeon\s+(graphics|vega)\b", re.IGNORECASE)
+_DISCRETE_AMD = re.compile(r"\brx\b|\bnavi\b|\bvii\b", re.IGNORECASE)
+
+
+def is_integrated(vendor: str, model: str) -> bool:
+    """Integrated GPU? Intel UHD/Iris, AMD APU Radeon Graphics, ASPEED/Matrox BMC.
+
+    Intel Arc, AMD RX/Navi/VII and every NVIDIA card are discrete.
+    """
+    vendor_low = (vendor or "").lower()
+    text = model or ""
+    if vendor_low == "intel":
+        return bool(_INTEGRATED_INTEL.search(text))
+    if vendor_low == "amd":
+        return bool(_INTEGRATED_AMD.search(text)) and not _DISCRETE_AMD.search(text)
+    if vendor_low in ("aspeed", "matrox"):
+        return True
+    return False
 
 
 def _clean_pci_model(text: str) -> str:
@@ -285,6 +310,7 @@ def parse_gpus_nvidia(section: str) -> list[dict[str, Any]]:
             "pci_bus": norm_bus(parts[3]) if len(parts) > 3 else "",
             "driver": parts[4] if len(parts) > 4 else "",
             "nv_uuid": parts[5] if len(parts) > 5 else "",
+            "integrated": False,
         })
     return gpus
 
@@ -307,14 +333,17 @@ def parse_gpus_pci(section: str) -> list[dict[str, Any]]:
         else:
             body = rest
         body = body.strip()
+        vendor = _vendor_of(body)
+        model = _clean_pci_model(body)
         gpus.append({
             "index": None,
-            "vendor": _vendor_of(body),
-            "model": _clean_pci_model(body),
+            "vendor": vendor,
+            "model": model,
             "vram_mb": None,
             "pci_bus": norm_bus(match.group("bus")),
             "driver": "",
             "nv_uuid": "",
+            "integrated": is_integrated(vendor, model),
         })
     return gpus
 

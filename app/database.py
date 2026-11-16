@@ -65,6 +65,26 @@ def init_db():
     _ensure_admin()
     _migrate_host_key_public_column()
     _migrate_machine_uuid_column()
+    _migrate_device_integrated_column()
+
+
+def _migrate_device_integrated_column():
+    """Add devices.integrated (iGPU / BMC GPU, never mined by default)."""
+    import sqlite3
+
+    db_path = _sqlite_path()
+    if not db_path:
+        return
+    conn = sqlite3.connect(db_path)
+    try:
+        col_names = [c[1] for c in conn.execute("PRAGMA table_info(devices)").fetchall()]
+        if col_names and "integrated" not in col_names:
+            conn.execute(
+                "ALTER TABLE devices ADD COLUMN integrated BOOLEAN NOT NULL DEFAULT 0"
+            )
+            conn.commit()
+    finally:
+        conn.close()
 
 
 def _sqlite_path() -> str | None:

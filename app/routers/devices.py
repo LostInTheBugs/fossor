@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_login
-from app.devices import device_to_dict
-from app.models import ActorEnum, AuditLog, Device
+from app.devices import device_to_dict, recompute_usage
+from app.models import ActorEnum, AuditLog, Device, Machine
 
 router = APIRouter(prefix="/api/devices", tags=["devices"])
 
@@ -38,6 +38,10 @@ def update_device(
     device.enabled_for_mining = bool(data["enabled_for_mining"])
     device.updated_at = datetime.now(timezone.utc).isoformat()
 
+    # §4.2: the machine usage follows its devices on every PATCH.
+    machine = db.query(Machine).filter(Machine.id == device.machine_id).first()
+    usage = recompute_usage(db, machine) if machine is not None else None
+
     entry = AuditLog(
         actor=ActorEnum.fred,
         action="device-update",
@@ -46,7 +50,7 @@ def update_device(
         result="ok",
         output=(
             f"{device.kind} {device.model or ''} "
-            f"enabled_for_mining={device.enabled_for_mining}"
+            f"enabled_for_mining={device.enabled_for_mining} usage={usage}"
         )[:500],
     )
     db.add(entry)

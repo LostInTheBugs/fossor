@@ -108,6 +108,7 @@ def apply_detection(db: Session, machine: Machine, detected: dict[str, Any]) -> 
             "pci_bus": norm_bus(gpu.get("pci_bus")) or None,
             "driver": gpu.get("driver") or None,
             "nv_uuid": gpu.get("nv_uuid") or None,
+            "integrated": bool(gpu.get("integrated")),
             "cores": None,
             "threads": None,
             "ram_mb": None,
@@ -119,7 +120,8 @@ def apply_detection(db: Session, machine: Machine, detected: dict[str, Any]) -> 
                 uuid=str(uuid_lib.uuid4()),
                 machine_id=machine.id,
                 kind="gpu",
-                enabled_for_mining=True,
+                # An integrated GPU is recorded but never mined unless asked.
+                enabled_for_mining=not bool(gpu.get("integrated")),
                 created_at=_now(),
             )
             db.add(device)
@@ -143,6 +145,7 @@ def apply_detection(db: Session, machine: Machine, detected: dict[str, Any]) -> 
     if os_kind:
         machine.os_kind = os_kind
     machine.updated_at = _now()
+    machine.usage = compute_usage(db, machine)
 
     db.commit()
     return {
@@ -151,6 +154,36 @@ def apply_detection(db: Session, machine: Machine, detected: dict[str, Any]) -> 
         "missing": missing,
         "device_count": len(seen),
     }
+
+
+def compute_usage(db: Session, machine: Machine) -> str:
+    """Machine usage from its *present* devices (§4.2).
+
+    cpu + >=1 gpu enabled = ``both``; cpu only = ``cpu``; gpu only = ``gpu``;
+    nothing enabled = ``none``.  Absent devices never count.
+    """
+    db.flush()  # pending PATCH must be visible (session is autoflush=False)
+    rows = (
+        db.query(Device)
+        .filter(Device.machine_id == machine.id, Device.present.is_(True))
+        .all()
+    )
+    cpu = any(device.kind == "cpu" and device.enabled_for_mining for device in rows)
+    gpu = any(device.kind == "gpu" and device.enabled_for_mining for device in rows)
+    if cpu and gpu:
+        return "both"
+    if cpu:
+        return "cpu"
+    if gpu:
+        return "gpu"
+    return "none"
+
+
+def recompute_usage(db: Session, machine: Machine) -> str:
+    """Recompute and store ``machine.usage`` (called on every device PATCH and detect)."""
+    machine.usage = compute_usage(db, machine)
+    machine.updated_at = _now()
+    return machine.usage
 
 
 def device_to_dict(device: Device) -> dict[str, Any]:
@@ -171,6 +204,7 @@ def device_to_dict(device: Device) -> dict[str, Any]:
         "flags": device.flags,
         "present": device.present,
         "enabled_for_mining": device.enabled_for_mining,
+        "integrated": device.integrated,
         "created_at": device.created_at,
         "updated_at": device.updated_at,
     }

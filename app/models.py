@@ -97,7 +97,20 @@ class Device(Base):
     nv_uuid: Mapped[str | None] = mapped_column(String(50), nullable=True)
     present: Mapped[bool] = mapped_column(Boolean, default=True)
     enabled_for_mining: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Integrated GPU (Intel UHD/Iris, AMD APU Radeon Graphics, ASPEED/Matrox BMC):
+    # detected but never enabled for mining by default.
+    integrated: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class AppSetting(Base):
+    """Key/value application settings (exported by §4.13)."""
+
+    __tablename__ = "settings"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
 
 
