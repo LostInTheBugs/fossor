@@ -18,7 +18,7 @@ def list_audit_log(
         {
             "id": l.id,
             "ts": l.ts,
-            "actor": l.actor.value,
+            "actor": getattr(l.actor, "value", l.actor),
             "action": l.action,
             "machine_id": l.machine_id,
             "object_ref": l.object_ref,
