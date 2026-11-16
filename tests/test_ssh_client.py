@@ -19,6 +19,7 @@ from app.ssh_client import (
     _fingerprint_of,
     _public_key_of,
     reset_machine_host_key,
+    ssh_detect_hw,
     ssh_test_machine,
 )
 
@@ -93,8 +94,8 @@ def _patch_key():
 
 # ── Whitelist ─────────────────────────────────────────────────────────
 class TestWhitelist:
-    def test_only_identify(self):
-        assert set(WHITELISTED_COMMANDS.keys()) == {"identify"}
+    def test_only_whitelisted_commands(self):
+        assert set(WHITELISTED_COMMANDS.keys()) == {"identify", "detect_hw"}
 
     def test_identify_has_expected_parts(self):
         cmd = WHITELISTED_COMMANDS["identify"]
@@ -353,3 +354,34 @@ class TestAgainstRealServer:
             res = asyncio.run(ssh_test_machine(machine))
         assert res["ok"] is False
         assert "Permission denied" in res["error"]
+
+    def test_detect_hw_reports_cpu_and_no_gpu(self):
+        key = asyncio.run(asyncssh.get_server_host_key(SSH_HOST, SSH_PORT))
+        machine = self._machine(
+            host_key=_fingerprint_of(key), host_key_public=_public_key_of(key)
+        )
+        with patch("app.ssh_client.decrypt_secret", return_value=SSH_PASSWORD), \
+                patch("app.ssh_client._audit_log"):
+            res = asyncio.run(ssh_detect_hw(machine))
+
+        assert res["ok"] is True, res
+        assert res["cpu"] is not None
+        assert res["cpu"]["model"]
+        assert res["cpu"]["threads"] >= 1
+        assert res["cpu"]["cores"] >= 1
+        assert res["gpus"] == []
+        assert res["virt"] == {"kvm": False, "virsh": False, "pveversion": False}
+
+    def test_detect_hw_refuses_changed_fingerprint(self):
+        other_key = asyncssh.generate_private_key("ssh-ed25519")
+        machine = self._machine(
+            host_key="SHA256:not-the-server-fingerprint",
+            host_key_public=other_key.export_public_key().decode().strip(),
+        )
+        with patch("app.ssh_client.decrypt_secret", return_value=SSH_PASSWORD), \
+                patch("app.ssh_client._audit_log") as audit:
+            res = asyncio.run(ssh_detect_hw(machine))
+
+        assert res["ok"] is False
+        assert res["error"].startswith("Empreinte changée")
+        assert any(call.args[1] == "detect" for call in audit.call_args_list)

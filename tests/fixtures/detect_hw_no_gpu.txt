@@ -1,0 +1,33 @@
+### CPU
+{
+   "lscpu": [
+      {"field": "Architecture:", "data": "x86_64"},
+      {"field": "CPU(s):", "data": "4"},
+      {"field": "On-line CPU(s) list:", "data": "0-3"},
+      {"field": "Vendor ID:", "data": "AuthenticAMD"},
+      {"field": "Model name:", "data": "AMD EPYC 7542 32-Core Processor"},
+      {"field": "Thread(s) per core:", "data": "1"},
+      {"field": "Core(s) per socket:", "data": "4"},
+      {"field": "Socket(s):", "data": "1"},
+      {"field": "Hypervisor vendor:", "data": "KVM"},
+      {"field": "Virtualization type:", "data": "full"},
+      {"field": "Flags:", "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm rep_good nopl xtopology cpuid extd_apicid tsc_known_freq pni pclmulqdq ssse3 fma cx16 sse4_1 sse4_2 movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy svm cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw topoext perfctr_core ssbd ibpb vmmcall fsgsbase bmi1 avx2 smep bmi2 rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 xsaves clzero xsaveerptr arat npt nrip_save tsc_scale vmcb_clean flushbyasid decodeassists umip pku ospke vaes vpclmulqdq rdpid overflow_recov succor smca fsrm"}
+   ]
+}
+4
+flags		: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm rep_good nopl xtopology cpuid extd_apicid tsc_known_freq pni pclmulqdq ssse3 fma cx16 sse4_1 sse4_2 movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy svm cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw topoext perfctr_core ssbd ibpb vmmcall fsgsbase bmi1 avx2 smep bmi2 rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 xsaves clzero xsaveerptr arat npt nrip_save tsc_scale vmcb_clean flushbyasid decodeassists umip pku ospke vaes vpclmulqdq rdpid overflow_recov succor smca fsrm
+### MEM
+               total        used        free      shared  buff/cache   available
+Mem:      8388608000  1038090240  5242880000    10485760  2107637760  7148662784
+Swap:              0           0           0
+### GPU_NVIDIA
+### GPU_PCI
+### VIRT
+### OS
+small-vps
+Linux 6.8.0-31-generic x86_64
+NAME="Ubuntu"
+VERSION="22.04.4 LTS (Jammy Jellyfish)"
+ID=ubuntu
+ID_LIKE=debian
+PRETTY_NAME="Ubuntu 22.04.4 LTS"
