@@ -7,6 +7,8 @@ from app.routers.machines import router as machines_router
 from app.routers.audit import router as audit_router
 from app.routers.devices import router as devices_router
 from app.routers.config import router as config_router
+from app.routers.ai import router as ai_router
+from app.routers.hermes import router as hermes_router
 from app.routers.update import router as update_router
 from app.routers.ui import router as ui_router
 from pathlib import Path
@@ -27,6 +29,8 @@ app.include_router(machines_router)
 app.include_router(audit_router)
 app.include_router(devices_router)
 app.include_router(config_router)
+app.include_router(ai_router)
+app.include_router(hermes_router)
 app.include_router(update_router)
 app.include_router(ui_router)
 

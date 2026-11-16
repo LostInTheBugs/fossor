@@ -104,6 +104,27 @@ class Device(Base):
     updated_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
 
 
+class AiProvider(Base):
+    """AI analysis provider (§4.12) — one ``primary`` and an optional ``fallback``."""
+
+    __tablename__ = "ai_providers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    which: Mapped[str] = mapped_column(String(10), nullable=False, unique=True)  # primary | fallback
+    provider_type: Mapped[str] = mapped_column(String(30), default="hermes-agent")
+    name: Mapped[str] = mapped_column(String(100), default="")
+    base_url: Mapped[str] = mapped_column(String(255), default="")
+    api_key_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model: Mapped[str] = mapped_column(String(100), default="")
+    timeout_s: Mapped[int] = mapped_column(Integer, default=120)
+    max_tokens: Mapped[int] = mapped_column(Integer, default=1024)
+    reasoning_effort: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    extra_body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+
+
 class AppSetting(Base):
     """Key/value application settings (exported by §4.13)."""
 
