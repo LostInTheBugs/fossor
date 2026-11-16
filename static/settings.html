@@ -15,6 +15,9 @@ header h1{font-size:26px}
 .nav-tabs a{color:var(--muted);padding:8px 16px;font-size:13.5px;font-weight:600;text-decoration:none;border:1px solid transparent;border-bottom:none;border-radius:10px 10px 0 0}
 .nav-tabs a:hover{color:var(--txt)}
 .nav-tabs a.active{background:var(--card);border-color:var(--border);color:var(--txt)}
+.subtabs{display:flex;gap:6px;margin:-6px 0 18px}
+.subtab{background:transparent;border:1px solid var(--border);color:var(--muted);padding:6px 14px;border-radius:999px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit}
+.subtab.active{background:var(--card);color:var(--txt);border-color:var(--accent)}
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:18px}
 .card h2{font-size:15px;margin-bottom:4px}
 .card .sub{color:var(--muted);font-size:12px;margin-bottom:14px}
@@ -33,10 +36,14 @@ header h1{font-size:26px}
 .btn.sm{padding:4px 10px;font-size:11.5px}
 .field{margin-bottom:12px}
 .field label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px;font-weight:600}
-.field input,.field select{background:var(--bg);color:var(--txt);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit;width:100%;max-width:420px}
+.field input,.field select,.field textarea{background:var(--bg);color:var(--txt);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit;width:100%;max-width:420px}
+.field textarea{font-family:ui-monospace,Consolas,monospace;font-size:12px;resize:vertical}
 .field input[type=checkbox]{width:auto;margin-right:6px;accent-color:var(--accent)}
 .row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
-.actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.row .field{flex:1;min-width:170px}
+.row .field input,.row .field select{max-width:none}
+.narrow{max-width:150px}
+.actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;align-items:center}
 .notes{font-size:12.5px;line-height:1.5}
 .note{border-left:2px solid var(--accent);padding:6px 0 6px 12px;margin-bottom:12px}
 .note h3{font-size:13px;margin-bottom:4px}
@@ -50,6 +57,11 @@ header h1{font-size:26px}
 .toast{position:fixed;bottom:20px;right:20px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 18px;font-size:13px;z-index:200;display:none;max-width:480px}
 .toast.ok{border-color:var(--green)}.toast.err{border-color:var(--red)}
 .mono{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;color:var(--muted)}
+.testres{display:none;margin-top:10px;font-size:12.5px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);white-space:pre-wrap;line-height:1.45}
+.testres.ok{border-color:var(--green);color:var(--green)}
+.testres.err{border-color:var(--red);color:var(--red)}
+.tokenbox{margin-top:12px;display:none}
+.tokenbox code{display:block;margin-top:6px;background:var(--bg);border:1px dashed var(--accent);border-radius:8px;padding:10px;word-break:break-all;font-size:12.5px;color:var(--txt)}
 </style>
 </head>
 <body>
@@ -65,47 +77,82 @@ header h1{font-size:26px}
     <a href="/audit">📋 Audit Log</a>
   </nav>
 
-  <div class="card">
-    <h2>Mise à jour</h2>
-    <div class="sub">Vérification automatique des releases GitHub (intervalle réglable par <span class="mono">FOSSOR_UPDATE_CHECK_INTERVAL</span>, 0 = désactivé).</div>
-    <dl class="kv">
-      <dt>Version installée</dt><dd id="vInstalled">…</dd>
-      <dt>Dernière version publiée</dt><dd id="vLatest">…</dd>
-      <dt>État</dt><dd id="vState">…</dd>
-      <dt>Dernier contrôle</dt><dd id="vChecked">—</dd>
-      <dt>Requêtes GitHub restantes</dt><dd id="vRate">—</dd>
-      <dt>Prochaine vérification</dt><dd id="vInterval">—</dd>
-    </dl>
-    <div class="actions">
-      <button class="btn outline" id="checkBtn">Vérifier maintenant</button>
-    </div>
-    <div id="updateError" class="empty" style="margin-top:10px;color:var(--red)"></div>
-    <div id="notesWrap" style="margin-top:14px"></div>
+  <div class="subtabs">
+    <button class="subtab active" id="tabGeneral" data-panel="panel-general">Général</button>
+    <button class="subtab" id="tabAi" data-panel="panel-ai">Analyse IA</button>
   </div>
 
-  <div class="card">
-    <h2>Exporter la configuration</h2>
-    <div class="sub">JSON versionné : machines, devices, réglages. Les secrets ne sont <b>jamais</b> exportés en clair ; pour les inclure, ils sont chiffrés avec une phrase de passe (PBKDF2-SHA256 600 000 itérations + sel aléatoire, Fernet).</div>
-    <div class="field"><label><input type="checkbox" id="expSecrets"> Inclure les secrets (chiffrés)</label></div>
-    <div class="row">
-      <div class="field" style="flex:1"><label>Phrase de passe (si secrets inclus)</label><input type="password" id="expPass" autocomplete="new-password" placeholder="phrase de passe"></div>
+  <div id="panel-general">
+    <div class="card">
+      <h2>Mise à jour</h2>
+      <div class="sub">Vérification automatique des releases GitHub (intervalle réglable par <span class="mono">FOSSOR_UPDATE_CHECK_INTERVAL</span>, 0 = désactivé).</div>
+      <dl class="kv">
+        <dt>Version installée</dt><dd id="vInstalled">…</dd>
+        <dt>Dernière version publiée</dt><dd id="vLatest">…</dd>
+        <dt>État</dt><dd id="vState">…</dd>
+        <dt>Dernier contrôle</dt><dd id="vChecked">—</dd>
+        <dt>Requêtes GitHub restantes</dt><dd id="vRate">—</dd>
+        <dt>Prochaine vérification</dt><dd id="vInterval">—</dd>
+      </dl>
+      <div class="actions">
+        <button class="btn outline" id="checkBtn">Vérifier maintenant</button>
+      </div>
+      <div id="updateError" class="empty" style="margin-top:10px;color:var(--red)"></div>
+      <div id="notesWrap" style="margin-top:14px"></div>
     </div>
-    <div class="actions"><button class="btn" id="exportBtn">Exporter</button></div>
+
+    <div class="card">
+      <h2>Exporter la configuration</h2>
+      <div class="sub">JSON versionné : machines, devices, réglages, analyse IA. Les secrets (mots de passe SSH, clés API) ne sont <b>jamais</b> exportés en clair ; pour les inclure, ils sont chiffrés avec une phrase de passe (PBKDF2-SHA256 600 000 itérations + sel aléatoire, Fernet). Le jeton entrant Hermes n'est jamais exporté.</div>
+      <div class="field"><label><input type="checkbox" id="expSecrets"> Inclure les secrets (chiffrés)</label></div>
+      <div class="row">
+        <div class="field" style="flex:1"><label>Phrase de passe (si secrets inclus)</label><input type="password" id="expPass" autocomplete="new-password" placeholder="phrase de passe"></div>
+      </div>
+      <div class="actions"><button class="btn" id="exportBtn">Exporter</button></div>
+    </div>
+
+    <div class="card">
+      <h2>Importer une configuration</h2>
+      <div class="sub">Aperçu des différences (ajouts / modifications / suppressions par UUID) avant toute écriture ; sauvegarde automatique de la configuration courante dans <span class="mono">/data/backups/</span>.</div>
+      <div class="field"><label>Fichier JSON exporté</label><input type="file" id="impFile" accept="application/json,.json"></div>
+      <div class="row">
+        <div class="field" style="flex:1"><label>Phrase de passe (si le fichier contient des secrets)</label><input type="password" id="impPass" autocomplete="off" placeholder="laisser vide sinon"></div>
+        <div class="field"><label>Mode</label><select id="impMode"><option value="merge">Fusionner</option><option value="replace">Remplacer</option></select></div>
+      </div>
+      <div class="actions">
+        <button class="btn outline" id="previewBtn">Aperçu des différences</button>
+        <button class="btn" id="applyBtn" disabled>Appliquer</button>
+      </div>
+      <div class="diff" id="diffBox"></div>
+    </div>
   </div>
 
-  <div class="card">
-    <h2>Importer une configuration</h2>
-    <div class="sub">Aperçu des différences (ajouts / modifications / suppressions par UUID) avant toute écriture ; sauvegarde automatique de la configuration courante dans <span class="mono">/data/backups/</span>.</div>
-    <div class="field"><label>Fichier JSON exporté</label><input type="file" id="impFile" accept="application/json,.json"></div>
-    <div class="row">
-      <div class="field" style="flex:1"><label>Phrase de passe (si le fichier contient des secrets)</label><input type="password" id="impPass" autocomplete="off" placeholder="laisser vide sinon"></div>
-      <div class="field"><label>Mode</label><select id="impMode"><option value="merge">Fusionner</option><option value="replace">Remplacer</option></select></div>
+  <div id="panel-ai" style="display:none">
+    <div class="card">
+      <h2>Veille et secours</h2>
+      <div class="sub">Fréquence de la veille et bascule automatique vers le fournisseur de secours quand le principal échoue.</div>
+      <div class="row">
+        <div class="field narrow"><label>Cadence (heures)</label><input type="number" id="cadence" min="1" max="168" value="6"></div>
+        <div class="field" style="flex:1"><label><input type="checkbox" id="fbEnabled" checked> Utiliser le fournisseur de secours si le principal échoue</label></div>
+      </div>
+      <div class="actions"><button class="btn" id="saveGlobals">Enregistrer</button></div>
     </div>
-    <div class="actions">
-      <button class="btn outline" id="previewBtn">Aperçu des différences</button>
-      <button class="btn" id="applyBtn" disabled>Appliquer</button>
+
+    <div id="providerForms"></div>
+
+    <div class="card">
+      <h2>Jeton pour Hermes</h2>
+      <div class="sub">Jeton entrant que Hermes présente à Fossor (<span class="mono">Authorization: Bearer …</span>). Seule son empreinte SHA-256 est conservée : il n'est affiché qu'une seule fois, à la création, et n'est jamais exporté. « Régénérer » invalide immédiatement l'ancien jeton.</div>
+      <dl class="kv">
+        <dt>État</dt><dd id="tokState">…</dd>
+        <dt>Créé le</dt><dd id="tokDate">—</dd>
+      </dl>
+      <div class="actions"><button class="btn" id="tokBtn">Créer le jeton</button></div>
+      <div class="tokenbox" id="tokShow">
+        <div class="sub" style="margin:0">Copiez-le maintenant : il ne sera plus jamais affiché.</div>
+        <code id="tokValue"></code>
+      </div>
     </div>
-    <div class="diff" id="diffBox"></div>
   </div>
 </div>
 
@@ -185,7 +232,7 @@ const sendImport=async(dryRun)=>{
   return body;
 };
 const renderDiff=(diff)=>{
-  const list=(arr,cls,label)=>arr.length?`<tr><td class="${cls}">${label}</td><td>${arr.map(x=>x.name||x.model||x.uuid||x).join(', ')}</td></tr>`:'';
+  const list=(arr,cls,label)=>arr&&arr.length?`<tr><td class="${cls}">${label}</td><td>${arr.map(x=>x.name||x.model||x.which||x.uuid||x).join(', ')}</td></tr>`:'';
   $('#diffBox').innerHTML=`<table>
     ${list(diff.machines.added,'add','Machines ajoutées')}
     ${list(diff.machines.modified,'mod','Machines modifiées')}
@@ -196,6 +243,9 @@ const renderDiff=(diff)=>{
     ${list(diff.settings.added,'add','Réglages ajoutés')}
     ${list(diff.settings.modified,'mod','Réglages modifiés')}
     ${list(diff.settings.removed,'del','Réglages supprimés')}
+    ${list(diff.ai&&diff.ai.added,'add','Fournisseurs IA ajoutés')}
+    ${list(diff.ai&&diff.ai.modified,'mod','Fournisseurs IA modifiés')}
+    ${list(diff.ai&&diff.ai.removed,'del','Fournisseurs IA supprimés')}
   </table>`;
   $('#diffBox').style.display='block';
 };
@@ -217,6 +267,181 @@ $('#applyBtn').onclick=async()=>{
   $('#applyBtn').disabled=true;
   await loadUpdate();
 };
+
+/* ── Analyse IA ───────────────────────────────────────────────────── */
+const TYPE_EXAMPLES={
+  'hermes-agent':{base:'http://192.0.2.10:8642/v1',model:'hermes-agent'},
+  'openai-compatible-local':{base:'http://192.0.2.10:8080/v1',model:'qwen3.8-27b'},
+  'cloud-api':{base:'https://api.deepseek.com/v1',model:'deepseek-flash'}
+};
+const TYPE_LABEL={
+  'hermes-agent':'Hermes Agent (agent externe)',
+  'openai-compatible-local':'IA locale (llama.cpp, Ollama, LM Studio…)',
+  'cloud-api':'API cloud (DeepSeek, OpenRouter, Anthropic, OpenAI…)'
+};
+
+const providerCard=(which,label)=>`
+<div class="card" id="card_${which}">
+  <h2>Fournisseur ${label}</h2>
+  <div class="sub">Appel OpenAI-compatible : <span class="mono">POST {base_url}/chat/completions</span>. La clé est chiffrée en base et n'est jamais renvoyée.</div>
+  <div class="row">
+    <div class="field" style="flex:2"><label>Type</label><select id="${which}_type">
+      ${Object.keys(TYPE_EXAMPLES).map(t=>`<option value="${t}">${TYPE_LABEL[t]}</option>`).join('')}
+    </select></div>
+    <div class="field"><label>Nom affiché</label><input id="${which}_name" placeholder="Hermes / local / cloud"></div>
+    <div class="field narrow"><label><input type="checkbox" id="${which}_enabled" checked> Actif</label></div>
+  </div>
+  <div class="field"><label>Adresse (base_url)</label><input id="${which}_base_url" placeholder="http://192.0.2.10:8642/v1"></div>
+  <div class="row">
+    <div class="field"><label>Modèle</label><input id="${which}_model" placeholder="hermes-agent"></div>
+    <div class="field"><label>Clé API</label><input type="password" id="${which}_api_key" autocomplete="off" placeholder="laisser vide pour conserver l'actuelle"></div>
+  </div>
+  <div class="row">
+    <div class="field narrow"><label>Délai (s)</label><input type="number" id="${which}_timeout" min="1" max="600" value="120"></div>
+    <div class="field narrow"><label>max_tokens</label><input type="number" id="${which}_max_tokens" min="1" max="32768" value="1024"></div>
+    <div class="field narrow"><label>reasoning_effort</label><select id="${which}_effort">
+      <option value="">—</option><option value="low">low</option><option value="medium">medium</option>
+      <option value="high">high</option><option value="xhigh">xhigh</option>
+    </select></div>
+  </div>
+  <div class="field"><label>extra_body (objet JSON optionnel)</label><textarea id="${which}_extra" rows="3" placeholder='{"provider":"deepseek","require_model_lock":true}'></textarea></div>
+  <div class="field"><label><input type="checkbox" id="${which}_clear"> Supprimer la clé API enregistrée</label></div>
+  <div class="actions">
+    <button class="btn" id="${which}_save">Enregistrer</button>
+    <button class="btn outline" id="${which}_test">Tester</button>
+    <span class="empty" id="${which}_keyinfo"></span>
+  </div>
+  <div class="testres" id="${which}_result"></div>
+</div>`;
+
+$('#providerForms').innerHTML=providerCard('primary','principal')+providerCard('fallback','de secours');
+
+const readProvider=which=>{
+  const extraRaw=$('#'+which+'_extra').value.trim();
+  let extra=null;
+  if(extraRaw){
+    try{extra=JSON.parse(extraRaw);}
+    catch(e){toast('extra_body : JSON invalide','err');return null;}
+    if(!extra||typeof extra!=='object'||Array.isArray(extra)){toast('extra_body doit être un objet JSON','err');return null;}
+  }
+  const body={
+    provider_type:$('#'+which+'_type').value,
+    name:$('#'+which+'_name').value.trim(),
+    base_url:$('#'+which+'_base_url').value.trim(),
+    model:$('#'+which+'_model').value.trim(),
+    timeout_s:Number($('#'+which+'_timeout').value||120),
+    max_tokens:Number($('#'+which+'_max_tokens').value||1024),
+    reasoning_effort:$('#'+which+'_effort').value,
+    extra_body:extra,
+    enabled:$('#'+which+'_enabled').checked
+  };
+  const key=$('#'+which+'_api_key').value;
+  if(key)body.api_key=key;
+  if($('#'+which+'_clear').checked)body.clear_api_key=true;
+  return body;
+};
+
+const fillProvider=(which,data)=>{
+  const type=(data&&data.provider_type)||'hermes-agent';
+  $('#'+which+'_type').value=type;
+  $('#'+which+'_name').value=(data&&data.name)||'';
+  $('#'+which+'_base_url').value=(data&&data.base_url)||TYPE_EXAMPLES[type].base;
+  $('#'+which+'_model').value=(data&&data.model)||TYPE_EXAMPLES[type].model;
+  $('#'+which+'_timeout').value=(data&&data.timeout_s)||120;
+  $('#'+which+'_max_tokens').value=(data&&data.max_tokens)||1024;
+  $('#'+which+'_effort').value=(data&&data.reasoning_effort)||'';
+  $('#'+which+'_extra').value=data&&data.extra_body?JSON.stringify(data.extra_body):'';
+  $('#'+which+'_enabled').checked=data?!!data.enabled:true;
+  $('#'+which+'_clear').checked=false;
+  $('#'+which+'_api_key').value='';
+  $('#'+which+'_keyinfo').textContent=data&&data.has_api_key?'Clé enregistrée (non affichable)':'Aucune clé enregistrée';
+};
+
+const showTest=(which,result)=>{
+  const box=$('#'+which+'_result');
+  box.style.display='block';
+  if(result.ok){
+    box.className='testres ok';
+    box.textContent=`OK — ${result.latency_ms} ms — modèle « ${result.model||'?'} » — réponse : « ${result.extract} »`;
+  }else{
+    box.className='testres err';
+    box.textContent='Échec : '+(result.error||'erreur inconnue');
+  }
+};
+
+const loadAI=async()=>{
+  const r=await fetch('/api/config/ai',{credentials:'include'});
+  if(r.status===401){location.href='/';return;}
+  const d=await r.json();
+  $('#cadence').value=d.analysis_cadence_hours;
+  $('#fbEnabled').checked=!!d.fallback_enabled;
+  fillProvider('primary',d.primary);
+  fillProvider('fallback',d.fallback);
+  const t=d.hermes_token||{};
+  $('#tokState').innerHTML=t.has_token?'<span class="chip on">Jeton actif</span>':'<span class="chip off">Aucun jeton</span>';
+  $('#tokDate').textContent=t.created_at?fmtDate(t.created_at):'—';
+  $('#tokBtn').textContent=t.has_token?'Régénérer le jeton':'Créer le jeton';
+};
+
+['primary','fallback'].forEach(which=>{
+  $('#'+which+'_type').addEventListener('change',()=>{
+    const example=TYPE_EXAMPLES[$('#'+which+'_type').value];
+    $('#'+which+'_base_url').value=example.base;
+    $('#'+which+'_model').value=example.model;
+  });
+  $('#'+which+'_save').addEventListener('click',async()=>{
+    const body=readProvider(which);
+    if(!body)return;
+    const r=await fetch('/api/config/ai',{method:'PATCH',credentials:'include',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({[which]:body})});
+    const data=await r.json().catch(()=>({}));
+    if(!r.ok){toast(data.detail||'Enregistrement refusé','err');return;}
+    toast('Fournisseur '+which+' enregistré');
+    await loadAI();
+  });
+  $('#'+which+'_test').addEventListener('click',async()=>{
+    const btn=$('#'+which+'_test');
+    btn.disabled=true;btn.textContent='Test…';
+    try{
+      const r=await fetch('/api/config/ai/test?which='+which,{method:'POST',credentials:'include'});
+      const data=await r.json().catch(()=>({}));
+      if(!r.ok){showTest(which,{ok:false,error:data.detail||('HTTP '+r.status)});}
+      else{showTest(which,data);}
+    }catch(e){showTest(which,{ok:false,error:'Requête impossible'});}
+    btn.disabled=false;btn.textContent='Tester';
+  });
+});
+
+$('#saveGlobals').addEventListener('click',async()=>{
+  const r=await fetch('/api/config/ai',{method:'PATCH',credentials:'include',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({analysis_cadence_hours:Number($('#cadence').value),fallback_enabled:$('#fbEnabled').checked})});
+  const data=await r.json().catch(()=>({}));
+  if(!r.ok){toast(data.detail||'Enregistrement refusé','err');return;}
+  toast('Réglages enregistrés');
+});
+
+$('#tokBtn').addEventListener('click',async()=>{
+  if(!confirm('Générer un nouveau jeton ? Un jeton existant cessera immédiatement de fonctionner.'))return;
+  const r=await fetch('/api/config/ai/token',{method:'POST',credentials:'include'});
+  const data=await r.json().catch(()=>({}));
+  if(!r.ok){toast(data.detail||'Génération impossible','err');return;}
+  $('#tokValue').textContent=data.token;
+  $('#tokShow').style.display='block';
+  toast('Jeton généré — copiez-le maintenant');
+  await loadAI();
+});
+
+document.querySelectorAll('.subtab').forEach(button=>{
+  button.addEventListener('click',()=>{
+    document.querySelectorAll('.subtab').forEach(b=>b.classList.toggle('active',b===button));
+    const ai=button.dataset.panel==='panel-ai';
+    $('#panel-general').style.display=ai?'none':'block';
+    $('#panel-ai').style.display=ai?'block':'none';
+    if(ai)loadAI();
+  });
+});
+
 $('#logoutBtn').onclick=async()=>{
   await fetch('/api/logout',{method:'POST',credentials:'include'});
   location.href='/';
