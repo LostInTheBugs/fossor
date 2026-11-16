@@ -215,7 +215,7 @@ function campaignCard(c) {
   if (pool) {
     const parts = [];
     if (pool.available) {
-      parts.push('payé ' + fmtAmt(pool.paid) + ' · non payé ' + fmtAmt(pool.unpaid) + ' · immature ' + fmtAmt(pool.immature));
+      parts.push('déjà payé (sur le wallet) ' + fmtAmt(pool.paid) + ' · non payé ' + fmtAmt(pool.unpaid) + ' · immature ' + fmtAmt(pool.immature));
     } else {
       parts.push(esc(pool.note || 'API du pool : pas de donnée par wallet'));
     }

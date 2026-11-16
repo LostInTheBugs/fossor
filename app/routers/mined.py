@@ -108,6 +108,16 @@ def _campaign_json(
     balance = row.last_balance
     if balance is None and row.state == "active":
         balance = row.mined_amount
+    note = row.balance_note
+
+    # §4.1 bis fix: what the pool still owes is unpaid + immature — the paid
+    # part already sits on the wallet and must not be counted twice.
+    if pool_balance is not None and pool_balance.available:
+        unpaid = pool_balance.unpaid
+        immature = pool_balance.immature
+        if unpaid is not None or immature is not None:
+            balance = round((unpaid or 0.0) + (immature or 0.0), 8)
+            note = "sur le pool (non payé + immature)"
     return {
         "id": row.id,
         "key": row.legacy_key,
@@ -123,7 +133,7 @@ def _campaign_json(
         "mined_raw": row.mined_raw,
         "mined_amount": row.mined_amount,
         "balance": balance,
-        "balance_note": row.balance_note,
+        "balance_note": note,
         "price_usd": quote.get("usd"),
         "price_eur": quote.get("eur"),
         "change_24h": quote.get("change_24h"),
