@@ -1,6 +1,20 @@
+# Fossor — deux services (§4.18).
+#
+#   fossor          l'application.  Aucun accès au socket Docker : elle ne peut
+#                   pas recréer son propre conteneur.
+#   fossor-updater  le compagnon.  Seul à monter /var/run/docker.sock ; il ne
+#                   sait faire que pull, réécrire FOSSOR_IMAGE_TAG dans .env,
+#                   `docker compose up -d fossor` et lire /api/version.
+#                   Aucun port publié, /data monté en lecture seule (le dossier
+#                   d'échange ./data/update est la seule exception, en écriture).
+#
+# La mise à jour est déclenchée depuis Configuration → Mise à jour : Fossor
+# sauvegarde sa base, dépose data/update/request.json, l'updater exécute et
+# publie data/update/status.json.
 services:
   fossor:
     build: .
+    image: ${FOSSOR_IMAGE:-ghcr.io/lostinthebugs/fossor}:${FOSSOR_IMAGE_TAG:-latest}
     ports:
       - "${FOSSOR_PORT:-8008}:8008"
     volumes:
@@ -9,4 +23,37 @@ services:
       - DATABASE_URL=sqlite:////data/fossor.db
       - FOSSOR_ADMIN_PASSWORD=${FOSSOR_ADMIN_PASSWORD}
       - FOSSOR_MASTER_KEY=${FOSSOR_MASTER_KEY}
+      # L'application doit connaître l'image qu'elle exécute : c'est ce nom que
+      # la demande de mise à jour transmet, et l'updater refuse tout autre.
+      - FOSSOR_IMAGE=${FOSSOR_IMAGE:-ghcr.io/lostinthebugs/fossor}
+      # Renseigné par l'updater uniquement pendant un retour arrière : le
+      # service redémarre alors avec la base sauvegardée (docker-entrypoint.sh).
+      - FOSSOR_RESTORE_BACKUP=${FOSSOR_RESTORE_BACKUP:-}
+    restart: unless-stopped
+
+  fossor-updater:
+    build: ./updater
+    image: ${FOSSOR_UPDATER_IMAGE:-ghcr.io/lostinthebugs/fossor-updater}:${FOSSOR_UPDATER_TAG:-latest}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/compose
+      - ./data:/data:ro
+      - ./data/update:/data/update
+    environment:
+      - FOSSOR_UPDATER_COMPOSE_DIR=/compose
+      - FOSSOR_UPDATER_PROJECT=${COMPOSE_PROJECT_NAME:-fossor}
+      # Chemin du projet sur l'hôte : lu dans l'étiquette compose s'il est vide.
+      - FOSSOR_UPDATER_PROJECT_DIR=${FOSSOR_HOME:-}
+      - FOSSOR_UPDATER_SERVICE=fossor
+      - FOSSOR_UPDATER_EXPECTED_IMAGE=${FOSSOR_IMAGE:-ghcr.io/lostinthebugs/fossor}
+      - FOSSOR_UPDATER_DIR=/data/update
+      - FOSSOR_UPDATER_BACKUP_DIR=/data/backups
+      - FOSSOR_UPDATER_HEALTH_URL=http://fossor:8008/api/version
+      - FOSSOR_UPDATER_HEALTH_TIMEOUT=${FOSSOR_UPDATER_HEALTH_TIMEOUT:-120}
+      - FOSSOR_UPDATER_POLL=${FOSSOR_UPDATER_POLL:-10}
+      # 1 = les images sont construites localement (tests d'intégration) : aucun pull.
+      - FOSSOR_UPDATER_LOCAL_IMAGES=${FOSSOR_UPDATER_LOCAL_IMAGES:-0}
+    # Groupe du socket Docker de l'hôte : `DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)`.
+    group_add:
+      - "${DOCKER_GID:-999}"
     restart: unless-stopped
