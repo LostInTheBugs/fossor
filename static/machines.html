@@ -104,10 +104,32 @@ tr.absent td{opacity:.5}
       <div class="field"><label>Port SSH</label><input id="fPort" type="number" value="22" min="1" max="65535"></div>
     </div>
     <div class="row">
-      <div class="field"><label>User SSH</label><input id="fUser" value="root"></div>
-      <div class="field"><label>Type auth</label><select id="fAuthType"><option value="key">Clé SSH</option><option value="password">Mot de passe</option></select></div>
+      <div class="field"><label>User SSH (login)</label><input id="fUser" value="root" oninput="updateKeyCommand()"></div>
+      <div class="field"><label>Mode d'authentification</label><select id="fAuthType" onchange="updateAuthUi()">
+        <option value="password">Mot de passe (stocké chiffré)</option>
+        <option value="fossor_key">Clé publique de Fossor (posée à la main)</option>
+        <option value="provision">Préparation automatique (accès temporaire)</option>
+      </select></div>
     </div>
-    <div class="field"><label id="secretLabel">Clé SSH / Mot de passe</label><input id="fSecret" type="password" placeholder="••• modifier" autocomplete="off"></div>
+    <div class="field" id="secretPanel"><label id="secretLabel">Mot de passe</label><input id="fSecret" type="password" placeholder="••• modifier" autocomplete="new-password"></div>
+
+    <div class="field" id="fossorKeyPanel" style="display:none">
+      <label>Clé publique de Fossor</label>
+      <textarea id="fossorPublicKey" readonly rows="3" style="width:100%;background:var(--bg);color:var(--txt);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:11.5px;font-family:ui-monospace,Consolas,monospace"></textarea>
+      <div style="margin-top:6px"><button class="btn sm outline" type="button" id="copyKeyBtn">Copier la clé</button></div>
+      <div style="margin-top:10px;font-size:11.5px;color:var(--muted)">Commande prête à coller sur la machine, connecté en <b id="fossorLoginHint">root</b> :</div>
+      <pre id="fossorKeyCmd" style="white-space:pre-wrap;word-break:break-all;background:#0e1218;border:1px solid var(--border);border-radius:8px;padding:8px;margin-top:6px;font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--muted)"></pre>
+      <button class="btn sm outline" type="button" id="copyCmdBtn">Copier la commande</button>
+    </div>
+
+    <div id="provisionPanel" style="display:none">
+      <div class="row">
+        <div class="field"><label>Login temporaire (avec sudo)</label><input id="fTempUser" placeholder="user" autocomplete="off"></div>
+        <div class="field"><label>Mot de passe temporaire</label><input id="fTempPassword" type="password" placeholder="jamais stocké" autocomplete="new-password"></div>
+      </div>
+      <div class="field"><label>Compte dédié à créer</label><input id="fAccount" value="fossor"></div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">Le mot de passe temporaire ne sert qu'à cette requête : ni base, ni journal, ni audit. Il est oublié à la fin.</div>
+    </div>
     <div class="row">
       <div class="field"><label>Sudo</label><select id="fSudo"><option value="none">Aucun</option><option value="sudo without password">Sudo sans mot de passe</option><option value="sudo with password">Sudo avec mot de passe</option></select></div>
       <div class="field"><label>Usage</label><select id="fUsage"><option value="both">CPU+GPU</option><option value="cpu">CPU seul</option><option value="gpu">GPU seul</option><option value="none">Aucun</option></select></div>
@@ -200,7 +222,7 @@ const loadMachines=async()=>{
   tbody.innerHTML=data.map(m=>{
     const usageChips={cpu:'cpu',gpu:'gpu',both:'both',none:'none'};
     const enabledChip=m.enabled?'on':'off';
-    const authLabel=m.auth_type==='key'?'Clé':'Mdp';
+    const authLabel={password:'Mdp',fossor_key:'Clé Fossor',key:'Clé (hérité)',provision:'Préparation'}[m.auth_type]||m.auth_type;
     return `<tr>
       <td><b>${m.name}</b></td>
       <td class="mono">${m.host}</td>
@@ -212,7 +234,8 @@ const loadMachines=async()=>{
       <td>${m.sudo}</td>
       <td><span class="chip ${enabledChip}">${m.enabled?'Oui':'Non'}</span></td>
       <td><button class="btn sm" onclick="testMachine(${m.id},this)" title="Tester la connexion SSH">🔌</button> <button class="btn sm" onclick="editMachine(${m.id})">✏️</button> <button class="btn sm danger" onclick="deleteMachine(${m.id},'${m.name}')">🗑️</button>
-        <div style="margin-top:6px"><button class="btn sm outline" onclick="detectMachine(${m.id},this)">🔍 Détecter le matériel</button></div></td>
+        <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm outline" onclick="detectMachine(${m.id},this)">🔍 Détecter le matériel</button>
+        ${m.auth_type==='fossor_key'?`<button class="btn sm outline" onclick="deprovisionMachine(${m.id},this)" title="Retirer la clé publique, le fichier sudoers et l'accès Fossor">🔒 Retirer l'accès Fossor</button>`:''}</div></td>
     </tr>`+detailRow(m);
   }).join('');
 };
@@ -257,27 +280,71 @@ const setMachineUsage=async(id,usage)=>{
   if(r.status===401){location.href='/';return;}
   if(r.ok){MACHINES[id]={...MACHINES[id],...(await r.json())};toast('Usage de la machine : '+USAGE_LABEL[usage]);await loadMachines();}
 };
+// ── Auth modes (§4.1 bis) ────────────────────────────────────────────
+let FOSSOR_PUBLIC_KEY='';
+const loadFossorKey=async()=>{
+  if(FOSSOR_PUBLIC_KEY)return FOSSOR_PUBLIC_KEY;
+  try{
+    const r=await fetch('/api/ssh/public-key',{credentials:'include'});
+    if(!r.ok)return '';
+    FOSSOR_PUBLIC_KEY=(await r.text()).trim();
+    $('#fossorPublicKey').value=FOSSOR_PUBLIC_KEY;
+  }catch(e){return '';}
+  return FOSSOR_PUBLIC_KEY;
+};
+const updateKeyCommand=()=>{
+  const login=($('#fUser').value||'').trim()||'fossor';
+  const key=FOSSOR_PUBLIC_KEY||'(clé indisponible)';
+  const cmd=`mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '${key}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys`;
+  $('#fossorKeyCmd').textContent=cmd;
+  const hint=$('#fossorLoginHint');
+  if(hint)hint.textContent=login;
+};
+const copyText=async(text,label)=>{
+  try{await navigator.clipboard.writeText(text);toast(label+' copiée');}
+  catch(e){toast('Copie impossible','err');}
+};
+const updateAuthUi=()=>{
+  const mode=$('#fAuthType').value;
+  $('#secretPanel').style.display=(mode==='password'||mode==='key')?'':'none';
+  $('#fossorKeyPanel').style.display=mode==='fossor_key'?'':'none';
+  $('#provisionPanel').style.display=mode==='provision'?'':'none';
+  if(mode==='fossor_key'){loadFossorKey().then(updateKeyCommand);}
+  if(mode==='password'){$('#secretLabel').textContent='Mot de passe (laisser vide pour garder l\'ancien)';}
+  if(mode==='key'){$('#secretLabel').textContent='Nouvelle clé privée (hérité — laisser vide pour garder)';}
+};
+$('#copyKeyBtn').onclick=()=>copyText($('#fossorPublicKey').value,'Clé');
+$('#copyCmdBtn').onclick=()=>copyText($('#fossorKeyCmd').textContent,'Commande');
+
 const openModal=(editId)=>{
   $('#modal').classList.add('open');
   $('#modalTitle').textContent=editId?'Modifier':'Ajouter une machine';
   $('#editId').value=editId||'';
+  const sel=$('#fAuthType');
+  const legacy=sel.querySelector('option[value="key"]');
+  if(legacy)legacy.remove();
   if(editId){
     fetch('/api/machines/'+editId,{credentials:'include'}).then(r=>r.json()).then(m=>{
       if(!m)return;
       $('#fName').value=m.name;$('#fHost').value=m.host;$('#fPort').value=m.ssh_port;
-      $('#fUser').value=m.ssh_user;$('#fAuthType').value=m.auth_type;
+      $('#fUser').value=m.ssh_user;
+      if(m.auth_type==='key'){const o=document.createElement('option');o.value='key';o.textContent='Clé privée (hérité)';sel.appendChild(o);}
+      sel.value=m.auth_type;
       $('#fSudo').value=m.sudo;$('#fUsage').value=m.usage;$('#fOs').value=m.os_kind;
       $('#fVmHost').value=String(m.vm_host);$('#fHostKey').value=m.host_key||'';
       $('#fEnabled').value=String(m.enabled);
-      $('#secretLabel').textContent=m.auth_type==='key'?'Nouvelle clé SSH (laisser vide pour garder l\'ancienne)':'Nouveau mot de passe (laisser vide pour garder l\'ancien)';
       $('#fSecret').value='';
+      $('#fAccount').value=m.ssh_user||'fossor';
+      $('#fTempUser').value='';$('#fTempPassword').value='';
+      updateAuthUi();updateKeyCommand();
     });
   }else{
     $('#fName').value='';$('#fHost').value='';$('#fPort').value='22';$('#fUser').value='root';
-    $('#fAuthType').value='key';$('#fSudo').value='none';$('#fUsage').value='both';
+    sel.value='password';$('#fSudo').value='none';$('#fUsage').value='both';
     $('#fOs').value='other';$('#fVmHost').value='false';$('#fHostKey').value='';
     $('#fEnabled').value='true';$('#fSecret').value='';
-    $('#secretLabel').textContent='Clé SSH / Mot de passe';
+    $('#fAccount').value='fossor';$('#fTempUser').value='';$('#fTempPassword').value='';
+    updateAuthUi();updateKeyCommand();
   }
 };
 const closeModal=$('#modal').classList.remove.bind($('#modal').classList);
@@ -286,20 +353,59 @@ $('#cancelBtn').onclick=closeModal;
 $('#modal').onclick=e=>{if(e.target===$('#modal'))closeModal();};
 $('#saveBtn').onclick=async()=>{
   const id=$('#editId').value;
+  const mode=$('#fAuthType').value;
+  const account=($('#fAccount').value||'fossor').trim();
   const data={
     name:$('#fName').value.trim(),host:$('#fHost').value.trim(),
-    ssh_port:parseInt($('#fPort').value)||22,ssh_user:$('#fUser').value.trim(),
-    auth_type:$('#fAuthType').value,sudo:$('#fSudo').value,
+    ssh_port:parseInt($('#fPort').value)||22,
+    ssh_user:mode==='provision'?account:$('#fUser').value.trim(),
+    auth_type:mode==='provision'?'fossor_key':mode,sudo:$('#fSudo').value,
     usage:$('#fUsage').value,os_kind:$('#fOs').value,
     vm_host:$('#fVmHost').value==='true',host_key:$('#fHostKey').value.trim(),
     enabled:$('#fEnabled').value==='true'
   };
-  const secret=$('#fSecret').value;
-  if(secret) data.secret=secret;
+  if(mode==='provision'){
+    const tempUser=$('#fTempUser').value.trim(),tempPassword=$('#fTempPassword').value;
+    if(!tempUser||!tempPassword){toast('Login et mot de passe temporaires requis','err');return;}
+    let machineId=id;
+    if(!machineId){
+      const created=await api('/api/machines',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data),credentials:'include'});
+      if(!created||!created.id){toast('Création impossible','err');return;}
+      machineId=created.id;
+    }
+    const r=await fetch('/api/machines/'+machineId+'/provision',{method:'POST',credentials:'include',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({temp_user:tempUser,temp_password:tempPassword,account})});
+    const d=await r.json().catch(()=>({}));
+    $('#fTempPassword').value='';
+    if(d.ok){closeModal();loadMachines();toast(d.message||'Machine préparée');}
+    else{toast('Préparation échouée : '+(d.error||d.detail||'erreur inconnue'),'err');loadMachines();}
+    return;
+  }
+  if(mode==='password'){
+    const secret=$('#fSecret').value;
+    if(secret)data.secret=secret;
+  }else if(mode==='key'){
+    const key=$('#fSecret').value;
+    if(key)data.secret=key;
+  }
   const url=id?'/api/machines/'+id:'/api/machines';
   const opts={method:id?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data),credentials:'include'};
   const result=await api(url,opts);
   if(result){closeModal();loadMachines();toast(id?'Machine mise à jour':'Machine ajoutée');}
+};
+const deprovisionMachine=async(id,btn)=>{
+  if(!confirm('Retirer l\'accès Fossor (clé publique + fichier sudoers) de cette machine ?'))return;
+  const del=confirm('Supprimer aussi le compte dédié ? (le compte de la session en cours ne peut pas être supprimé)');
+  btn.disabled=true;
+  try{
+    const r=await fetch('/api/machines/'+id+'/deprovision',{method:'POST',credentials:'include',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({delete_account:del})});
+    const d=await r.json();
+    if(d.ok){toast(d.message||'Accès Fossor retiré');loadMachines();}
+    else{toast('Retrait impossible : '+(d.error||d.detail||'erreur inconnue'),'err');}
+  }catch(e){toast('Erreur réseau','err');}
+  btn.disabled=false;
 };
 const deleteMachine=async(id,name)=>{
   if(!confirm('Supprimer '+name+' ?'))return;

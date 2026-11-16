@@ -10,6 +10,14 @@ Host-key policy
   key during the handshake, i.e. before password/public-key auth.
 * A fingerprint mismatch is refused explicitly, with both fingerprints in the
   error message, and written to the audit log.
+
+Authentication modes (§4.1 bis)
+-------------------------------
+* ``password``   — password stored encrypted (Fernet, master key);
+* ``fossor_key`` — Fossor's own ed25519 key, private half encrypted in the
+  settings table, public half pinned on the machine's ``authorized_keys``;
+* ``key``        — legacy: private key pasted by the operator, still usable
+  for machines created before the mode was removed from the UI.
 """
 
 from __future__ import annotations
@@ -208,7 +216,16 @@ def _parse_identify(stdout: str, fallback_user: str) -> dict[str, str]:
 
 
 def _auth_kwargs(auth_type: str, secret: str) -> tuple[dict[str, Any], str | None]:
-    """Build credential kwargs; returns (kwargs, temporary private-key path)."""
+    """Build credential kwargs; returns (kwargs, temporary private-key path).
+
+    ``fossor_key`` always uses Fossor's own identity: the machine carries no
+    secret in that mode, and a stale ``secret`` is deliberately ignored.
+    """
+    if auth_type == "fossor_key":
+        from app.fossor_keys import private_key_text
+
+        key = asyncssh.import_private_key(private_key_text())
+        return {"client_keys": [key]}, None
     if auth_type == "key" and secret:
         if os.path.isfile(secret):
             return {"client_keys": [secret]}, None
@@ -220,6 +237,65 @@ def _auth_kwargs(auth_type: str, secret: str) -> tuple[dict[str, Any], str | Non
     if auth_type == "password" and secret:
         return {"password": secret}, None
     return {}, None
+
+
+async def _resolve_host_key(
+    *,
+    host: str,
+    port: int,
+    pinned_fp: str | None,
+    pinned_public_key: str | None,
+    machine_id: int | None,
+    audit_kind: str,
+    start: float,
+) -> tuple[Any | None, str, dict[str, Any] | None]:
+    """Read, verify and (on first contact) pin the host key.
+
+    Must complete **before** any credential is handed to asyncssh.
+    """
+    try:
+        server_key = await read_server_host_key(host, port)
+    except asyncio.TimeoutError:
+        return None, "", _failure(start, f"SSH host key read timed out ({HOST_KEY_TIMEOUT} s)")
+    except (asyncssh.Error, OSError) as exc:
+        return None, "", _failure(start, f"Connection failed: {exc}")
+
+    new_fp = _fingerprint_of(server_key)
+    new_pub = _public_key_of(server_key)
+
+    trusted_key = None
+    if pinned_fp:
+        if not pinned_public_key:
+            msg = (
+                f"Empreinte épinglée ({pinned_fp}) sans clé publique enregistrée — "
+                "connexion refusée, lancez reset-host-key"
+            )
+            if machine_id is not None:
+                _audit_log(machine_id, "host-key-check", "fail", msg)
+                _audit_log(machine_id, audit_kind, "fail", msg)
+            return None, new_fp, _failure(start, msg, new_fp)
+        if new_fp != pinned_fp:
+            msg = f"Empreinte changée : ancienne {pinned_fp}, nouvelle {new_fp}"
+            if machine_id is not None:
+                _audit_log(machine_id, "host-key-mismatch", "fail", msg)
+                _audit_log(machine_id, audit_kind, "fail", msg)
+            return None, new_fp, _failure(start, msg, new_fp)
+        try:
+            trusted_key = asyncssh.import_public_key(pinned_public_key)
+        except Exception:
+            msg = "Clé publique épinglée illisible — connexion refusée, lancez reset-host-key"
+            if machine_id is not None:
+                _audit_log(machine_id, "host-key-check", "fail", msg)
+                _audit_log(machine_id, audit_kind, "fail", msg)
+            return None, new_fp, _failure(start, msg, new_fp)
+
+    if trusted_key is None:
+        if machine_id is not None:
+            _pin_host_key(machine_id, new_fp, new_pub)
+            _audit_log(machine_id, "host-key-pinned", "ok", f"Host key pinned: {new_fp}")
+        trusted_key = server_key
+
+    return trusted_key, new_fp, None
 
 
 async def _run_whitelisted(
@@ -237,53 +313,20 @@ async def _run_whitelisted(
     """Pin/verify the host key, connect, then run one whitelisted *command*."""
     start = asyncio.get_running_loop().time() * 1000
 
-    # 1) Read the host key without authenticating anything.
-    try:
-        server_key = await read_server_host_key(host, port)
-    except asyncio.TimeoutError:
-        return _failure(start, f"SSH host key read timed out ({HOST_KEY_TIMEOUT} s)")
-    except (asyncssh.Error, OSError) as exc:
-        return _failure(start, f"Connection failed: {exc}")
+    trusted_key, new_fp, failure = await _resolve_host_key(
+        host=host,
+        port=port,
+        pinned_fp=pinned_fp,
+        pinned_public_key=pinned_public_key,
+        machine_id=machine_id,
+        audit_kind=audit_kind,
+        start=start,
+    )
+    if failure is not None:
+        return failure
 
-    new_fp = _fingerprint_of(server_key)
-    new_pub = _public_key_of(server_key)
-
-    # 2) Pinned? Verify before the credential leaves the process.
-    trusted_key = None
-    if pinned_fp:
-        if not pinned_public_key:
-            msg = (
-                f"Empreinte épinglée ({pinned_fp}) sans clé publique enregistrée — "
-                "connexion refusée, lancez reset-host-key"
-            )
-            if machine_id is not None:
-                _audit_log(machine_id, "host-key-check", "fail", msg)
-                _audit_log(machine_id, audit_kind, "fail", msg)
-            return _failure(start, msg, new_fp)
-        if new_fp != pinned_fp:
-            msg = f"Empreinte changée : ancienne {pinned_fp}, nouvelle {new_fp}"
-            if machine_id is not None:
-                _audit_log(machine_id, "host-key-mismatch", "fail", msg)
-                _audit_log(machine_id, audit_kind, "fail", msg)
-            return _failure(start, msg, new_fp)
-        try:
-            trusted_key = asyncssh.import_public_key(pinned_public_key)
-        except Exception:
-            msg = "Clé publique épinglée illisible — connexion refusée, lancez reset-host-key"
-            if machine_id is not None:
-                _audit_log(machine_id, "host-key-check", "fail", msg)
-                _audit_log(machine_id, audit_kind, "fail", msg)
-            return _failure(start, msg, new_fp)
-
-    # 3) First contact: pin now, before sending any credential.
-    if trusted_key is None:
-        if machine_id is not None:
-            _pin_host_key(machine_id, new_fp, new_pub)
-            _audit_log(machine_id, "host-key-pinned", "ok", f"Host key pinned: {new_fp}")
-        trusted_key = server_key
-
-    # 4) Connect with the pinned key handed to asyncssh: verified during the
-    #    handshake, i.e. before authentication.
+    # Connect with the pinned key handed to asyncssh: verified during the
+    # handshake, i.e. before authentication.
     connect_kwargs: dict[str, Any] = {
         "host": host,
         "port": port,
@@ -291,7 +334,13 @@ async def _run_whitelisted(
         "known_hosts": ([trusted_key], [], []),
         "connect_timeout": CONNECT_TIMEOUT,
     }
-    auth_kwargs, tmp_key = _auth_kwargs(auth_type, secret)
+    try:
+        auth_kwargs, tmp_key = _auth_kwargs(auth_type, secret)
+    except Exception as exc:
+        msg = f"Credentials unavailable: {exc}"
+        if machine_id is not None:
+            _audit_log(machine_id, audit_kind, "fail", msg)
+        return _failure(start, msg, new_fp)
     connect_kwargs.update(auth_kwargs)
 
     try:
@@ -338,6 +387,73 @@ async def _run_whitelisted(
     }
 
 
+async def open_pinned_connection(
+    *,
+    host: str,
+    port: int,
+    username: str,
+    auth_type: str,
+    secret: str = "",
+    pinned_fp: str | None = None,
+    pinned_public_key: str | None = None,
+    machine_id: int | None = None,
+    audit_kind: str = "ssh",
+) -> tuple[Any | None, str, dict[str, Any] | None]:
+    """Open an authenticated connection after the same host-key policy.
+
+    Returns ``(connection, fingerprint, failure)``; the caller owns the
+    connection and must close it. Used by the provisioning flow, which needs
+    several commands inside one session.
+    """
+    start = asyncio.get_running_loop().time() * 1000
+    trusted_key, new_fp, failure = await _resolve_host_key(
+        host=host,
+        port=port,
+        pinned_fp=pinned_fp,
+        pinned_public_key=pinned_public_key,
+        machine_id=machine_id,
+        audit_kind=audit_kind,
+        start=start,
+    )
+    if failure is not None:
+        return None, new_fp, failure
+
+    connect_kwargs: dict[str, Any] = {
+        "host": host,
+        "port": port,
+        "username": username,
+        "known_hosts": ([trusted_key], [], []),
+        "connect_timeout": CONNECT_TIMEOUT,
+    }
+    try:
+        auth_kwargs, tmp_key = _auth_kwargs(auth_type, secret)
+    except Exception as exc:
+        msg = f"Credentials unavailable: {exc}"
+        if machine_id is not None:
+            _audit_log(machine_id, audit_kind, "fail", msg)
+        return None, new_fp, _failure(start, msg, new_fp)
+    connect_kwargs.update(auth_kwargs)
+
+    try:
+        conn = await asyncio.wait_for(asyncssh.connect(**connect_kwargs), timeout=CONNECT_TIMEOUT)
+    except asyncssh.PermissionDenied:
+        return None, new_fp, _failure(start, "Permission denied — credentials rejected", new_fp)
+    except asyncio.TimeoutError:
+        return None, new_fp, _failure(start, f"SSH connection timed out ({CONNECT_TIMEOUT} s)", new_fp)
+    except (asyncssh.Error, OSError, ConnectionError) as exc:
+        return None, new_fp, _failure(start, f"Connection failed: {exc}", new_fp)
+    except Exception as exc:  # pragma: no cover - defensive
+        return None, new_fp, _failure(start, f"SSH error: {exc}", new_fp)
+    finally:
+        if tmp_key:
+            try:
+                os.unlink(tmp_key)
+            except OSError:
+                pass
+
+    return conn, new_fp, None
+
+
 async def _collect_identify(
     host: str,
     port: int,
@@ -377,6 +493,16 @@ async def _collect_identify(
 
 
 # ── Public API ────────────────────────────────────────────────────────
+def _machine_secret(machine: Any) -> str:
+    """Decrypted password / legacy private key of a machine (empty if none)."""
+    if getattr(machine, "secret_ref", None):
+        try:
+            return decrypt_secret(machine.secret_ref)
+        except Exception:
+            return ""
+    return ""
+
+
 async def ssh_test_machine(machine: Any) -> dict[str, Any]:
     """Test the SSH connection to a Machine ORM object."""
     # The caller passes the Machine row it just loaded: use its pinned key
@@ -384,18 +510,11 @@ async def ssh_test_machine(machine: Any) -> dict[str, Any]:
     pinned_fp = (getattr(machine, "host_key", None) or "").strip() or None
     pinned_public_key = (getattr(machine, "host_key_public", None) or "").strip() or None
 
-    secret = ""
-    if machine.secret_ref:
-        try:
-            secret = decrypt_secret(machine.secret_ref)
-        except Exception:
-            secret = ""
-
     result = await _collect_identify(
         host=machine.host,
         port=machine.ssh_port,
         username=machine.ssh_user,
-        secret=secret,
+        secret=_machine_secret(machine),
         auth_type=machine.auth_type,
         pinned_fp=pinned_fp,
         pinned_public_key=pinned_public_key,
@@ -426,18 +545,11 @@ async def ssh_detect_hw(machine: Any) -> dict[str, Any]:
     pinned_fp = (getattr(machine, "host_key", None) or "").strip() or None
     pinned_public_key = (getattr(machine, "host_key_public", None) or "").strip() or None
 
-    secret = ""
-    if machine.secret_ref:
-        try:
-            secret = decrypt_secret(machine.secret_ref)
-        except Exception:
-            secret = ""
-
     raw = await _run_whitelisted(
         host=machine.host,
         port=machine.ssh_port,
         username=machine.ssh_user,
-        secret=secret,
+        secret=_machine_secret(machine),
         auth_type=machine.auth_type,
         pinned_fp=pinned_fp,
         pinned_public_key=pinned_public_key,
@@ -466,18 +578,11 @@ async def ssh_collect_stats(machine: Any) -> dict[str, Any]:
     pinned_fp = (getattr(machine, "host_key", None) or "").strip() or None
     pinned_public_key = (getattr(machine, "host_key_public", None) or "").strip() or None
 
-    secret = ""
-    if machine.secret_ref:
-        try:
-            secret = decrypt_secret(machine.secret_ref)
-        except Exception:
-            secret = ""
-
     return await _run_whitelisted(
         host=machine.host,
         port=machine.ssh_port,
         username=machine.ssh_user,
-        secret=secret,
+        secret=_machine_secret(machine),
         auth_type=machine.auth_type,
         pinned_fp=pinned_fp,
         pinned_public_key=pinned_public_key,

@@ -32,7 +32,15 @@ FALLBACK_KEY = "fallback_enabled"
 TOKEN_HASH_KEY = "hermes_token_hash"
 TOKEN_CREATED_KEY = "hermes_token_created_at"
 # Never written to an export, never returned by the API.
-NON_EXPORTED_SETTINGS = frozenset({TOKEN_HASH_KEY, TOKEN_CREATED_KEY})
+NON_EXPORTED_SETTINGS = frozenset(
+    {
+        TOKEN_HASH_KEY,
+        TOKEN_CREATED_KEY,
+        # §4.1 bis: the private half is master-key encrypted at rest and only
+        # travels inside the passphrase-encrypted ``secrets`` block.
+        "fossor_ssh_private_key",
+    }
+)
 
 DEFAULT_CADENCE_HOURS = 6
 DEFAULT_TIMEOUT_S = 120

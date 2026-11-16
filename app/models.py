@@ -10,6 +10,8 @@ from app.database import Base
 class AuthTypeEnum(str, enum.Enum):
     key = "key"
     password = "password"
+    # §4.1 bis mode 2: Fossor connects with its own ed25519 key.
+    fossor_key = "fossor_key"
 
 
 class SudoTypeEnum(str, enum.Enum):

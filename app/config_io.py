@@ -89,10 +89,11 @@ def _encrypt_secrets(
     machine_secrets: dict[str, str],
     ai_secrets: dict[str, str],
     passphrase: str,
+    ssh_key: str | None = None,
 ) -> dict[str, Any]:
     salt = os.urandom(16)
     fernet = _fernet_for(passphrase, salt, KDF_ITERATIONS)
-    return {
+    block = {
         "kdf": "pbkdf2-sha256",
         "iterations": KDF_ITERATIONS,
         "salt": base64.b64encode(salt).decode(),
@@ -100,16 +101,24 @@ def _encrypt_secrets(
         "tokens": {uuid: fernet.encrypt(plain.encode()).decode() for uuid, plain in machine_secrets.items()},
         "ai": {which: fernet.encrypt(plain.encode()).decode() for which, plain in ai_secrets.items()},
     }
+    # §4.1 bis: Fossor's own private key follows the configuration (encrypted
+    # with the export passphrase, never with the master key of the file).
+    if ssh_key:
+        block["ssh_key"] = fernet.encrypt(ssh_key.encode()).decode()
+    return block
 
 
-def _decrypt_secrets(doc: dict, passphrase: str | None) -> tuple[dict[str, str], dict[str, str]]:
+def _decrypt_secrets(
+    doc: dict, passphrase: str | None
+) -> tuple[dict[str, str], dict[str, str], str | None]:
     """Decrypt the ``secrets`` block; raise ConfigError before any write.
 
-    Returns ``(machine secrets by uuid, AI provider keys by ``which``)``.
+    Returns ``(machine secrets by uuid, AI provider keys by ``which``,
+    Fossor private key or None)``.
     """
     block = doc.get("secrets")
     if not block:
-        return {}, {}
+        return {}, {}, None
     if not passphrase:
         raise ConfigError("Ce fichier contient des secrets chiffrés : une phrase de passe est requise")
     if block.get("cipher") != "fernet" or block.get("kdf") != "pbkdf2-sha256":
@@ -138,7 +147,14 @@ def _decrypt_secrets(doc: dict, passphrase: str | None) -> tuple[dict[str, str],
                 raise ConfigError("Phrase de passe incorrecte (impossible de déchiffrer les secrets)")
         return opened
 
-    return _open(tokens), _open(ai_tokens)
+    ssh_key = None
+    if block.get("ssh_key"):
+        try:
+            ssh_key = fernet.decrypt(str(block["ssh_key"]).encode()).decode()
+        except InvalidToken:
+            raise ConfigError("Phrase de passe incorrecte (clé SSH de Fossor illisible)")
+
+    return _open(tokens), _open(ai_tokens), ssh_key
 
 
 # ── Export ─────────────────────────────────────────────────────────────
@@ -197,7 +213,16 @@ def build_export(db: Session, include_secrets: bool = False, passphrase: str | N
         for provider in db.query(AiProvider).all():
             if provider.api_key_ref:
                 ai_plain[provider.which] = decrypt_secret(provider.api_key_ref)
-        doc["secrets"] = _encrypt_secrets(plain, ai_plain, passphrase)
+        ssh_key = None
+        try:
+            from app.ai_config import get_setting as _get_setting
+            from app.fossor_keys import PRIVATE_KEY_SETTING, private_key_text
+
+            if _get_setting(db, PRIVATE_KEY_SETTING, None):
+                ssh_key = private_key_text(db)
+        except Exception:
+            ssh_key = None
+        doc["secrets"] = _encrypt_secrets(plain, ai_plain, passphrase, ssh_key)
     return doc
 
 
@@ -412,7 +437,7 @@ def apply_import(
         raise ConfigError("mode invalide : « merge » ou « replace » attendu")
 
     # Decrypt before touching anything: a wrong passphrase must write nothing.
-    machine_secrets, ai_secrets = _decrypt_secrets(doc, passphrase)
+    machine_secrets, ai_secrets, ssh_key = _decrypt_secrets(doc, passphrase)
 
     backup_path = backup_current_config(db)
 
@@ -523,6 +548,12 @@ def apply_import(
         if which in ai_secrets:
             provider.api_key_ref = encrypt_secret(ai_secrets[which])
     db.flush()
+
+    # §4.1 bis: restore Fossor's own SSH identity when the file carries it.
+    if ssh_key:
+        from app.fossor_keys import restore_private_key
+
+        restore_private_key(ssh_key, db)
 
     db.commit()
     return {"mode": mode, "backup": backup_path, "stats": stats}

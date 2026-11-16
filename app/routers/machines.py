@@ -280,3 +280,61 @@ async def reset_machine_host_key(
     result = await asyncio.wait_for(_reset(machine_id), timeout=5)
     _audit(db, machine, "host-key-reset", result.get("ok") and "ok" or "fail")
     return result
+
+
+# ── §4.1 bis mode 3: automatic preparation through temporary access ───
+@router.post("/{machine_id}/provision")
+async def provision_machine_account(
+    machine_id: int,
+    data: dict,
+    db: Session = Depends(get_db),
+    _user=Depends(require_login),
+):
+    """Prepare the dedicated account with a temporary login/password.
+
+    The temporary password is only kept in memory for the duration of the
+    call: it is never stored, logged or audited (see ``app/provision.py``).
+    """
+    from app.provision import ProvisionError, provision_machine
+
+    machine = db.query(Machine).filter(Machine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=404, detail="Machine not found")
+
+    try:
+        result = await provision_machine(
+            machine,
+            temp_user=data.get("temp_user") or "",
+            temp_password=data.get("temp_password") or "",
+            account=data.get("account") or "fossor",
+        )
+    except ProvisionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if result.get("ok"):
+        db.expire_all()
+        machine = db.query(Machine).filter(Machine.id == machine_id).first()
+        if machine is not None:
+            result["machine"] = _mask_secret(machine)
+    return result
+
+
+@router.post("/{machine_id}/deprovision")
+async def deprovision_machine_account(
+    machine_id: int,
+    data: dict | None = None,
+    db: Session = Depends(get_db),
+    _user=Depends(require_login),
+):
+    """Remove Fossor's access (sudoers drop-in, key line, optionally the account)."""
+    from app.provision import ProvisionError, deprovision_machine
+
+    machine = db.query(Machine).filter(Machine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=404, detail="Machine not found")
+
+    try:
+        result = await deprovision_machine(machine, delete_account=bool((data or {}).get("delete_account")))
+    except ProvisionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return result

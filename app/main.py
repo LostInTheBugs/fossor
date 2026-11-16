@@ -14,6 +14,7 @@ from app.routers.metrics import router as metrics_router
 from app.routers.coins import router as coins_router
 from app.routers.mined import router as mined_router
 from app.routers.energy import router as energy_router
+from app.routers.ssh import router as ssh_router
 from app.routers.ui import router as ui_router
 from pathlib import Path
 
@@ -40,6 +41,7 @@ app.include_router(metrics_router)
 app.include_router(coins_router)
 app.include_router(mined_router)
 app.include_router(energy_router)
+app.include_router(ssh_router)
 app.include_router(ui_router)
 
 
@@ -58,6 +60,14 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 @app.on_event("startup")
 async def startup():
     init_db()
+    # §4.1 bis: Fossor's own SSH identity exists from the very first start.
+    # Best-effort: a missing master key must not take the whole app down.
+    try:
+        from app import fossor_keys
+        fossor_keys.ensure_key()
+    except Exception as exc:  # pragma: no cover - startup guard
+        import logging
+        logging.getLogger("fossor.keys").error("Fossor SSH key unavailable: %s", exc)
     # §4.18: best-effort background check, jittered, never blocking startup.
     from app import update_checker
     update_checker.start()
