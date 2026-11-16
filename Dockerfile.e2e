@@ -1,0 +1,19 @@
+FROM mcr.microsoft.com/playwright/python:v1.49.0-jammy
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir pytest pytest-asyncio httpx python-multipart itsdangerous passlib[bcrypt] bcrypt cryptography playwright==1.49.0
+
+# Install fossor deps
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy project
+COPY . .
+
+RUN mkdir -p /app/data
+
+USER 1000:1000
+
+# Run E2E tests
+CMD ["pytest", "tests/e2e/", "-m", "e2e", "-v"]
