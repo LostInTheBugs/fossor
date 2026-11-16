@@ -4,6 +4,34 @@
 
 All notable changes to fossor are documented in this file.
 
+## 2026.11.004 — en cours (étape 3a)
+
+### Étape 3a — profils de minage, simulation, lancement/arrêt (mode host)
+
+- **Mode simulation global (§5.7)** : activé par défaut ; la désactivation exige la case
+  décochée **et** la saisie de « PILOTER », sinon refus. Bandeau permanent sur toutes les
+  pages. En simulation, chaque action renvoie et journalise la liste exacte des commandes
+  sans en exécuter une seule (aucun appel SSH de pilotage).
+- **Profils de minage (§4.5)** : coin, wallet, pool (`solo` ou `stratum[+tcp|+ssl]://`),
+  logiciel (`srbminer`, `lolminer`, `bzminer`, `xmrig`, `custom`), binaire (URL d'archive,
+  **SHA256 obligatoire**, chemin dans l'archive), version, gabarit de ligne de commande à
+  variables fermées (`{wallet} {pool} {worker} {gpus} {threads} {api_port}`), port d'API,
+  mode d'exécution (`host` seulement). Chaque valeur substituée est validée par motif ;
+  le gabarit est découpé avec `shlex.split` **avant** substitution et la commande reste
+  un tableau d'arguments.
+- **Token par défaut** : un profil global (Configuration) et une surcharge par machine.
+- **Lancement/arrêt en mode host** : téléchargement **par la machine cible**, `sha256sum`
+  vérifié avant extraction (refus + nettoyage si différent), service systemd
+  `fossor-miner-<profil>.service` généré (ExecStart échappé, `Restart=on-failure`,
+  utilisateur dédié), `daemon-reload`/`enable`/`start`, repli détecté sans systemd :
+  `setsid nohup` + fichier PID dans `/opt/fossor/run/`. Arrêt par `systemctl stop` ou
+  PID vérifié. Statut : actif, PID, uptime, hashrate lu sur l'API du mineur.
+- **Cohabitation** : un autre programme qui occupe les GPU (nvidia-smi / `ps`) fait
+  refuser le démarrage — Fossor ne touche jamais à un mineur qu'il n'a pas lancé.
+- **API** : `POST /api/machines/{id}/miner/start` et `/stop`, `GET …/miner/status`,
+  CRUD `/api/miner/profiles`, `GET|PUT /api/miner/settings`. Tout est audité (qui, quoi,
+  simulé ou non, résultat).
+
 ## 2026.11.003 — 2026-11-16
 
 ### Étape 2f — navigation unique et notifications

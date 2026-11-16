@@ -19,4 +19,8 @@ RUN useradd -m -s /bin/bash tester \
 
 EXPOSE 2222
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl python3 ca-certificates procps coreutils \
+    && rm -rf /var/lib/apt/lists/*
+
 CMD ["/usr/sbin/sshd", "-D", "-e", "-p", "2222"]
