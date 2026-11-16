@@ -281,6 +281,7 @@ def build_plan(
     markets = status.get("markets") if isinstance(status.get("markets"), dict) else {}
 
     warnings: list[str] = []
+    skipped: list[dict[str, Any]] = []
     balances = _live_balances(live)
     campaigns: list[dict[str, Any]] = []
     coins: dict[str, dict[str, Any]] = {}
@@ -338,13 +339,27 @@ def build_plan(
     # ── history ───────────────────────────────────────────────────────
     for index, entry in enumerate(status.get("history") or []):
         if not isinstance(entry, dict):
+            skipped.append({"source": f"history[{index}]", "ticker": "", "reason": "entrée non objet"})
+            warnings.append(f"history[{index}]: entrée non objet, ignorée")
             continue
         ticker = _s(entry.get("ticker") or entry.get("coin")).upper()
         if not ticker:
+            skipped.append({
+                "source": f"history[{index}]",
+                "ticker": "",
+                "label": _s(entry.get("name") or entry.get("machine")),
+                "reason": "sans ticker",
+            })
             warnings.append(f"history[{index}]: sans ticker, ignoré")
             continue
         mined = _s(entry.get("mined"))
         if not mined and not _s(entry.get("start_iso")):
+            skipped.append({
+                "source": f"history[{index}]",
+                "ticker": ticker,
+                "label": _s(entry.get("name") or entry.get("machine")),
+                "reason": "ni montant ni date",
+            })
             warnings.append(f"history[{index}] ({ticker}): ni montant ni date, ignoré")
             continue
         state = "blocked" if re.search(r"bloqu", _s(entry.get("status")), re.IGNORECASE) else "ended"
@@ -358,11 +373,13 @@ def build_plan(
         "wallets": list(wallets.values()),
         "campaigns": campaigns,
         "warnings": warnings,
+        "skipped": skipped,
         "counts": {
             "coins": len(coins),
             "wallets": len(wallets),
             "campaigns_active": sum(1 for c in campaigns if c["state"] == "active"),
             "campaigns_history": sum(1 for c in campaigns if c["state"] != "active"),
+            "skipped": len(skipped),
         },
     }
 
@@ -462,6 +479,7 @@ def preview(plan: dict[str, Any], limit: int = 40) -> dict[str, Any]:
             }
             for c in plan.get("campaigns", [])[:limit]
         ],
+        "skipped": plan.get("skipped", []),
     }
 
 
