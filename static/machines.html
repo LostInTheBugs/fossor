@@ -75,8 +75,13 @@ tr.absent td{opacity:.5}
 
   <nav class="nav-tabs">
     <a href="/machines" class="active">🖥️ Machines</a>
+    <a href="/settings">⚙️ Configuration</a>
     <a href="/audit">📋 Audit Log</a>
   </nav>
+
+  <div id="updateBanner" style="display:none;margin-bottom:14px;padding:9px 14px;border:1px solid var(--yellow);border-radius:9px;background:#2a2416;font-size:12.5px">
+    ⬆️ <span id="updateText"></span> · <a href="/settings" style="color:var(--accent)">voir les notes de version</a>
+  </div>
 
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
     <h2 style="font-size:16px;font-weight:700">Machines en ligne</h2>
@@ -156,7 +161,7 @@ const deviceRows=(m)=>{
       :`${d.vram_mb?d.vram_mb+' Mo VRAM':'VRAM inconnue'}${d.driver?' · pilote '+d.driver:''}`;
     return `<tr class="${d.present?'':'absent'}">
       <td><span class="chip ${isCpu?'cpu':'gpu'}">${isCpu?'CPU':'GPU'}</span></td>
-      <td><b>${d.model||'inconnu'}</b>${d.present?'':' <span class="chip off">absent</span>'}</td>
+      <td><b>${d.model||'inconnu'}</b>${d.integrated?' <span class="chip off" title="GPU intégré au CPU / à la carte mère — jamais miné par défaut">intégré</span>':''}${d.present?'':' <span class="chip off">absent</span>'}</td>
       <td class="mono">${details}</td>
       <td class="mono">${d.pci_bus||'—'}</td>
       <td><input type="checkbox" class="dev-check" ${d.enabled_for_mining?'checked':''} ${d.present?'':'disabled'} onchange="toggleDevice(${d.id},${m.id},this.checked)" title="Miner avec ce device"></td>
@@ -326,7 +331,18 @@ const checkAuth=async()=>{
   if(m===null){location.href='/';return false;}
   return true;
 };
-checkAuth().then(ok=>{if(ok)loadMachines();});
+const loadUpdateBanner=async()=>{
+  try{
+    const r=await fetch('/api/update/status',{credentials:'include'});
+    if(!r.ok)return;
+    const d=await r.json();
+    if(d.update_available){
+      $('#updateText').textContent='Nouvelle version '+d.latest_version+' disponible (installée : '+d.installed_version+')';
+      $('#updateBanner').style.display='block';
+    }
+  }catch(e){/* best-effort, jamais bloquant */}
+};
+checkAuth().then(ok=>{if(ok){loadMachines();loadUpdateBanner();}});
 </script>
 </body>
 </html>
