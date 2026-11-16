@@ -139,6 +139,7 @@ pre.out{background:#0e1218;border:1px solid var(--border);border-radius:8px;padd
       <label>Emplacement<input id="wLocation" style="width:150px"></label>
       <label>Chemin de sauvegarde<input id="wBackup" style="width:220px" placeholder="/chemin/vers/backup.dat"></label>
       <label>Pool<select id="wPool"><option value=""></option><option value="luckypool">luckypool</option><option value="rplant">rplant</option><option value="solo">solo</option></select></label>
+      <label>Sous-domaine pool<input id="wPoolHost" style="width:150px" placeholder="pearl / qtc (vide = auto)"></label>
       <button class="btn" type="submit">Ajouter le wallet</button>
     </form>
     <p class="mono" style="margin-bottom:10px">Fossor ne stocke jamais de seed, de phrase ou de mot de passe de wallet — uniquement l'adresse, l'emplacement et le chemin de sauvegarde.</p>
@@ -365,7 +366,8 @@ $('#walletForm').addEventListener('submit', async event => {
     label: $('#wLabel').value.trim(),
     location: $('#wLocation').value.trim(),
     backup_path: $('#wBackup').value.trim(),
-    pool: $('#wPool').value
+    pool: $('#wPool').value,
+    pool_host: $('#wPoolHost').value.trim()
   };
   try {
     await api('/api/wallets', {method: 'POST', body: JSON.stringify(body)});

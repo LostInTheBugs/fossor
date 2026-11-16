@@ -1,0 +1,70 @@
+{
+ "stats": {
+  "wallet": "prl1qexample0000000000000000000000000000000000000000000000000",
+  "lastShare": "1794848215227",
+  "acceptedShares": "595191",
+  "hashes": "1201170561514",
+  "roundHashes": "273236499984",
+  "rejectedShares": "920",
+  "lastBlockFound": "1793320625116",
+  "blocksFound": "4",
+  "hashrate": 751905607953067,
+  "email": null,
+  "paid": 147474697035,
+  "paymentEnabled": true,
+  "paymentThreshold": 500000000,
+  "unlocked": 118839497,
+  "locked": 184470694,
+  "hashrateAvg": {
+   "24h": 862647001329628,
+   "6h": 862070796037001,
+   "1h": 828224139957423
+  }
+ },
+ "workers": [
+  {
+   "name": "rig-a",
+   "minerAgent": "SRBMiner-MULTI/3.8.3",
+   "loginTime": "1794649495321",
+   "region": "eu2",
+   "port": "3360",
+   "firstConnect": "1793302076349",
+   "lastShare": "1794848065230",
+   "acceptedShares": "50307",
+   "hashes": "75460500000",
+   "roundHashes": 4945379328000000,
+   "hs": "216825838116703",
+   "hashrate": 148892199594667,
+   "rejectedShares": "0",
+   "hashrateAvg": {
+    "24h": 220227918783043,
+    "6h": 214179173174510,
+    "1h": 187423696095832
+   }
+  },
+  {
+   "name": "gpu-b",
+   "minerAgent": "SRBMiner-MULTI/3.8.3",
+   "loginTime": "1794761785552",
+   "region": "eu2",
+   "port": "3360",
+   "firstConnect": "1793476394063",
+   "lastShare": "1794848195954",
+   "acceptedShares": "62330",
+   "hashes": "93495000000",
+   "roundHashes": 6127288320000000,
+   "hs": "303318820114030",
+   "hashrate": 303318820114030,
+   "rejectedShares": "1",
+   "hashrateAvg": {
+    "24h": 642419082546585,
+    "6h": 648691622862490,
+    "1h": 640800443861590
+   }
+  }
+ ],
+ "charts": {},
+ "payments": [],
+ "rewards": [],
+ "rewardStats": []
+}

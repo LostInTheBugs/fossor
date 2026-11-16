@@ -68,6 +68,9 @@ class Machine(Base):
     usage: Mapped[UsageEnum] = mapped_column(String(10), default=UsageEnum.both)
     vm_host: Mapped[bool] = mapped_column(Boolean, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # §4.15: CPU and platform power are typed in by the operator (no sensor).
+    cpu_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    platform_power_w: Mapped[float] = mapped_column(Float, default=50.0)
     created_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -209,6 +212,8 @@ class Wallet(Base):
     location: Mapped[str] = mapped_column(String(200), default="")  # machine / VM where the wallet lives
     backup_path: Mapped[str] = mapped_column(String(500), default="")  # path only
     pool: Mapped[str] = mapped_column(String(30), default="")  # luckypool | rplant | solo | ""
+    # Luckypool per-coin subdomain (``pearl``, ``qtc``…); empty = derived from ticker.
+    pool_host: Mapped[str] = mapped_column(String(80), default="")
     created_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -265,6 +270,21 @@ class PoolBalance(Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw: Mapped[dict] = mapped_column(JSON, default=dict)
     fetched_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class PoolBalanceSample(Base):
+    """One dated pool-balance reading, used for the §4.15 revenue (24 h delta)."""
+
+    __tablename__ = "pool_balance_samples"
+    __table_args__ = (Index("ix_pool_samples_wallet_ts", "wallet_id", "ts"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    wallet_id: Mapped[int] = mapped_column(Integer, ForeignKey("wallets.id"), nullable=False)
+    ts: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+    paid: Mapped[float | None] = mapped_column(Float, nullable=True)
+    unpaid: Mapped[float | None] = mapped_column(Float, nullable=True)
+    immature: Mapped[float | None] = mapped_column(Float, nullable=True)
+    total: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class AuditLog(Base):

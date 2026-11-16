@@ -64,6 +64,7 @@ def _wallet_json(wallet: Wallet) -> dict[str, Any]:
         "location": wallet.location,
         "backup_path": wallet.backup_path,
         "pool": wallet.pool,
+        "pool_host": wallet.pool_host,
     }
 
 
@@ -167,6 +168,7 @@ class WalletIn(BaseModel):
     location: str = ""
     backup_path: str = ""
     pool: str = ""
+    pool_host: str = ""
 
 
 class WalletUpdate(BaseModel):
@@ -176,6 +178,7 @@ class WalletUpdate(BaseModel):
     location: str | None = None
     backup_path: str | None = None
     pool: str | None = None
+    pool_host: str | None = None
     address: str | None = None
 
 

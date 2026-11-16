@@ -275,20 +275,26 @@ class TestLuckypool:
         assert "indisponibles" in record["note"]
         assert record["raw"]["pool_miners"] > 0
 
-    async def test_balance_uses_public_endpoint(self, monkeypatch):
+    async def test_balance_uses_public_endpoints(self, monkeypatch):
         monkeypatch.delenv("FOSSOR_OFFLINE")
-        payload = json.loads((FIX / "luckypool_stats.json").read_text())
+        pool_stats = json.loads((FIX / "luckypool_stats.json").read_text())
+        address_stats = json.loads((FIX / "luckypool_stats_address.json").read_text())
         seen: list[str] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
             seen.append(str(request.url))
+            payload = address_stats if request.url.path.endswith("/stats_address") else pool_stats
             return httpx.Response(200, json=payload)
 
         monkeypatch.setattr(pools, "TRANSPORT", httpx.MockTransport(handler))
         record = await pools.luckypool_balance("prl1qexample", coin="PRL")
         assert record["ok"] is True
-        assert seen == [pools.LUCKYPOOL_STATS_URL]
-        assert record["source_url"] == pools.LUCKYPOOL_STATS_URL
+        assert record["available"] is True
+        assert record["paid"] == 1474.74697035
+        assert seen == [
+            "https://pearl.luckypool.io/api/stats",
+            "https://pearl.luckypool.io/api/stats_address?address=prl1qexample",
+        ]
 
     async def test_refresh_stores_pool_row(self, client, monkeypatch):
         await client.post("/api/import/legacy", json={"status": _status(), "live": _live(), "dry_run": False})
@@ -300,8 +306,11 @@ class TestLuckypool:
         assert created.status_code == 201, created.text
 
         payload = json.loads((FIX / "luckypool_stats.json").read_text())
+        address_payload = json.loads((FIX / "luckypool_stats_address.json").read_text())
 
         def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/stats_address"):
+                return httpx.Response(200, json=address_payload)
             return httpx.Response(200, json=payload)
 
         monkeypatch.delenv("FOSSOR_OFFLINE")
@@ -315,8 +324,9 @@ class TestLuckypool:
         body = (await client.get("/api/mined")).json()
         pearl = next(c for c in body["campaigns"] if c["ticker"] == "PRL")
         assert pearl["pool_balance"] is not None
-        assert pearl["pool_balance"]["available"] is False
-        assert pearl["pool_balance"]["threshold"] is not None
+        assert pearl["pool_balance"]["available"] is True
+        assert pearl["pool_balance"]["paid"] == 1474.74697035
+        assert pearl["pool_balance"]["threshold"] == 5.0
 
 
 # ── Catalogue / wallets ───────────────────────────────────────────────

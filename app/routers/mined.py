@@ -22,7 +22,15 @@ from sqlalchemy.orm import Session
 from app import legacy_import, pools, prices
 from app.database import get_db
 from app.dependencies import require_login
-from app.models import AppSetting, AuditLog, Coin, MinedCampaign, PoolBalance, Wallet
+from app.models import (
+    AppSetting,
+    AuditLog,
+    Coin,
+    MinedCampaign,
+    PoolBalance,
+    PoolBalanceSample,
+    Wallet,
+)
 
 logger = logging.getLogger("fossor.mined")
 
@@ -281,8 +289,32 @@ async def mined_refresh(db: Session = Depends(get_db), _user=Depends(require_log
         row.last_payment_tx = result.get("last_payment_tx")
         row.source_url = result.get("source_url")
         row.note = result.get("note")
-        row.raw = result.get("raw") or {}
+        raw = dict(result.get("raw") or {})
+        raw.update({
+            "workers": result.get("workers") or [],
+            "hashrate_hs": result.get("hashrate_hs"),
+            "hashrate_avg_24h_hs": result.get("hashrate_avg_24h_hs"),
+            "accepted_shares": result.get("accepted_shares"),
+            "rejected_shares": result.get("rejected_shares"),
+            "pool_hashrate_hs": result.get("pool_hashrate_hs"),
+            "units_per_coin": result.get("units_per_coin"),
+            "units_verified": result.get("units_verified"),
+        })
+        row.raw = raw
         row.fetched_at = stamp
+        # §4.15: dated sample, the 24 h balance delta is the revenue estimate.
+        parts = [result.get("paid"), result.get("unpaid"), result.get("immature")]
+        total = round(sum(p for p in parts if p is not None), 12) if any(
+            p is not None for p in parts
+        ) else None
+        db.add(PoolBalanceSample(
+            wallet_id=wallet.id,
+            ts=stamp,
+            paid=result.get("paid"),
+            unpaid=result.get("unpaid"),
+            immature=result.get("immature"),
+            total=total,
+        ))
         report.append({
             "wallet_id": wallet.id,
             "ticker": wallet.coin_ticker,
@@ -290,6 +322,8 @@ async def mined_refresh(db: Session = Depends(get_db), _user=Depends(require_log
             "ok": True,
             "available": bool(result.get("available")),
             "threshold": result.get("threshold"),
+            "hashrate_hs": result.get("hashrate_hs"),
+            "workers": len(result.get("workers") or []),
             "note": result.get("note"),
         })
     db.commit()
@@ -374,6 +408,7 @@ def _run_import(
         "counts": plan["counts"],
         "preview": legacy_import.preview(plan),
         "warnings": plan["warnings"],
+        "skipped": plan.get("skipped", []),
         "applied": None,
     }
     if dry_run:

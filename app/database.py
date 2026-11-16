@@ -66,6 +66,8 @@ def init_db():
     _migrate_host_key_public_column()
     _migrate_machine_uuid_column()
     _migrate_device_integrated_column()
+    _migrate_wallet_pool_host_column()
+    _migrate_machine_power_columns()
 
 
 def _migrate_device_integrated_column():
@@ -85,6 +87,36 @@ def _migrate_device_integrated_column():
             conn.commit()
     finally:
         conn.close()
+
+
+def _add_column_if_missing(table: str, column: str, ddl: str) -> None:
+    """SQLite ``ALTER TABLE`` guarded by ``PRAGMA table_info``."""
+    import sqlite3
+
+    db_path = _sqlite_path()
+    if not db_path:
+        return
+    conn = sqlite3.connect(db_path)
+    try:
+        cols = [row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+        if cols and column not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+            conn.commit()
+    finally:
+        conn.close()
+
+
+def _migrate_wallet_pool_host_column():
+    """Add wallets.pool_host (Luckypool per-coin subdomain, §4.16)."""
+    _add_column_if_missing("wallets", "pool_host", "pool_host VARCHAR(80) NOT NULL DEFAULT ''")
+
+
+def _migrate_machine_power_columns():
+    """Add machines.cpu_power_w / platform_power_w (§4.15)."""
+    _add_column_if_missing("machines", "cpu_power_w", "cpu_power_w FLOAT")
+    _add_column_if_missing(
+        "machines", "platform_power_w", "platform_power_w FLOAT NOT NULL DEFAULT 50"
+    )
 
 
 def _sqlite_path() -> str | None:
