@@ -6,7 +6,7 @@
 <title>Fossor — Connexion</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#12161c;--card:#1a2029;--border:#2c3544;--txt:#e6edf3;--muted:#8b98a9;--accent:#4f8cff}
+:root{--bg:#12161c;--card:#1a2029;--border:#2c3544;--txt:#e6edf3;--muted:#8b98a9;--accent:#4f8cff;--red:#f2555a}
 body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center}
 .login-box{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:32px;width:360px}
 .login-box h1{text-align:center;font-size:22px;margin-bottom:6px}
@@ -25,20 +25,32 @@ body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,-app
   <h1>⛏️ Fossor</h1>
   <p class="sub">Connexion administrateur</p>
   <form id="loginForm">
-    <div class="field"><label>Nom d'utilisateur</label><input id="username" value="admin" required></div>
-    <div class="field"><label>Mot de passe</label><input id="password" type="password" required></div>
+    <div class="field"><label>Nom d'utilisateur</label><input id="username" name="username" value="admin" required></div>
+    <div class="field"><label>Mot de passe</label><input id="password" name="password" type="password" required></div>
     <button class="btn" type="submit">Se connecter</button>
     <div class="err" id="errBox">Identifiants invalides</div>
   </form>
 </div>
 <script>
-$('#loginForm').onsubmit=async e=>{
-  e.preventDefault();$('#errBox').style.display='none';
-  const fd=new FormData();fd.append('username',$('#username').value);fd.append('password',$('#password').value);
-  const r=await fetch('/api/login',{method:'POST',body:fd});
-  if(r.ok){location.href='/machines';}
-  else{$('#errBox').style.display='block';}
-};
+// Minimal selector helper — this page loads no external script.
+const $ = (sel) => document.querySelector(sel);
+
+$('#loginForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  $('#errBox').style.display = 'none';
+  const form = event.currentTarget;           // the <form>, not window
+  const body = new URLSearchParams(new FormData(form));
+  try {
+    const resp = await fetch('/api/login', { method: 'POST', body });
+    if (resp.ok) {
+      window.location.href = '/machines';
+      return;
+    }
+  } catch (err) {
+    // network error → fall through to the error box
+  }
+  $('#errBox').style.display = 'block';
+});
 </script>
 </body>
 </html>

@@ -72,7 +72,7 @@ class TestVersionEndpoint:
         assert r.status_code == 200
         data = r.json()
         assert "version" in data
-        assert data["version"] == "2026.11.001"
+        assert data["version"] == "2026.11.002-dev"
 
 
 class TestHealthEndpoint:

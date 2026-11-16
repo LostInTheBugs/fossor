@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from app.database import init_db
 from app.auth import router as auth_router
 from app.routers.machines import router as machines_router
@@ -33,7 +33,11 @@ def startup():
 
 
 @app.get("/", response_class=HTMLResponse)
-def login_page():
+def login_page(request: Request):
+    # If already logged in, redirect to machines page
+    from app.auth import get_current_user
+    if get_current_user(request):
+        return RedirectResponse(url="/machines", status_code=303)
     return HTMLResponse((STATIC_DIR / "login.html").read_text())
 
 
