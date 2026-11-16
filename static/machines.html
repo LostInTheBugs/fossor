@@ -49,6 +49,18 @@ tr:hover td{background:rgba(79,140,255,.04)}
 .toast.ok{border-color:var(--green)}.toast.err{border-color:var(--red)}
 .mono{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;color:var(--muted)}
 .masked{color:var(--muted);font-style:italic}
+tr.detail td{background:#151a21;padding:0 8px 10px}
+.dev-panel{border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:#161c24}
+.dev-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px;font-size:12.5px}
+.dev-head .masked{font-size:12px}
+.usage-sel{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.usage-sel select{background:var(--bg);color:var(--txt);border:1px solid var(--border);border-radius:7px;padding:4px 8px;font-size:12px;font-family:inherit;cursor:pointer}
+table.devtab{font-size:12px}
+table.devtab th{background:transparent;padding:5px 6px;font-size:10.5px}
+table.devtab td{padding:5px 6px;border-bottom:1px solid #232b37}
+table.devtab tr:hover td{background:transparent}
+tr.absent td{opacity:.5}
+.dev-check{width:15px;height:15px;cursor:pointer;accent-color:var(--accent)}
 </style>
 </head>
 <body>
@@ -123,12 +135,62 @@ const toast=(msg,type='ok')=>{
   const t=$('#toast');t.textContent=msg;t.className='toast '+type;t.style.display='block';
   setTimeout(()=>t.style.display='none',3000);
 };
+const MACHINES={},DEVICES={};
+const USAGE_LABEL={both:'CPU+GPU',cpu:'CPU seul',gpu:'GPU seul',none:'Aucun'};
+const machineUsage=id=>{
+  const rows=(DEVICES[id]||[]).filter(d=>d.present);
+  const cpu=rows.some(d=>d.kind==='cpu'&&d.enabled_for_mining);
+  const gpu=rows.some(d=>d.kind==='gpu'&&d.enabled_for_mining);
+  if(cpu&&gpu)return 'both';
+  if(cpu)return 'cpu';
+  if(gpu)return 'gpu';
+  return 'none';
+};
+const deviceRows=(m)=>{
+  const devs=DEVICES[m.id]||[];
+  if(!devs.length)return '<div class="empty" style="padding:8px">Aucun device détecté — cliquez « Détecter le matériel ».</div>';
+  const rows=devs.map(d=>{
+    const isCpu=d.kind==='cpu';
+    const details=isCpu
+      ?`${d.cores||'?'} cœurs / ${d.threads||'?'} threads · ${d.ram_mb||'?'} Mo RAM${d.flags?' · '+d.flags:''}`
+      :`${d.vram_mb?d.vram_mb+' Mo VRAM':'VRAM inconnue'}${d.driver?' · pilote '+d.driver:''}`;
+    return `<tr class="${d.present?'':'absent'}">
+      <td><span class="chip ${isCpu?'cpu':'gpu'}">${isCpu?'CPU':'GPU'}</span></td>
+      <td><b>${d.model||'inconnu'}</b>${d.present?'':' <span class="chip off">absent</span>'}</td>
+      <td class="mono">${details}</td>
+      <td class="mono">${d.pci_bus||'—'}</td>
+      <td><input type="checkbox" class="dev-check" ${d.enabled_for_mining?'checked':''} ${d.present?'':'disabled'} onchange="toggleDevice(${d.id},${m.id},this.checked)" title="Miner avec ce device"></td>
+    </tr>`;
+  }).join('');
+  return `<table class="devtab"><thead><tr><th>Type</th><th>Modèle</th><th>Détails</th><th>Bus PCI</th><th>Miner avec</th></tr></thead><tbody>${rows}</tbody></table>`;
+};
+const detailRow=(m)=>{
+  const devs=DEVICES[m.id]||[];
+  const present=devs.filter(d=>d.present).length;
+  const label=devs.length?`${present} présent(s)${devs.length-present?' · '+(devs.length-present)+' absent(s)':''}`:'aucune détection';
+  return `<tr class="detail"><td colspan="10"><div class="dev-panel">
+    <div class="dev-head">
+      <span><b>Matériel détecté</b> <span class="masked">· ${label}${m.vm_host?' · hôte de VM':''}</span></span>
+      <label class="usage-sel">Usage machine
+        <select onchange="setMachineUsage(${m.id},this.value)">
+          ${['both','cpu','gpu','none'].map(u=>`<option value="${u}"${m.usage===u?' selected':''}>${USAGE_LABEL[u]}</option>`).join('')}
+        </select>
+      </label>
+    </div>
+    ${deviceRows(m)}
+  </div></td></tr>`;
+};
 const loadMachines=async()=>{
   const data=await api('/api/machines');
   if(!data)return;
   const tbody=$('#machBody');
   if(!data.length){$('#tableWrap').style.display='none';$('#emptyMsg').style.display='block';return;}
   $('#tableWrap').style.display='';$('#emptyMsg').style.display='none';
+  data.forEach(m=>{MACHINES[m.id]=m;});
+  await Promise.all(data.map(async m=>{
+    try{const d=await api('/api/machines/'+m.id+'/devices');DEVICES[m.id]=Array.isArray(d)?d:[];}
+    catch(e){DEVICES[m.id]=DEVICES[m.id]||[];}
+  }));
   tbody.innerHTML=data.map(m=>{
     const usageChips={cpu:'cpu',gpu:'gpu',both:'both',none:'none'};
     const enabledChip=m.enabled?'on':'off';
@@ -143,9 +205,51 @@ const loadMachines=async()=>{
       <td>${m.os_kind}</td>
       <td>${m.sudo}</td>
       <td><span class="chip ${enabledChip}">${m.enabled?'Oui':'Non'}</span></td>
-      <td><button class="btn sm" onclick="testMachine(${m.id},this)" title="Tester la connexion SSH">🔌</button> <button class="btn sm" onclick="editMachine(${m.id})">✏️</button> <button class="btn sm danger" onclick="deleteMachine(${m.id},'${m.name}')">🗑️</button></td>
-    </tr>`;
+      <td><button class="btn sm" onclick="testMachine(${m.id},this)" title="Tester la connexion SSH">🔌</button> <button class="btn sm" onclick="editMachine(${m.id})">✏️</button> <button class="btn sm danger" onclick="deleteMachine(${m.id},'${m.name}')">🗑️</button>
+        <div style="margin-top:6px"><button class="btn sm outline" onclick="detectMachine(${m.id},this)">🔍 Détecter le matériel</button></div></td>
+    </tr>`+detailRow(m);
   }).join('');
+};
+const detectMachine=async(id,btn)=>{
+  const original=btn.textContent;
+  btn.disabled=true;btn.textContent='⏳ Détection…';
+  try{
+    const r=await fetch('/api/machines/'+id+'/detect',{method:'POST',credentials:'include'});
+    if(r.status===401){location.href='/';return;}
+    const d=await r.json();
+    if(d.ok){
+      DEVICES[id]=d.devices||[];
+      toast(`Matériel détecté : ${d.stats.created} créé(s), ${d.stats.updated} mis à jour${d.stats.missing?', '+d.stats.missing+' disparu(s)':''}`);
+      await loadMachines();
+    }else{
+      toast('Détection refusée : '+(d.error||'erreur inconnue'),'err');
+    }
+  }catch(e){toast('Erreur réseau','err');}
+  btn.disabled=false;btn.textContent=original;
+};
+const toggleDevice=async(deviceId,machineId,checked)=>{
+  const r=await fetch('/api/devices/'+deviceId,{method:'PATCH',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled_for_mining:checked})});
+  if(r.status===401){location.href='/';return;}
+  if(!r.ok){toast('Impossible de modifier ce device','err');return;}
+  const updated=await r.json();
+  DEVICES[machineId]=(DEVICES[machineId]||[]).map(d=>d.id===updated.id?updated:d);
+  await syncUsage(machineId);
+  await loadMachines();
+};
+const syncUsage=async(machineId)=>{
+  const usage=machineUsage(machineId);
+  const m=MACHINES[machineId];
+  if(!m||m.usage===usage)return;
+  const r=await fetch('/api/machines/'+machineId,{method:'PATCH',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({usage})});
+  if(r.ok){MACHINES[machineId]={...m,...(await r.json())};toast('Usage de la machine : '+USAGE_LABEL[usage]);}
+};
+const setMachineUsage=async(id,usage)=>{
+  const r=await fetch('/api/machines/'+id,{method:'PATCH',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({usage})});
+  if(r.status===401){location.href='/';return;}
+  if(r.ok){MACHINES[id]={...MACHINES[id],...(await r.json())};toast('Usage de la machine : '+USAGE_LABEL[usage]);await loadMachines();}
 };
 const openModal=(editId)=>{
   $('#modal').classList.add('open');
