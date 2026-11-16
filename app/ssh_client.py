@@ -38,6 +38,34 @@ WHITELISTED_COMMANDS: dict[str, str] = {
         cat /etc/os-release 2>/dev/null | head -5
         test -d /hive && echo HIVEOS=1
     """).strip(),
+    # Read-only hardware inventory. Every tool is optional: a missing tool
+    # leaves its section empty instead of failing the command (exit 0).
+    "detect_hw": textwrap.dedent("""\
+        echo '### CPU'
+        lscpu -J 2>/dev/null || cat /proc/cpuinfo 2>/dev/null
+        nproc 2>/dev/null
+        grep -m1 '^flags' /proc/cpuinfo 2>/dev/null
+        echo '### MEM'
+        free -b 2>/dev/null
+        echo '### GPU_NVIDIA'
+        if command -v nvidia-smi >/dev/null 2>&1; then
+          nvidia-smi --query-gpu=index,name,memory.total,pci.bus_id,driver_version,uuid --format=csv,noheader,nounits 2>/dev/null
+        fi
+        echo '### GPU_PCI'
+        if command -v lspci >/dev/null 2>&1; then
+          lspci -nn 2>/dev/null | grep -Ei 'vga|3d|display'
+        fi
+        echo '### VIRT'
+        test -e /dev/kvm && echo KVM=1
+        command -v virsh >/dev/null 2>&1 && echo VIRSH=1
+        command -v pveversion >/dev/null 2>&1 && echo PVERSION=1
+        echo '### OS'
+        hostname 2>/dev/null
+        uname -srm 2>/dev/null
+        cat /etc/os-release 2>/dev/null | head -5
+        test -d /hive && echo HIVEOS=1
+        exit 0
+    """).strip(),
 }
 
 
@@ -176,7 +204,7 @@ def _auth_kwargs(auth_type: str, secret: str) -> tuple[dict[str, Any], str | Non
     return {}, None
 
 
-async def _collect_identify(
+async def _run_whitelisted(
     host: str,
     port: int,
     username: str,
@@ -184,9 +212,11 @@ async def _collect_identify(
     auth_type: str,
     pinned_fp: str | None,
     pinned_public_key: str | None,
+    command: str,
     machine_id: int | None = None,
+    audit_kind: str = "ssh-test",
 ) -> dict[str, Any]:
-    """Pin/verify the host key, connect, then run the *identify* command."""
+    """Pin/verify the host key, connect, then run one whitelisted *command*."""
     start = asyncio.get_running_loop().time() * 1000
 
     # 1) Read the host key without authenticating anything.
@@ -210,13 +240,13 @@ async def _collect_identify(
             )
             if machine_id is not None:
                 _audit_log(machine_id, "host-key-check", "fail", msg)
-                _audit_log(machine_id, "ssh-test", "fail", msg)
+                _audit_log(machine_id, audit_kind, "fail", msg)
             return _failure(start, msg, new_fp)
         if new_fp != pinned_fp:
             msg = f"Empreinte changée : ancienne {pinned_fp}, nouvelle {new_fp}"
             if machine_id is not None:
                 _audit_log(machine_id, "host-key-mismatch", "fail", msg)
-                _audit_log(machine_id, "ssh-test", "fail", msg)
+                _audit_log(machine_id, audit_kind, "fail", msg)
             return _failure(start, msg, new_fp)
         try:
             trusted_key = asyncssh.import_public_key(pinned_public_key)
@@ -224,7 +254,7 @@ async def _collect_identify(
             msg = "Clé publique épinglée illisible — connexion refusée, lancez reset-host-key"
             if machine_id is not None:
                 _audit_log(machine_id, "host-key-check", "fail", msg)
-                _audit_log(machine_id, "ssh-test", "fail", msg)
+                _audit_log(machine_id, audit_kind, "fail", msg)
             return _failure(start, msg, new_fp)
 
     # 3) First contact: pin now, before sending any credential.
@@ -250,7 +280,7 @@ async def _collect_identify(
         conn = await asyncio.wait_for(asyncssh.connect(**connect_kwargs), timeout=CONNECT_TIMEOUT)
         try:
             result = await asyncio.wait_for(
-                conn.run(WHITELISTED_COMMANDS["identify"]),
+                conn.run(command),
                 timeout=COMMAND_TIMEOUT,
             )
         finally:
@@ -259,7 +289,7 @@ async def _collect_identify(
     except asyncssh.HostKeyNotVerifiable:
         msg = f"Empreinte changée : ancienne {pinned_fp or 'aucune'}, nouvelle {new_fp}"
         if machine_id is not None:
-            _audit_log(machine_id, "ssh-test", "fail", msg)
+            _audit_log(machine_id, audit_kind, "fail", msg)
         return _failure(start, msg, new_fp)
     except asyncssh.PermissionDenied:
         return _failure(start, "Permission denied — credentials rejected", new_fp)
@@ -281,15 +311,50 @@ async def _collect_identify(
                 pass
 
     elapsed = asyncio.get_running_loop().time() * 1000 - start
-    parsed = _parse_identify(result.stdout or "", username)
     return {
         "ok": True,
         "latency_ms": round(elapsed, 1),
+        "stdout": result.stdout or "",
+        "stderr": result.stderr or "",
+        "host_key_fingerprint": new_fp,
+    }
+
+
+async def _collect_identify(
+    host: str,
+    port: int,
+    username: str,
+    secret: str,
+    auth_type: str,
+    pinned_fp: str | None,
+    pinned_public_key: str | None,
+    machine_id: int | None = None,
+) -> dict[str, Any]:
+    """Pin/verify the host key, connect, then run the *identify* command."""
+    raw = await _run_whitelisted(
+        host=host,
+        port=port,
+        username=username,
+        secret=secret,
+        auth_type=auth_type,
+        pinned_fp=pinned_fp,
+        pinned_public_key=pinned_public_key,
+        command=WHITELISTED_COMMANDS["identify"],
+        machine_id=machine_id,
+        audit_kind="ssh-test",
+    )
+    if not raw.get("ok"):
+        return raw
+
+    parsed = _parse_identify(raw["stdout"], username)
+    return {
+        "ok": True,
+        "latency_ms": raw["latency_ms"],
         "hostname": parsed["hostname"],
         "user": parsed["user"],
         "uname": parsed["uname"],
         "os_kind": parsed["os_kind"],
-        "host_key_fingerprint": new_fp,
+        "host_key_fingerprint": raw["host_key_fingerprint"],
     }
 
 
@@ -329,6 +394,48 @@ async def ssh_test_machine(machine: Any) -> dict[str, Any]:
         )
     # Failures are already audited by _collect_identify.
     return result
+
+
+async def ssh_detect_hw(machine: Any) -> dict[str, Any]:
+    """Run the whitelisted ``detect_hw`` inventory through the pinned host key.
+
+    Returns the parsed detection (``cpu``, ``gpus``, ``virt``, ``os_kind``) or
+    an ``ok: False`` failure — a changed fingerprint is refused exactly like
+    ``ssh_test_machine``, before any credential is sent.
+    """
+    from app.hw_parser import parse_detect_hw
+
+    pinned_fp = (getattr(machine, "host_key", None) or "").strip() or None
+    pinned_public_key = (getattr(machine, "host_key_public", None) or "").strip() or None
+
+    secret = ""
+    if machine.secret_ref:
+        try:
+            secret = decrypt_secret(machine.secret_ref)
+        except Exception:
+            secret = ""
+
+    raw = await _run_whitelisted(
+        host=machine.host,
+        port=machine.ssh_port,
+        username=machine.ssh_user,
+        secret=secret,
+        auth_type=machine.auth_type,
+        pinned_fp=pinned_fp,
+        pinned_public_key=pinned_public_key,
+        command=WHITELISTED_COMMANDS["detect_hw"],
+        machine_id=machine.id,
+        audit_kind="detect",
+    )
+    if not raw.get("ok"):
+        return raw
+
+    return {
+        "ok": True,
+        "latency_ms": raw["latency_ms"],
+        "host_key_fingerprint": raw["host_key_fingerprint"],
+        **parse_detect_hw(raw["stdout"]),
+    }
 
 
 async def reset_machine_host_key(machine_id: int) -> dict[str, Any]:
