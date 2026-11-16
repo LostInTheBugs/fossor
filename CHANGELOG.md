@@ -4,7 +4,45 @@
 
 All notable changes to fossor are documented in this file.
 
-## 2026.11.004-dev — 2026-11-16
+## 2026.11.003 — 2026-11-16
+
+### Étape 2f — navigation unique et notifications
+
+- **Navigation unique** : `static/nav.js` est la seule source de la barre de
+  navigation ; chaque page pose `<nav id="nav"></nav>` et l'onglet actif est déduit
+  de l'URL. Test e2e qui parcourt les cinq pages connectées (même liste, même ordre,
+  onglet actif, zéro erreur console).
+- **Notifications (§4.14)** : canaux Discord (webhook), Telegram (jeton + chat id) et
+  e-mail (SMTP : hôte, port, STARTTLS/TLS, utilisateur, mot de passe). Secrets chiffrés
+  par la clé maître, jamais renvoyés (`has_*`), inclus chiffrés dans l'export avec
+  secrets. Matrice événement × canal, niveau (info / alerte / critique), heures
+  silencieuses Europe/Paris (les « critique » passent). File d'attente en base,
+  3 tentatives, journal (date, événement, canal, résultat) sans secret ni adresse
+  complète de wallet. Bouton « Envoyer un test » par canal.
+- Événements branchés : machine hors ligne / revenue (anti-rebond de 2 collectes),
+  hashrate < 50 % de la moyenne 1 h, solde de pool au-dessus du seuil de paiement,
+  paiement reçu, nouveau prix d'un token sans prix, mise à jour disponible, mise à
+  jour terminée / annulée (retour arrière).
+- Tests : `httpx.MockTransport` pour Discord/Telegram, `aiosmtpd` en fixture pour le
+  SMTP, matrice, heures silencieuses traversant minuit, anti-rebond, absence de secret
+  dans le journal.
+- Release : le workflow publie aussi `ghcr.io/lostinthebugs/fossor-updater:<tag>` et
+  `:latest`.
+
+### Étape 2e — mise à jour pilotée
+
+- Client de mise à jour (vérification GitHub, sauvegarde préalable de la base,
+  demande au compagnon) et conteneur `fossor-updater`, seul détenteur du socket
+  Docker, avec retour arrière et restauration de la base.
+- Trois modes d'authentification SSH (mot de passe, clé, clé Fossor) et préparation
+  automatique d'une machine.
+
+### Étape 2d — électricité et coût net
+
+- Tarifs `fixed` / `ranges` / `tempo` (Europe/Paris), intégration des puissances,
+  revenu 24 h depuis les soldes de pool et prix EUR, coût net par machine.
+
+### Étape 2c — tokens minés, prix et soldes
 
 ### Étape 2b — tokens minés, prix, soldes de pool, import de l'historique
 
@@ -26,9 +64,7 @@ All notable changes to fossor are documented in this file.
 - Collecte : une machine sans device est détectée automatiquement à sa première
   collecte (audit `scheduler`), les métriques GPU se rattachent par bus PCI.
 
-## 2026.11.003 — (en préparation)
-
-Étape 2a : collecteurs et tableau de bord en direct.
+### Étape 2a — collecteurs et tableau de bord en direct
 
 ### Ajouté
 - **Commande `collect_stats`** (liste blanche, lecture seule, jamais sudo) : sections

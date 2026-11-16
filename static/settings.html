@@ -63,6 +63,7 @@ header h1{font-size:26px}
 .tokenbox{margin-top:12px;display:none}
 .tokenbox code{display:block;margin-top:6px;background:var(--bg);border:1px dashed var(--accent);border-radius:8px;padding:10px;word-break:break-all;font-size:12.5px;color:var(--txt)}
 </style>
+  <script src="/static/nav.js" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -71,17 +72,79 @@ header h1{font-size:26px}
     <button class="btn sm outline" id="logoutBtn">Déconnexion</button>
   </header>
 
-  <nav class="nav-tabs">
-    <a href="/dashboard">📊 Tableau de bord</a>
-    <a href="/machines">🖥️ Machines</a>
-    <a href="/settings" class="active">⚙️ Configuration</a>
-    <a href="/audit">📋 Audit Log</a>
-  </nav>
+  <nav id="nav"></nav>
 
   <div class="subtabs">
     <button class="subtab active" id="tabGeneral" data-panel="panel-general">Général</button>
     <button class="subtab" id="tabAi" data-panel="panel-ai">Analyse IA</button>
     <button class="subtab" id="tabEnergy" data-panel="panel-energy">Électricité</button>
+    <button class="subtab" id="tabNotifications" data-panel="panel-notifications">Notifications</button>
+  </div>
+
+  <div id="panel-notifications" style="display:none">
+    <div class="card">
+      <h2>Canaux</h2>
+      <div class="sub">Secrets chiffrés en base, jamais renvoyés par l'API. Laisser un champ secret vide conserve la valeur déjà enregistrée.</div>
+      <h3>Discord</h3>
+      <div class="row">
+        <div class="field"><label><input type="checkbox" id="ntDiscordEnabled"> Activé</label></div>
+        <div class="field" style="flex:1"><label>Webhook</label><input id="ntDiscordWebhook" type="password" placeholder="https://discord.com/api/webhooks/…" autocomplete="new-password"></div>
+        <div class="field"><span id="ntDiscordHas" class="sub"></span></div>
+        <div class="field"><button class="btn outline" id="ntTestDiscord">Envoyer un test</button></div>
+      </div>
+      <h3>Telegram</h3>
+      <div class="row">
+        <div class="field"><label><input type="checkbox" id="ntTelegramEnabled"> Activé</label></div>
+        <div class="field" style="flex:1"><label>Jeton du bot</label><input id="ntTelegramToken" type="password" autocomplete="new-password"></div>
+        <div class="field"><label>Chat id</label><input id="ntTelegramChat" placeholder="-100…"></div>
+        <div class="field"><span id="ntTelegramHas" class="sub"></span></div>
+        <div class="field"><button class="btn outline" id="ntTestTelegram">Envoyer un test</button></div>
+      </div>
+      <h3>E-mail (SMTP)</h3>
+      <div class="row">
+        <div class="field"><label><input type="checkbox" id="ntEmailEnabled"> Activé</label></div>
+        <div class="field"><label>Hôte</label><input id="ntEmailHost" placeholder="smtp.exemple.tld"></div>
+        <div class="field"><label>Port</label><input id="ntEmailPort" type="number" min="1" max="65535" value="587" style="width:90px"></div>
+        <div class="field"><label>Sécurité</label><select id="ntEmailSecurity"><option value="starttls">STARTTLS</option><option value="ssl">TLS</option><option value="none">Aucune</option></select></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>Utilisateur</label><input id="ntEmailUser" autocomplete="off"></div>
+        <div class="field"><label>Mot de passe</label><input id="ntEmailPassword" type="password" autocomplete="new-password"></div>
+        <div class="field"><label>Expéditeur</label><input id="ntEmailFrom"></div>
+        <div class="field"><label>Destinataire</label><input id="ntEmailTo"></div>
+        <div class="field"><span id="ntEmailHas" class="sub"></span></div>
+        <div class="field"><button class="btn outline" id="ntTestEmail">Envoyer un test</button></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Matrice événement × canal</h2>
+      <div class="sub">Cocher les canaux à prévenir pour chaque événement. Le niveau est celui de l'événement.</div>
+      <table id="ntMatrix">
+        <thead><tr><th>Événement</th><th>Niveau</th><th>Discord</th><th>Telegram</th><th>E-mail</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Heures silencieuses</h2>
+      <div class="sub">Plage locale Europe/Paris : les niveaux « info » et « alerte » sont retenus, les « critique » passent quand même.</div>
+      <div class="row">
+        <div class="field"><label><input type="checkbox" id="ntQuietEnabled"> Activer</label></div>
+        <div class="field"><label>De</label><input type="time" id="ntQuietStart" value="22:00"></div>
+        <div class="field"><label>À</label><input type="time" id="ntQuietEnd" value="07:00"></div>
+        <div class="field"><button class="btn" id="ntSave">Enregistrer</button></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Journal</h2>
+      <div class="sub">Date, événement, canal, résultat. Ni secret ni adresse complète de wallet n'y figurent.</div>
+      <table>
+        <thead><tr><th>Date</th><th>Événement</th><th>Canal</th><th>Niveau</th><th>Résultat</th></tr></thead>
+        <tbody id="ntLogBody"></tbody>
+      </table>
+    </div>
   </div>
 
   <div id="panel-general">
@@ -651,11 +714,89 @@ $('#enSaveMachines').addEventListener('click',async()=>{
 document.querySelectorAll('.subtab').forEach(button=>{
   button.addEventListener('click',()=>{
     document.querySelectorAll('.subtab').forEach(b=>b.classList.toggle('active',b===button));
-    ['panel-general','panel-ai','panel-energy'].forEach(id=>{
+    ['panel-general','panel-ai','panel-energy','panel-notifications'].forEach(id=>{
       $('#'+id).style.display=(id===button.dataset.panel)?'block':'none';
     });
     if(button.dataset.panel==='panel-ai')loadAI();
     if(button.dataset.panel==='panel-energy')loadEnergy();
+    if(button.dataset.panel==='panel-notifications')loadNotifications();
+  });
+});
+
+// ── §4.14 Notifications ───────────────────────────────────────────────
+const NT_CHANNELS=[['discord','ntTestDiscord'],['telegram','ntTestTelegram'],['email','ntTestEmail']];
+const ntMatrix=()=>{const m={};document.querySelectorAll('#ntMatrix tbody tr').forEach(tr=>{
+  m[tr.dataset.event]=[...tr.querySelectorAll('input[type=checkbox]')].filter(i=>i.checked).map(i=>i.dataset.channel);
+});return m;};
+const ntClearSecrets=()=>['ntDiscordWebhook','ntTelegramToken','ntEmailPassword'].forEach(id=>{const el=$('#'+id);if(el)el.value='';});
+const loadNotifications=async()=>{
+  const r=await fetch('/api/notifications',{credentials:'include'});
+  if(r.status===401){location.href='/';return;}
+  const d=await r.json();
+  const c=d.channels||{};
+  const discord=c.discord||{}, telegram=c.telegram||{}, email=c.email||{};
+  $('#ntDiscordEnabled').checked=!!discord.enabled;
+  $('#ntDiscordHas').textContent=discord.has_webhook?'Webhook enregistré (vide = conservé)':'Aucun webhook enregistré';
+  $('#ntTelegramEnabled').checked=!!telegram.enabled;
+  $('#ntTelegramChat').value=telegram.chat_id||'';
+  $('#ntTelegramHas').textContent=telegram.has_token?'Jeton enregistré (vide = conservé)':'Aucun jeton enregistré';
+  $('#ntEmailEnabled').checked=!!email.enabled;
+  $('#ntEmailHost').value=email.host||'';
+  $('#ntEmailPort').value=email.port||587;
+  $('#ntEmailSecurity').value=email.security||'starttls';
+  $('#ntEmailUser').value=email.username||'';
+  $('#ntEmailFrom').value=email.from||'';
+  $('#ntEmailTo').value=email.to||'';
+  $('#ntEmailHas').textContent=email.has_password?'Mot de passe enregistré (vide = conservé)':'Aucun mot de passe enregistré';
+  const matrix=d.matrix||{};
+  $('#ntMatrix tbody').innerHTML=(d.events||[]).map(e=>'<tr data-event="'+e.code+'"><td>'+esc(e.label)+'</td>'+
+    '<td>'+esc(e.level)+'</td>'+NT_CHANNELS.map(pair=>'<td><input type="checkbox" data-channel="'+pair[0]+'"'+
+    ((matrix[e.code]||[]).includes(pair[0])?' checked':'')+'></td>').join('')+'</tr>').join('');
+  const q=d.quiet_hours||{};
+  $('#ntQuietEnabled').checked=!!q.enabled;
+  $('#ntQuietStart').value=q.start||'22:00';
+  $('#ntQuietEnd').value=q.end||'07:00';
+  const log=d.log||[];
+  $('#ntLogBody').innerHTML=log.map(row=>'<tr><td>'+fmtDate(row.ts)+'</td><td>'+esc(row.event_label)+'</td>'+
+    '<td>'+esc(row.channel)+'</td><td>'+esc(row.level)+'</td><td>'+esc(row.status)+
+    (row.error||row.attempts?' — '+esc(row.error||'')+' ('+row.attempts+' essai(s))':'')+'</td></tr>').join('')||
+    '<tr><td colspan="5" class="empty">Aucune notification.</td></tr>';
+};
+$('#ntSave').addEventListener('click',async()=>{
+  const body={
+    channels:{
+      discord:{enabled:$('#ntDiscordEnabled').checked,webhook:$('#ntDiscordWebhook').value},
+      telegram:{enabled:$('#ntTelegramEnabled').checked,token:$('#ntTelegramToken').value,chat_id:$('#ntTelegramChat').value},
+      email:{enabled:$('#ntEmailEnabled').checked,host:$('#ntEmailHost').value,
+        port:Number($('#ntEmailPort').value||587),security:$('#ntEmailSecurity').value,
+        username:$('#ntEmailUser').value,password:$('#ntEmailPassword').value,
+        from:$('#ntEmailFrom').value,to:$('#ntEmailTo').value}
+    },
+    matrix:ntMatrix(),
+    quiet_hours:{enabled:$('#ntQuietEnabled').checked,start:$('#ntQuietStart').value,
+      end:$('#ntQuietEnd').value,tz:'Europe/Paris'}
+  };
+  const r=await fetch('/api/notifications',{method:'PUT',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const data=await r.json().catch(()=>({}));
+  if(!r.ok){toast(data.detail||'Réglages refusés','err');return;}
+  ntClearSecrets();
+  toast('Notifications enregistrées');
+  await loadNotifications();
+});
+NT_CHANNELS.forEach(pair=>{
+  const btn=$('#'+pair[1]);
+  if(!btn)return;
+  btn.addEventListener('click',async()=>{
+    btn.disabled=true;
+    try{
+      const r=await fetch('/api/notifications/test/'+pair[0],{method:'POST',credentials:'include'});
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok){toast(d.detail||'Test impossible','err');}
+      else if(d.ok){toast('Message de test envoyé');}
+      else{toast('Échec : '+(d.error||'canal non configuré'),'err');}
+      await loadNotifications();
+    }finally{btn.disabled=false;}
   });
 });
 

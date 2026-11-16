@@ -39,6 +39,9 @@ NON_EXPORTED_SETTINGS = frozenset(
         # §4.1 bis: the private half is master-key encrypted at rest and only
         # travels inside the passphrase-encrypted ``secrets`` block.
         "fossor_ssh_private_key",
+        # §4.14: notification secrets travel only inside the passphrase-encrypted
+        # ``secrets`` block, never in the plain settings snapshot.
+        "notification_secrets",
     }
 )
 

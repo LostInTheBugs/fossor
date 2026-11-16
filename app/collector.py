@@ -199,6 +199,14 @@ def _store_metrics(db, machine, stats: dict[str, Any], ts: str) -> int:
     status.api_port = stats.get("api_port")
     status.total_hashrate_hs = _numeric(stats.get("total_hashrate_hs"))
     status.total_power_w = _numeric(stats.get("total_power_w"))
+    try:
+        from app import notifications
+
+        notifications.machine_result(
+            db, machine, online=True, hashrate_hs=status.total_hashrate_hs
+        )
+    except Exception:  # pragma: no cover - notifications never break collection
+        logger.warning("notification « en ligne » en échec", exc_info=True)
     db.commit()
     return rows
 
@@ -222,6 +230,12 @@ def _store_offline(db, machine, error: str, ts: str) -> None:
     for field in ("miner", "algo", "coin", "uptime_s", "accepted", "rejected",
                   "api_port", "total_hashrate_hs", "total_power_w"):
         setattr(status, field, None if field not in ("miner", "algo", "coin") else "")
+    try:
+        from app import notifications
+
+        notifications.machine_result(db, machine, online=False, error=status.error)
+    except Exception:  # pragma: no cover - notifications never break collection
+        logger.warning("notification « hors ligne » en échec", exc_info=True)
     db.commit()
 
 

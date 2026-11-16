@@ -288,6 +288,12 @@ async def mined_refresh(db: Session = Depends(get_db), _user=Depends(require_log
             row = PoolBalance(wallet_id=wallet.id, pool=wallet.pool, coin_ticker=wallet.coin_ticker)
             db.add(row)
         row.pool = wallet.pool
+        # §4.14: keep the previous reading for payment / threshold events.
+        prev_paid = row.paid
+        _prev = [row.paid, row.unpaid, row.immature]
+        prev_total = round(sum(p for p in _prev if p is not None), 12) if any(
+            p is not None for p in _prev
+        ) else None
         row.coin_ticker = wallet.coin_ticker
         row.available = bool(result.get("available"))
         row.paid = result.get("paid")
@@ -325,6 +331,12 @@ async def mined_refresh(db: Session = Depends(get_db), _user=Depends(require_log
             immature=result.get("immature"),
             total=total,
         ))
+        try:
+            from app import notifications
+
+            notifications.pool_sample(db, wallet, prev_paid, prev_total, result, total)
+        except Exception:  # pragma: no cover - notifications never break a refresh
+            pass
         report.append({
             "wallet_id": wallet.id,
             "ticker": wallet.coin_ticker,
@@ -337,6 +349,17 @@ async def mined_refresh(db: Session = Depends(get_db), _user=Depends(require_log
             "note": result.get("note"),
         })
     db.commit()
+
+    # §4.14: first price seen for a token that had none (new listing / price).
+    try:
+        from app import notifications
+
+        for coin in coins:
+            value = (fetched.get(coin.coingecko_id) or {}).get("eur") if coin.coingecko_id else None
+            if value:
+                notifications.new_price(db, coin.ticker, value)
+    except Exception:  # pragma: no cover - notifications never break a refresh
+        pass
 
     return {
         "as_of": stamp,

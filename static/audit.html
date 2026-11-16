@@ -26,6 +26,7 @@ tr:hover td{background:rgba(79,140,255,.04)}
 .chip.ok{background:#1a3a2a;color:var(--green);border:1px solid var(--green)}
 .chip.err{background:#3a1d1d;color:var(--red);border:1px solid var(--red)}
 </style>
+  <script src="/static/nav.js" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -33,11 +34,7 @@ tr:hover td{background:rgba(79,140,255,.04)}
     <h1>📋 Audit Log</h1>
     <div><a href="/machines">← Machines</a></div>
   </header>
-  <nav class="nav-tabs">
-    <a href="/dashboard">📊 Tableau de bord</a>
-    <a href="/machines">🖥️ Machines</a>
-    <a href="/audit" class="active">📋 Audit Log</a>
-  </nav>
+  <nav id="nav"></nav>
   <table><thead><tr><th>Horodatage</th><th>Acteur</th><th>Action</th><th>Machine</th><th>Résultat</th><th>Détails</th></tr></thead><tbody id="logBody"></tbody></table>
   <div id="emptyMsg" class="mono" style="padding:20px;text-align:center;display:none">Aucune entrée.</div>
 </div>

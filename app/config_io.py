@@ -90,6 +90,7 @@ def _encrypt_secrets(
     ai_secrets: dict[str, str],
     passphrase: str,
     ssh_key: str | None = None,
+    notification_secrets: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     salt = os.urandom(16)
     fernet = _fernet_for(passphrase, salt, KDF_ITERATIONS)
@@ -100,6 +101,12 @@ def _encrypt_secrets(
         "cipher": "fernet",
         "tokens": {uuid: fernet.encrypt(plain.encode()).decode() for uuid, plain in machine_secrets.items()},
         "ai": {which: fernet.encrypt(plain.encode()).decode() for which, plain in ai_secrets.items()},
+        # §4.14: notification secrets (Discord webhook, Telegram token, SMTP
+        # password) follow the file, encrypted with the export passphrase only.
+        "notifications": {
+            name: fernet.encrypt(plain.encode()).decode()
+            for name, plain in (notification_secrets or {}).items()
+        },
     }
     # §4.1 bis: Fossor's own private key follows the configuration (encrypted
     # with the export passphrase, never with the master key of the file).
@@ -110,15 +117,15 @@ def _encrypt_secrets(
 
 def _decrypt_secrets(
     doc: dict, passphrase: str | None
-) -> tuple[dict[str, str], dict[str, str], str | None]:
+) -> tuple[dict[str, str], dict[str, str], str | None, dict[str, str]]:
     """Decrypt the ``secrets`` block; raise ConfigError before any write.
 
     Returns ``(machine secrets by uuid, AI provider keys by ``which``,
-    Fossor private key or None)``.
+    Fossor private key or None, notification secrets by name)``.
     """
     block = doc.get("secrets")
     if not block:
-        return {}, {}, None
+        return {}, {}, None, {}
     if not passphrase:
         raise ConfigError("Ce fichier contient des secrets chiffrés : une phrase de passe est requise")
     if block.get("cipher") != "fernet" or block.get("kdf") != "pbkdf2-sha256":
@@ -135,7 +142,8 @@ def _decrypt_secrets(
     fernet = _fernet_for(passphrase, salt, iterations)
     tokens = block.get("tokens") or {}
     ai_tokens = block.get("ai") or {}
-    if not isinstance(tokens, dict) or not isinstance(ai_tokens, dict):
+    notification_tokens = block.get("notifications") or {}
+    if not isinstance(tokens, dict) or not isinstance(ai_tokens, dict) or not isinstance(notification_tokens, dict):
         raise ConfigError("Bloc « secrets » illisible (tokens)")
 
     def _open(values: dict) -> dict[str, str]:
@@ -154,7 +162,7 @@ def _decrypt_secrets(
         except InvalidToken:
             raise ConfigError("Phrase de passe incorrecte (clé SSH de Fossor illisible)")
 
-    return _open(tokens), _open(ai_tokens), ssh_key
+    return _open(tokens), _open(ai_tokens), ssh_key, _open(notification_tokens)
 
 
 # ── Export ─────────────────────────────────────────────────────────────
@@ -222,7 +230,16 @@ def build_export(db: Session, include_secrets: bool = False, passphrase: str | N
                 ssh_key = private_key_text(db)
         except Exception:
             ssh_key = None
-        doc["secrets"] = _encrypt_secrets(plain, ai_plain, passphrase, ssh_key)
+        notif_plain: dict[str, str] = {}
+        try:
+            from app import notifications as _notifications
+
+            notif_plain = _notifications.all_plain_secrets(db)
+        except Exception:
+            notif_plain = {}
+        doc["secrets"] = _encrypt_secrets(
+            plain, ai_plain, passphrase, ssh_key, notif_plain
+        )
     return doc
 
 
@@ -437,7 +454,7 @@ def apply_import(
         raise ConfigError("mode invalide : « merge » ou « replace » attendu")
 
     # Decrypt before touching anything: a wrong passphrase must write nothing.
-    machine_secrets, ai_secrets, ssh_key = _decrypt_secrets(doc, passphrase)
+    machine_secrets, ai_secrets, ssh_key, notif_secrets = _decrypt_secrets(doc, passphrase)
 
     backup_path = backup_current_config(db)
 
@@ -554,6 +571,12 @@ def apply_import(
         from app.fossor_keys import restore_private_key
 
         restore_private_key(ssh_key, db)
+
+    # §4.14: notification secrets (write-only, encrypted with the master key).
+    if notif_secrets:
+        from app import notifications as _notifications
+
+        _notifications.apply_secrets(db, notif_secrets)
 
     db.commit()
     return {"mode": mode, "backup": backup_path, "stats": stats}

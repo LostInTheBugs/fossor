@@ -62,6 +62,7 @@ table.devtab tr:hover td{background:transparent}
 tr.absent td{opacity:.5}
 .dev-check{width:15px;height:15px;cursor:pointer;accent-color:var(--accent)}
 </style>
+  <script src="/static/nav.js" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -73,12 +74,7 @@ tr.absent td{opacity:.5}
     </div>
   </header>
 
-  <nav class="nav-tabs">
-    <a href="/dashboard">📊 Tableau de bord</a>
-    <a href="/machines" class="active">🖥️ Machines</a>
-    <a href="/settings">⚙️ Configuration</a>
-    <a href="/audit">📋 Audit Log</a>
-  </nav>
+  <nav id="nav"></nav>
 
   <div id="updateBanner" style="display:none;margin-bottom:14px;padding:9px 14px;border:1px solid var(--yellow);border-radius:9px;background:#2a2416;font-size:12.5px">
     ⬆️ <span id="updateText"></span> · <a href="/settings" style="color:var(--accent)">voir les notes de version</a>

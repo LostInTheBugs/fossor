@@ -289,6 +289,34 @@ class PoolBalanceSample(Base):
     total: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
+class NotificationLog(Base):
+    """One queued/sent notification: the queue *and* the journal (§4.14)."""
+
+    __tablename__ = "notification_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+    event: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    channel: Mapped[str] = mapped_column(String(20), nullable=False)
+    level: Mapped[str] = mapped_column(String(10), default="info")
+    subject: Mapped[str] = mapped_column(String(200), default="")
+    body: Mapped[str] = mapped_column(Text, default="")
+    # pending → sent | failed | skipped (heures silencieuses)
+    status: Mapped[str] = mapped_column(String(12), default="pending", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(String(300), nullable=True)
+
+
+class NotificationState(Base):
+    """Small persistent state for debounce / dedupe (offline counters, last alerts)."""
+
+    __tablename__ = "notification_state"
+
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="{}")
+    updated_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
 

@@ -2,7 +2,7 @@
 
 Mining fleet management — inventory, hardware detection, and pilotage of mining machines.
 
-**Version:** [2026.11.002](https://github.com/LostInTheBugs/fossor/releases/tag/2026.11.002) ·
+**Version:** [2026.11.003](https://github.com/LostInTheBugs/fossor/releases/tag/2026.11.003) ·
 [All releases](https://github.com/LostInTheBugs/fossor/releases) ·
 [Container image](https://github.com/LostInTheBugs/fossor/pkgs/container/fossor)
 

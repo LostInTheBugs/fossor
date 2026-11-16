@@ -62,6 +62,7 @@ input[type=checkbox]{width:auto}
 pre.out{background:#0e1218;border:1px solid var(--border);border-radius:8px;padding:10px;font-size:11px;max-height:280px;overflow:auto;white-space:pre-wrap;margin-top:10px}
 .foot{color:var(--muted);font-size:11px;margin-top:16px;text-align:right}
 </style>
+  <script src="/static/nav.js" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -72,13 +73,7 @@ pre.out{background:#0e1218;border:1px solid var(--border);border-radius:8px;padd
     </div>
   </header>
 
-  <nav class="nav-tabs">
-    <a href="/dashboard">📊 Tableau de bord</a>
-    <a href="/machines">🖥️ Machines</a>
-    <a href="/mined" class="active">🪙 Tokens minés</a>
-    <a href="/settings">⚙️ Configuration</a>
-    <a href="/audit">📋 Audit Log</a>
-  </nav>
+  <nav id="nav"></nav>
 
   <div class="nav-tabs" style="border-bottom:none;margin-bottom:10px">
     <button data-panel="mined" class="active">Campagnes &amp; historique</button>

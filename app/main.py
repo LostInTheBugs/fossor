@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from app.database import init_db
 from app.auth import router as auth_router
 from app.routers.machines import router as machines_router
@@ -15,6 +15,7 @@ from app.routers.coins import router as coins_router
 from app.routers.mined import router as mined_router
 from app.routers.energy import router as energy_router
 from app.routers.ssh import router as ssh_router
+from app.routers.notifications import router as notifications_router
 from app.routers.ui import router as ui_router
 from pathlib import Path
 
@@ -42,6 +43,7 @@ app.include_router(coins_router)
 app.include_router(mined_router)
 app.include_router(energy_router)
 app.include_router(ssh_router)
+app.include_router(notifications_router)
 app.include_router(ui_router)
 
 
@@ -55,6 +57,16 @@ def mined_page(request: Request):
     return HTMLResponse((STATIC_DIR / "mined.html").read_text())
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+
+@app.get("/static/nav.js")
+def nav_script():
+    """Single source of the navigation bar, shared by every page (§2f)."""
+    return FileResponse(
+        STATIC_DIR / "nav.js",
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 @app.on_event("startup")
@@ -77,6 +89,9 @@ async def startup():
     # §8 phase 2a: metrics collection every FOSSOR_COLLECT_INTERVAL seconds.
     from app import collector
     collector.start()
+    # §4.14: notification queue and event watchers.
+    from app import notifications
+    notifications.start()
 
 
 @app.get("/", response_class=HTMLResponse)
