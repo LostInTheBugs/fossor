@@ -64,6 +64,41 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     _ensure_admin()
     _migrate_host_key_public_column()
+    _migrate_machine_uuid_column()
+
+
+def _sqlite_path() -> str | None:
+    db_url = _get_db_url()
+    if not db_url.startswith("sqlite"):
+        return None
+    path = db_url.replace("sqlite:///", "").replace("sqlite://", "")
+    return path if os.path.exists(path) else None
+
+
+def _migrate_machine_uuid_column():
+    """Add machines.uuid and backfill UUID4 on existing rows (cluster prep, §4.11)."""
+    import sqlite3
+    import uuid as uuid_lib
+
+    db_path = _sqlite_path()
+    if not db_path:
+        return
+    conn = sqlite3.connect(db_path)
+    try:
+        col_names = [c[1] for c in conn.execute("PRAGMA table_info(machines)").fetchall()]
+        if "uuid" not in col_names:
+            conn.execute("ALTER TABLE machines ADD COLUMN uuid VARCHAR(36)")
+        rows = conn.execute(
+            "SELECT id FROM machines WHERE uuid IS NULL OR uuid = ''"
+        ).fetchall()
+        for (machine_id,) in rows:
+            conn.execute(
+                "UPDATE machines SET uuid = ? WHERE id = ?",
+                (str(uuid_lib.uuid4()), machine_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _migrate_host_key_public_column():
