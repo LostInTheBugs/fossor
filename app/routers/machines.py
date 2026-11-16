@@ -28,6 +28,7 @@ def _mask_secret(machine: Machine) -> dict:
         "enabled": machine.enabled,
         "cpu_power_w": machine.cpu_power_w,
         "platform_power_w": machine.platform_power_w,
+        "default_miner_profile_id": machine.default_miner_profile_id,
         "created_at": machine.created_at,
         "updated_at": machine.updated_at,
     }
@@ -118,7 +119,7 @@ def update_machine(
     if not machine:
         raise HTTPException(status_code=404, detail="Machine not found")
 
-    for key in ["name", "host", "ssh_port", "ssh_user", "auth_type", "sudo", "os_kind", "host_key", "usage", "vm_host", "enabled", "cpu_power_w", "platform_power_w"]:
+    for key in ["name", "host", "ssh_port", "ssh_user", "auth_type", "sudo", "os_kind", "host_key", "usage", "vm_host", "enabled", "cpu_power_w", "platform_power_w", "default_miner_profile_id"]:
         if key in data:
             setattr(machine, key, data[key])
 

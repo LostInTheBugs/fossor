@@ -73,10 +73,42 @@ class Machine(Base):
     # §4.15: CPU and platform power are typed in by the operator (no sensor).
     cpu_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
     platform_power_w: Mapped[float] = mapped_column(Float, default=50.0)
+    # §4.5: per-machine override of the default miner profile (null = global).
+    default_miner_profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
 
     audit_logs: Mapped[list["AuditLog"]] = relationship(back_populates="machine", cascade="all, delete-orphan")
+
+
+class MinerProfile(Base):
+    """Miner profile (§4.5): what to run to mine one coin.
+
+    The command template is validated and rendered by :mod:`app.miners`; the
+    binary is fetched by the target machine and checked against ``sha256``
+    before anything is extracted.
+    """
+
+    __tablename__ = "miner_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    uuid: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(60), nullable=False, unique=True)
+    coin: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    wallet: Mapped[str] = mapped_column(String(128), nullable=False)
+    pool: Mapped[str] = mapped_column(String(200), nullable=False)
+    software: Mapped[str] = mapped_column(String(20), nullable=False)
+    binary_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    binary_path: Mapped[str] = mapped_column(String(200), nullable=False)
+    version: Mapped[str] = mapped_column(String(32), nullable=False)
+    cmdline: Mapped[str] = mapped_column(Text, nullable=False)
+    api_port: Mapped[int] = mapped_column(Integer, default=0)
+    execution_mode: Mapped[str] = mapped_column(String(10), default="host")
+    threads: Mapped[int] = mapped_column(Integer, default=0)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
 
 
 class Device(Base):

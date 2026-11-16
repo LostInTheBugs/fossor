@@ -68,6 +68,14 @@ def init_db():
     _migrate_device_integrated_column()
     _migrate_wallet_pool_host_column()
     _migrate_machine_power_columns()
+    _migrate_machine_default_miner_column()
+
+
+def _migrate_machine_default_miner_column():
+    """Add machines.default_miner_profile_id (§4.5, étape 3a)."""
+    _add_column_if_missing(
+        "machines", "default_miner_profile_id", "default_miner_profile_id INTEGER"
+    )
 
 
 def _migrate_device_integrated_column():

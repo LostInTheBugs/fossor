@@ -38,6 +38,15 @@ def settings_page(request: Request):
 def audit_page(request: Request):
     if not get_current_user(request):
         return RedirectResponse(url="/", status_code=303)
-    user = require_login(request)
+    require_login(request)
     html = (STATIC_DIR / "audit.html").read_text()
     return HTMLResponse(html)
+
+
+@router.get("/profiles", response_class=HTMLResponse)
+def profiles_page(request: Request):
+    """Écran « Profils de minage » (§4.5)."""
+    if not get_current_user(request):
+        return RedirectResponse(url="/", status_code=303)
+    require_login(request)
+    return HTMLResponse((STATIC_DIR / "profiles.html").read_text())
