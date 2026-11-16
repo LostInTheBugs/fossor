@@ -72,7 +72,15 @@ class TestVersionEndpoint:
         assert r.status_code == 200
         data = r.json()
         assert "version" in data
-        assert data["version"] == "2026.11.002-dev"
+        # The endpoint serves the VERSION file: compare with the file itself so the
+        # test survives the -dev → final (and -cN) transitions.
+        version_file = os.path.join(os.path.dirname(__file__), "..", "VERSION")
+        with open(version_file, encoding="utf-8") as handle:
+            expected = handle.read().strip()
+        assert data["version"] == expected
+        from app.version import is_valid_version
+
+        assert is_valid_version(data["version"])
 
 
 class TestHealthEndpoint:
