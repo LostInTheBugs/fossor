@@ -87,6 +87,25 @@ tr.absent td{opacity:.5}
 
   <div id="tableWrap"><table><thead><tr><th>Nom</th><th>Hôte</th><th>Port SSH</th><th>User</th><th>Auth</th><th>Usage</th><th>OS</th><th>Sudo</th><th>Enabled</th><th>Actions</th></tr></thead><tbody id="machBody"></tbody></table></div>
   <div id="emptyMsg" class="empty" style="display:none">Aucune machine configurée.</div>
+
+  <div id="minerPanel" style="display:none;margin-top:18px;background:#1a2029;border:1px solid #2c3544;border-radius:12px;padding:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <h2 style="font-size:15px;font-weight:700">⛏️ Mineur — <span id="minerMachineName"></span></h2>
+      <button class="btn sm outline" onclick="closeMiner()">Fermer</button>
+    </div>
+    <div class="empty" id="minerHint" style="font-size:12.5px"></div>
+    <div class="row" style="margin-top:10px">
+      <div class="field"><label>Profil de minage</label><select id="minerProfile"></select></div>
+      <div class="field narrow"><label>Threads CPU</label><input id="minerThreads" type="number" min="1" value="1"></div>
+    </div>
+    <div class="actions">
+      <button class="btn" id="minerStart" onclick="startMiner()">Démarrer</button>
+      <button class="btn outline" id="minerStop" onclick="stopMiner()">Arrêter</button>
+      <button class="btn outline" id="minerStatusBtn" onclick="minerStatus()">Statut</button>
+      <span id="minerState" class="chip off">inconnu</span>
+    </div>
+    <pre id="minerOut" style="display:none;white-space:pre-wrap;word-break:break-all;background:#0e1218;border:1px solid #2c3544;border-radius:8px;padding:10px;margin-top:12px;max-height:320px;overflow:auto;font-family:ui-monospace,Consolas,monospace;font-size:11.5px;color:#8b98a9"></pre>
+  </div>
 </div>
 
 <!-- Modal -->
@@ -204,6 +223,47 @@ const detailRow=(m)=>{
     ${deviceRows(m)}
   </div></td></tr>`;
 };
+// ── Mineur (§4.5, §4.6) : profil, GPU cochés, démarrer/arrêter, statut ──
+let MINER={};
+const closeMiner=()=>{$('#minerPanel').style.display='none';MINER={};};
+const openMiner=async(id)=>{
+  const view=await api('/api/machines/'+id+'/miner');
+  if(!view)return;
+  MINER={machineId:id,view:view};
+  $('#minerMachineName').textContent=(MACHINES[id]||{}).name||('#'+id);
+  $('#minerHint').innerHTML=view.pilotable
+    ? `GPU utilisées : ${view.gpus.length?view.gpus.join(', '):'aucune'} · simulation : ${view.simulation?'<b>active</b>':'<b>désactivée</b>'}`
+    : '⚠️ Le pilotage exige une machine en « clé Fossor » (compte dédié avec sudo).';
+  $('#minerProfile').innerHTML=view.profiles.map(p=>`<option value="${p.id}"${p.id===view.selected_profile_id?' selected':''}>${p.name} · ${p.coin} · ${p.software}</option>`).join('');
+  $('#minerThreads').value=view.threads||1;
+  $('#minerState').textContent='inconnu';$('#minerState').className='chip off';
+  $('#minerOut').style.display='none';
+  $('#minerPanel').style.display='block';
+};
+const minerCall=async(kind)=>{
+  if(!MINER.machineId)return;
+  const body={profile_id:parseInt($('#minerProfile').value,10)||null};
+  if(kind==='start')body.threads=parseInt($('#minerThreads').value,10)||null;
+  const r=await fetch('/api/machines/'+MINER.machineId+'/miner/'+kind,{
+    method:kind==='status'?'GET':'POST',credentials:'include',
+    headers:{'Content-Type':'application/json'},
+    body:kind==='status'?undefined:JSON.stringify(body)});
+  if(r.status===401){location.href='/';return;}
+  const d=await r.json().catch(()=>({}));
+  const out=$('#minerOut');out.style.display='block';
+  if(!r.ok){
+    out.textContent='Refusé : '+(d.detail||'erreur');
+    $('#minerState').textContent='refusé';$('#minerState').className='chip err';return;
+  }
+  out.textContent=JSON.stringify(d,null,2);
+  const st=d.status||{};
+  if(d.simulated){$('#minerState').textContent='simulé';$('#minerState').className='chip warn';}
+  else if(st.running){$('#minerState').textContent='actif · PID '+(st.pid||'?')+' · '+(st.hashrate_hs!=null?st.hashrate_hs+' H/s':'hashrate n/d');$('#minerState').className='chip on';}
+  else{$('#minerState').textContent='arrêté';$('#minerState').className='chip off';}
+};
+const startMiner=()=>minerCall('start');
+const stopMiner=()=>minerCall('stop');
+const minerStatus=()=>minerCall('status');
 const loadMachines=async()=>{
   const data=await api('/api/machines');
   if(!data)return;
@@ -231,6 +291,7 @@ const loadMachines=async()=>{
       <td><span class="chip ${enabledChip}">${m.enabled?'Oui':'Non'}</span></td>
       <td><button class="btn sm" onclick="testMachine(${m.id},this)" title="Tester la connexion SSH">🔌</button> <button class="btn sm" onclick="editMachine(${m.id})">✏️</button> <button class="btn sm danger" onclick="deleteMachine(${m.id},'${m.name}')">🗑️</button>
         <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm outline" onclick="detectMachine(${m.id},this)">🔍 Détecter le matériel</button>
+        <button class="btn sm outline" onclick="openMiner(${m.id})" title="Profil, GPU et démarrage du mineur sur cette machine">⛏️ Mineur</button>
         ${m.auth_type==='fossor_key'?`<button class="btn sm outline" onclick="deprovisionMachine(${m.id},this)" title="Retirer la clé publique, le fichier sudoers et l'accès Fossor">🔒 Retirer l'accès Fossor</button>`:''}</div></td>
     </tr>`+detailRow(m);
   }).join('');

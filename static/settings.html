@@ -148,6 +148,22 @@ header h1{font-size:26px}
   </div>
 
   <div id="panel-general">
+    <div class="card" id="pilotCard">
+      <h2>Pilotage — mode simulation</h2>
+      <div class="sub">Tant que la simulation est active, aucune commande n'est exécutée : chaque action renvoie et journalise la liste exacte des commandes qu'elle aurait lancées.</div>
+      <div class="field"><label><input type="checkbox" id="simToggle" checked> Mode simulation (activé par défaut)</label></div>
+      <div class="field" id="simConfirmBox" style="display:none">
+        <label>Pour désactiver, saisissez « PILOTER »</label>
+        <input id="simConfirm" placeholder="PILOTER" autocomplete="off">
+      </div>
+      <div class="actions"><button class="btn" id="simSave">Enregistrer</button><span id="simState" class="chip warn">simulation</span></div>
+      <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
+      <h2>Token par défaut</h2>
+      <div class="sub">Profil exécuté par les devices cochés « miner avec » quand aucune campagne ne les occupe (l'étape 3b s'en sert pour le retour automatique). Une machine peut le surcharger.</div>
+      <div class="field"><label>Profil par défaut</label><select id="defProfile"><option value="">— aucun —</option></select></div>
+      <div class="actions"><button class="btn outline" id="defSave">Enregistrer le profil par défaut</button></div>
+    </div>
+
     <div class="card">
       <h2>Mise à jour</h2>
       <div class="sub">Vérification automatique des releases GitHub (intervalle réglable par <span class="mono">FOSSOR_UPDATE_CHECK_INTERVAL</span>, 0 = désactivé).</div>
@@ -799,6 +815,44 @@ NT_CHANNELS.forEach(pair=>{
     }finally{btn.disabled=false;}
   });
 });
+
+// ── Pilotage : simulation (§5.7) et token par défaut (§4.6) ──────────
+const loadPilot=async()=>{
+  const r=await fetch('/api/miner/settings',{credentials:'include'});
+  if(!r.ok)return;
+  const d=await r.json();
+  $('#simToggle').checked=!!d.simulation;
+  $('#simState').textContent=d.simulation?'simulation active':'pilotage réel';
+  $('#simState').className='chip '+(d.simulation?'warn':'on');
+  $('#simConfirmBox').style.display=d.simulation?'none':'block';
+  $('#defProfile').innerHTML='<option value="">— aucun —</option>'+
+    (d.profiles||[]).map(p=>`<option value="${p.id}"${p.id===d.default_profile_id?' selected':''}>${p.name} · ${p.coin} · ${p.software}</option>`).join('');
+};
+$('#simToggle').addEventListener('change',()=>{
+  $('#simConfirmBox').style.display=$('#simToggle').checked?'none':'block';
+});
+$('#simSave').addEventListener('click',async()=>{
+  const body={simulation:$('#simToggle').checked};
+  if(!body.simulation)body.confirm=($('#simConfirm').value||'').trim();
+  const r=await fetch('/api/miner/settings',{method:'PUT',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){toast(d.detail||'Réglage refusé','err');return;}
+  toast('Mode simulation : '+(d.simulation?'activé':'désactivé'));
+  await loadPilot();
+  if(!d.simulation){location.reload();}
+});
+$('#defSave').addEventListener('click',async()=>{
+  const raw=$('#defProfile').value;
+  const r=await fetch('/api/miner/settings',{method:'PUT',credentials:'include',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({default_profile_id:raw?parseInt(raw,10):null})});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){toast(d.detail||'Réglage refusé','err');return;}
+  toast('Profil par défaut enregistré');
+  await loadPilot();
+});
+loadPilot();
 
 $('#logoutBtn').onclick=async()=>{
   await fetch('/api/logout',{method:'POST',credentials:'include'});
