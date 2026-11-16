@@ -3,9 +3,12 @@
 * identifiers are ``uuid`` (never SQL ids), so an export can be replayed on an
   empty database or merged into another instance;
 * secrets are **excluded by default**: with ``include_secrets`` each machine
-  secret is encrypted with a key derived from a user passphrase (PBKDF2-SHA256,
-  600 000 iterations, random salt, Fernet/AES-128-CBC+HMAC).  The master key is
-  never used to encrypt the file and never leaves the process;
+  secret and each AI provider key is encrypted with a key derived from a user
+  passphrase (PBKDF2-SHA256, 600 000 iterations, random salt,
+  Fernet/AES-128-CBC+HMAC).  The master key is never used to encrypt the file
+  and never leaves the process;
+* the inbound Hermes token is **never** exported, not even encrypted: it is
+  local to the instance that issued it;
 * an import is validated, diffed (``dry_run``), and always preceded by an
   automatic backup of the current configuration.
 """
@@ -24,7 +27,8 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from sqlalchemy.orm import Session
 
-from app.models import AppSetting, Device, Machine
+from app.ai_config import NON_EXPORTED_SETTINGS, PROVIDER_FIELDS, PROVIDER_TYPES, WHICHES
+from app.models import AiProvider, AppSetting, Device, Machine
 from app.secrets import decrypt_secret, encrypt_secret
 
 FORMAT_VERSION = 1
@@ -68,7 +72,24 @@ def _fernet_for(passphrase: str, salt: bytes, iterations: int) -> Fernet:
     return Fernet(base64.urlsafe_b64encode(kdf.derive(passphrase.encode())))
 
 
-def _encrypt_secrets(machine_secrets: dict[str, str], passphrase: str) -> dict[str, Any]:
+def _settings_snapshot(db: Session) -> dict[str, Any]:
+    """Exported settings; the hashed Hermes token never leaves the instance."""
+    snapshot: dict[str, Any] = {}
+    for row in db.query(AppSetting).order_by(AppSetting.key).all():
+        if row.key in NON_EXPORTED_SETTINGS:
+            continue
+        try:
+            snapshot[row.key] = json.loads(row.value)
+        except (TypeError, ValueError):
+            snapshot[row.key] = row.value
+    return snapshot
+
+
+def _encrypt_secrets(
+    machine_secrets: dict[str, str],
+    ai_secrets: dict[str, str],
+    passphrase: str,
+) -> dict[str, Any]:
     salt = os.urandom(16)
     fernet = _fernet_for(passphrase, salt, KDF_ITERATIONS)
     return {
@@ -77,14 +98,18 @@ def _encrypt_secrets(machine_secrets: dict[str, str], passphrase: str) -> dict[s
         "salt": base64.b64encode(salt).decode(),
         "cipher": "fernet",
         "tokens": {uuid: fernet.encrypt(plain.encode()).decode() for uuid, plain in machine_secrets.items()},
+        "ai": {which: fernet.encrypt(plain.encode()).decode() for which, plain in ai_secrets.items()},
     }
 
 
-def _decrypt_secrets(doc: dict, passphrase: str | None) -> dict[str, str]:
-    """Decrypt the ``secrets`` block; raise ConfigError before any write."""
+def _decrypt_secrets(doc: dict, passphrase: str | None) -> tuple[dict[str, str], dict[str, str]]:
+    """Decrypt the ``secrets`` block; raise ConfigError before any write.
+
+    Returns ``(machine secrets by uuid, AI provider keys by ``which``)``.
+    """
     block = doc.get("secrets")
     if not block:
-        return {}
+        return {}, {}
     if not passphrase:
         raise ConfigError("Ce fichier contient des secrets chiffrés : une phrase de passe est requise")
     if block.get("cipher") != "fernet" or block.get("kdf") != "pbkdf2-sha256":
@@ -100,15 +125,20 @@ def _decrypt_secrets(doc: dict, passphrase: str | None) -> dict[str, str]:
         raise ConfigError("Bloc « secrets » illisible (sel trop court)")
     fernet = _fernet_for(passphrase, salt, iterations)
     tokens = block.get("tokens") or {}
-    if not isinstance(tokens, dict):
+    ai_tokens = block.get("ai") or {}
+    if not isinstance(tokens, dict) or not isinstance(ai_tokens, dict):
         raise ConfigError("Bloc « secrets » illisible (tokens)")
-    plain: dict[str, str] = {}
-    for uuid, token in tokens.items():
-        try:
-            plain[uuid] = fernet.decrypt(str(token).encode()).decode()
-        except InvalidToken:
-            raise ConfigError("Phrase de passe incorrecte (impossible de déchiffrer les secrets)")
-    return plain
+
+    def _open(values: dict) -> dict[str, str]:
+        opened: dict[str, str] = {}
+        for name, token in values.items():
+            try:
+                opened[name] = fernet.decrypt(str(token).encode()).decode()
+            except InvalidToken:
+                raise ConfigError("Phrase de passe incorrecte (impossible de déchiffrer les secrets)")
+        return opened
+
+    return _open(tokens), _open(ai_tokens)
 
 
 # ── Export ─────────────────────────────────────────────────────────────
@@ -142,9 +172,16 @@ def build_export(db: Session, include_secrets: bool = False, passphrase: str | N
             }
             for device in devices
         ],
-        "settings": {
-            row.key: json.loads(row.value)
-            for row in db.query(AppSetting).order_by(AppSetting.key).all()
+        "settings": _settings_snapshot(db),
+        "ai": {
+            "providers": [
+                {
+                    "which": provider.which,
+                    "has_api_key": provider.api_key_ref is not None,
+                    **{field: getattr(provider, field) for field in PROVIDER_FIELDS},
+                }
+                for provider in db.query(AiProvider).order_by(AiProvider.which).all()
+            ]
         },
         "secrets": None,
     }
@@ -156,7 +193,11 @@ def build_export(db: Session, include_secrets: bool = False, passphrase: str | N
         for machine in machines:
             if machine.secret_ref:
                 plain[machine.uuid] = decrypt_secret(machine.secret_ref)
-        doc["secrets"] = _encrypt_secrets(plain, passphrase)
+        ai_plain: dict[str, str] = {}
+        for provider in db.query(AiProvider).all():
+            if provider.api_key_ref:
+                ai_plain[provider.which] = decrypt_secret(provider.api_key_ref)
+        doc["secrets"] = _encrypt_secrets(plain, ai_plain, passphrase)
     return doc
 
 
@@ -186,6 +227,33 @@ def backup_current_config(db: Session) -> str:
 
 
 # ── Validation ─────────────────────────────────────────────────────────
+def _validate_ai(doc: dict) -> dict[str, dict]:
+    """Validate the optional ``ai`` block; return providers by ``which``."""
+    ai = doc.get("ai")
+    if ai is None:
+        return {}
+    if not isinstance(ai, dict):
+        raise ConfigError("Le champ « ai » doit être un objet JSON")
+    providers = ai.get("providers")
+    if providers is None:
+        return {}
+    if not isinstance(providers, list):
+        raise ConfigError("ai.providers doit être une liste")
+    incoming: dict[str, dict] = {}
+    for position, provider in enumerate(providers):
+        if not isinstance(provider, dict):
+            raise ConfigError(f"ai.providers[{position}] n'est pas un objet")
+        which = provider.get("which")
+        if which not in WHICHES:
+            raise ConfigError(f"ai.providers[{position}] : which invalide ({which!r})")
+        if which in incoming:
+            raise ConfigError(f"ai.providers[{position}] : which en double ({which})")
+        if provider.get("provider_type") not in PROVIDER_TYPES:
+            raise ConfigError(f"ai.providers[{position}] : provider_type invalide")
+        incoming[which] = provider
+    return incoming
+
+
 def validate_document(doc: Any) -> None:
     """Strict schema check; every failure is a clear ConfigError (HTTP 400)."""
     if not isinstance(doc, dict):
@@ -234,6 +302,8 @@ def validate_document(doc: Any) -> None:
                 f"devices[{position}] : machine_uuid inconnu ({device['machine_uuid']})"
             )
 
+    _validate_ai(doc)
+
 
 # ── Diff ───────────────────────────────────────────────────────────────
 def _machine_values(row: dict) -> dict:
@@ -249,11 +319,13 @@ def compute_diff(db: Session, doc: dict) -> dict:
     machines = {machine.uuid: machine for machine in db.query(Machine).all()}
     devices = {device.uuid: device for device in db.query(Device).all()}
     machine_uuid_by_id = {machine.id: machine.uuid for machine in db.query(Machine).all()}
-    settings = {row.key: json.loads(row.value) for row in db.query(AppSetting).all()}
+    settings = _settings_snapshot(db)
 
     incoming_machines = {row["uuid"]: row for row in doc["machines"]}
     incoming_devices = {row["uuid"]: row for row in doc["devices"]}
     incoming_settings = doc["settings"]
+    incoming_ai = _validate_ai(doc)
+    current_ai = {provider.which: provider for provider in db.query(AiProvider).all()}
 
     machine_modified = []
     for uuid, row in incoming_machines.items():
@@ -276,6 +348,16 @@ def compute_diff(db: Session, doc: dict) -> dict:
         if current_values != incoming_values:
             device_modified.append({"uuid": uuid, "model": row.get("model"), "kind": row.get("kind")})
 
+    ai_modified = [
+        {"which": which, "name": row.get("name") or which}
+        for which, row in incoming_ai.items()
+        if which in current_ai
+        and (
+            any(getattr(current_ai[which], field) != row.get(field) for field in PROVIDER_FIELDS)
+            or bool(current_ai[which].api_key_ref) != bool(row.get("has_api_key"))
+        )
+    ]
+
     return {
         "machines": {
             "added": [{"uuid": u, "name": r.get("name")} for u, r in incoming_machines.items() if u not in machines],
@@ -297,6 +379,11 @@ def compute_diff(db: Session, doc: dict) -> dict:
             "added": sorted(k for k in incoming_settings if k not in settings),
             "modified": sorted(k for k in incoming_settings if k in settings and settings[k] != incoming_settings[k]),
             "removed": sorted(k for k in settings if k not in incoming_settings),
+        },
+        "ai": {
+            "added": [{"which": w, "name": r.get("name") or w} for w, r in incoming_ai.items() if w not in current_ai],
+            "modified": ai_modified,
+            "removed": [{"which": w} for w in current_ai if w not in incoming_ai],
         },
     }
 
@@ -325,7 +412,7 @@ def apply_import(
         raise ConfigError("mode invalide : « merge » ou « replace » attendu")
 
     # Decrypt before touching anything: a wrong passphrase must write nothing.
-    secrets_plain = _decrypt_secrets(doc, passphrase)
+    machine_secrets, ai_secrets = _decrypt_secrets(doc, passphrase)
 
     backup_path = backup_current_config(db)
 
@@ -333,11 +420,13 @@ def apply_import(
     devices = {device.uuid: device for device in db.query(Device).all()}
     incoming_machines = {row["uuid"]: row for row in doc["machines"]}
     incoming_devices = {row["uuid"]: row for row in doc["devices"]}
+    incoming_ai = _validate_ai(doc)
 
     stats = {
         "machines": {"created": 0, "updated": 0, "deleted": 0},
         "devices": {"created": 0, "updated": 0, "deleted": 0},
         "settings": {"created": 0, "updated": 0, "deleted": 0},
+        "ai": {"created": 0, "updated": 0, "deleted": 0},
     }
 
     if mode == "replace":
@@ -365,8 +454,8 @@ def apply_import(
         machine.updated_at = _now()
         db.flush()
         machines[uuid] = machine
-        if uuid in secrets_plain:
-            machine.secret_ref = encrypt_secret(secrets_plain[uuid])
+        if uuid in machine_secrets:
+            machine.secret_ref = encrypt_secret(machine_secrets[uuid])
     db.flush()
 
     for uuid, row in incoming_devices.items():
@@ -395,10 +484,14 @@ def apply_import(
     existing_settings = {row.key: row for row in db.query(AppSetting).all()}
     if mode == "replace":
         for key, row in list(existing_settings.items()):
+            if key in NON_EXPORTED_SETTINGS:
+                continue  # the inbound token is local, never imported away
             if key not in doc["settings"]:
                 db.delete(row)
                 stats["settings"]["deleted"] += 1
     for key, value in doc["settings"].items():
+        if key in NON_EXPORTED_SETTINGS:
+            continue
         row = existing_settings.get(key)
         if row is None:
             db.add(AppSetting(key=key, value=json.dumps(value, ensure_ascii=False), updated_at=_now()))
@@ -407,6 +500,29 @@ def apply_import(
             row.value = json.dumps(value, ensure_ascii=False)
             row.updated_at = _now()
             stats["settings"]["updated"] += 1
+
+    # AI providers (§4.12): same uuid-less upsert on ``which``.
+    existing_ai = {provider.which: provider for provider in db.query(AiProvider).all()}
+    if mode == "replace":
+        for which, provider in list(existing_ai.items()):
+            if which not in incoming_ai:
+                db.delete(provider)
+                stats["ai"]["deleted"] += 1
+    for which, row in incoming_ai.items():
+        values = {field: row[field] for field in PROVIDER_FIELDS if field in row}
+        provider = existing_ai.get(which)
+        if provider is None:
+            provider = AiProvider(which=which, created_at=row.get("updated_at") or _now())
+            db.add(provider)
+            stats["ai"]["created"] += 1
+        else:
+            stats["ai"]["updated"] += 1
+        for key, value in values.items():
+            setattr(provider, key, value)
+        provider.updated_at = _now()
+        if which in ai_secrets:
+            provider.api_key_ref = encrypt_secret(ai_secrets[which])
+    db.flush()
 
     db.commit()
     return {"mode": mode, "backup": backup_path, "stats": stats}
