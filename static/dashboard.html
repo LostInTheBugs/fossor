@@ -34,7 +34,7 @@ header h1{font-size:26px}
 .card-head .name{font-size:16px;font-weight:700}
 .card-head .sub{color:var(--muted);font-size:12px;margin-top:2px}
 .card-head .host{color:var(--muted);font-size:11px;margin-top:2px}
-.totals{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
+.totals{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
 .totals .k{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.4px;font-weight:600}
 .totals .v{font-size:15px;font-weight:700}
 table{width:100%;border-collapse:collapse;font-size:12px}
@@ -71,6 +71,8 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
     <div class="box"><span class="k">Machines en ligne</span><span class="v" id="sOnline">—</span></div>
     <div class="box"><span class="k">Hashrate total</span><span class="v" id="sHash">—</span></div>
     <div class="box"><span class="k">Consommation</span><span class="v" id="sPower">—</span></div>
+    <div class="box"><span class="k">Coût 24 h</span><span class="v" id="sCost">—</span></div>
+    <div class="box"><span class="k">Net 24 h</span><span class="v" id="sNet">—</span></div>
     <div class="box"><span class="k">Dernière collecte</span><span class="v" id="sAge">—</span></div>
   </div>
 
@@ -104,6 +106,10 @@ function fmtHs(hs) {
 function fmtW(w) {
   if (w === null || w === undefined || isNaN(w)) return "—";
   return Math.round(Number(w)) + " W";
+}
+function fmtEur(v) {
+  if (v === null || v === undefined || isNaN(v)) return "—";
+  return Number(v).toFixed(2) + " €";
 }
 function fmtTemp(t) {
   if (t === null || t === undefined || isNaN(t)) return "—";
@@ -150,9 +156,10 @@ function deviceRows(devices) {
   }).join("");
 }
 
-function card(m) {
+function card(m, e) {
   const meta = [m.miner || "aucun mineur", m.coin || "", m.algo || ""].filter(Boolean).join(" · ");
   const api = m.api_port ? " · API " + m.api_port : "";
+  e = e || {};
   return '<div class="card' + (m.collected && !m.online ? " offline" : "") + '">' +
     '<div class="card-head">' +
       "<div><div class=\"name\">" + esc(m.name) + "</div>" +
@@ -164,6 +171,8 @@ function card(m) {
       '<div><span class="k">Hashrate</span><span class="v">' + fmtHs(m.total_hashrate_hs) + "</span></div>" +
       '<div><span class="k">Conso</span><span class="v">' + fmtW(m.total_power_w) + "</span></div>" +
       '<div><span class="k">Uptime</span><span class="v">' + fmtUptime(m.uptime_s) + "</span></div>" +
+      '<div><span class="k">Coût 24 h</span><span class="v">' + fmtEur(e.cost_eur_day) + "</span></div>" +
+      '<div><span class="k">Net 24 h</span><span class="v">' + fmtEur(e.net_eur_day) + "</span></div>" +
       '<div><span class="k">Collecte</span><span class="v">' + fmtAge(m.age_s) + "</span></div>" +
     "</div>" +
     '<table><thead><tr><th>Device</th><th style="text-align:right">Hashrate</th><th style="text-align:right">Temp</th>' +
@@ -173,8 +182,10 @@ function card(m) {
     "</div>";
 }
 
-function render(machines) {
-  $("#cards").innerHTML = machines.map(card).join("");
+function render(machines, energy) {
+  const byUuid = {};
+  ((energy && energy.machines) || []).forEach((e) => { byUuid[e.uuid] = e; });
+  $("#cards").innerHTML = machines.map((m) => card(m, byUuid[m.uuid])).join("");
   $("#emptyMsg").style.display = machines.length ? "none" : "block";
 
   const online = machines.filter((m) => m.online).length;
@@ -186,6 +197,10 @@ function render(machines) {
   const watts = machines.reduce((acc, m) => acc + (m.total_power_w || 0), 0);
   $("#sPower").textContent = fmtW(watts || null);
 
+  const totals = (energy && energy.total) || {};
+  $("#sCost").textContent = fmtEur(totals.cost_eur_day);
+  $("#sNet").textContent = fmtEur(totals.net_eur_day);
+
   const ages = machines.map((m) => m.age_s).filter((a) => a !== null && a !== undefined);
   $("#sAge").textContent = ages.length ? fmtAge(Math.min(...ages)) : "jamais";
 
@@ -194,10 +209,17 @@ function render(machines) {
 
 async function load() {
   try {
-    const res = await fetch("/api/metrics/live", { headers: { "Accept": "application/json" } });
+    const [res, energyRes] = await Promise.all([
+      fetch("/api/metrics/live", { headers: { "Accept": "application/json" } }),
+      fetch("/api/energy?period=24h", { headers: { "Accept": "application/json" } })
+    ]);
     if (res.status === 401) { window.location.href = "/"; return; }
     if (!res.ok) throw new Error("HTTP " + res.status);
-    render(await res.json());
+    let energy = null;
+    if (energyRes.ok) {
+      try { energy = await energyRes.json(); } catch (err) { energy = null; }
+    }
+    render(await res.json(), energy);
   } catch (err) {
     $("#stamp").textContent = "Collecte indisponible : " + err.message;
   }

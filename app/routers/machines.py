@@ -26,6 +26,8 @@ def _mask_secret(machine: Machine) -> dict:
         "usage": machine.usage,
         "vm_host": machine.vm_host,
         "enabled": machine.enabled,
+        "cpu_power_w": machine.cpu_power_w,
+        "platform_power_w": machine.platform_power_w,
         "created_at": machine.created_at,
         "updated_at": machine.updated_at,
     }
@@ -77,6 +79,8 @@ def create_machine(
         usage=data.get("usage", "both"),
         vm_host=data.get("vm_host", False),
         enabled=data.get("enabled", True),
+        cpu_power_w=data.get("cpu_power_w"),
+        platform_power_w=data.get("platform_power_w", 50),
     )
 
     # Handle secrets
@@ -114,7 +118,7 @@ def update_machine(
     if not machine:
         raise HTTPException(status_code=404, detail="Machine not found")
 
-    for key in ["name", "host", "ssh_port", "ssh_user", "auth_type", "sudo", "os_kind", "host_key", "usage", "vm_host", "enabled"]:
+    for key in ["name", "host", "ssh_port", "ssh_user", "auth_type", "sudo", "os_kind", "host_key", "usage", "vm_host", "enabled", "cpu_power_w", "platform_power_w"]:
         if key in data:
             setattr(machine, key, data[key])
 

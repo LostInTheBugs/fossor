@@ -81,6 +81,7 @@ header h1{font-size:26px}
   <div class="subtabs">
     <button class="subtab active" id="tabGeneral" data-panel="panel-general">Général</button>
     <button class="subtab" id="tabAi" data-panel="panel-ai">Analyse IA</button>
+    <button class="subtab" id="tabEnergy" data-panel="panel-energy">Électricité</button>
   </div>
 
   <div id="panel-general">
@@ -125,6 +126,47 @@ header h1{font-size:26px}
         <button class="btn" id="applyBtn" disabled>Appliquer</button>
       </div>
       <div class="diff" id="diffBox"></div>
+    </div>
+  </div>
+
+  <div id="panel-energy" style="display:none">
+    <div class="card">
+      <h2>Tarif électrique</h2>
+      <div class="sub">Fuseau Europe/Paris. Mode fixe, plages horaires (heures creuses / pleines) ou jours colorés (type Tempo, couleur du jour saisie — « inconnue » est facturée bleu).</div>
+      <div class="row">
+        <div class="field"><label>Mode</label><select id="enMode">
+          <option value="fixed">Fixe</option>
+          <option value="ranges">Plages horaires</option>
+          <option value="tempo">Jours colorés (Tempo)</option>
+        </select></div>
+        <div class="field narrow" id="enFixedWrap"><label>€ / kWh</label><input type="number" id="enFixed" step="0.0001" min="0" value="0.2"></div>
+      </div>
+      <div id="enRanges" style="display:none">
+        <div class="sub">Chaque minute de la journée doit être couverte une seule fois ; une plage peut passer minuit (22:00 → 06:00).</div>
+        <table><thead><tr><th>Début</th><th>Fin</th><th>€ / kWh</th><th>Libellé</th><th></th></tr></thead>
+          <tbody id="enRangeBody"></tbody></table>
+        <div class="actions"><button class="btn sm outline" id="enAddRange">Ajouter une plage</button></div>
+      </div>
+      <div id="enTempo" style="display:none">
+        <div class="row">
+          <div class="field"><label>Couleur du jour</label><select id="enDay">
+            <option value="unknown">Inconnue (= bleu)</option>
+            <option value="blue">Bleu</option>
+            <option value="white">Blanc</option>
+            <option value="red">Rouge</option>
+          </select></div>
+        </div>
+        <div class="row" id="enTempoGrid"></div>
+      </div>
+      <div class="actions"><button class="btn" id="enSave">Enregistrer le tarif</button></div>
+    </div>
+
+    <div class="card">
+      <h2>Puissances saisies par machine</h2>
+      <div class="sub">Les GPU sont mesurés (nvidia-smi, power_w) ; le CPU et la plateforme (carte mère, alimentation) sont saisis. Défaut plateforme : 50 W.</div>
+      <table><thead><tr><th>Machine</th><th style="text-align:right">CPU (W)</th><th style="text-align:right">Plateforme (W)</th></tr></thead>
+        <tbody id="enMachineBody"></tbody></table>
+      <div class="actions"><button class="btn" id="enSaveMachines">Enregistrer les puissances</button></div>
     </div>
   </div>
 
@@ -433,13 +475,103 @@ $('#tokBtn').addEventListener('click',async()=>{
   await loadAI();
 });
 
+/* ── Électricité ──────────────────────────────────────────────────── */
+const TEMPO_COLORS=['blue','white','red'];
+const TEMPO_LABEL={blue:'Bleu',white:'Blanc',red:'Rouge'};
+const enRangeRow=r=>`<tr>
+  <td><input class="enStart" value="${r.start||''}" placeholder="22:00" style="width:90px"></td>
+  <td><input class="enEnd" value="${r.end||''}" placeholder="06:00" style="width:90px"></td>
+  <td><input class="enPrice" type="number" step="0.0001" min="0" value="${r.price!==undefined?r.price:0.2}" style="width:110px"></td>
+  <td><input class="enLabel" value="${r.label||''}" style="width:120px"></td>
+  <td><button class="btn sm outline enDel" type="button">Retirer</button></td></tr>`;
+const renderRanges=ranges=>{
+  $('#enRangeBody').innerHTML=ranges.map(enRangeRow).join('');
+  document.querySelectorAll('.enDel').forEach(btn=>btn.onclick=()=>btn.closest('tr').remove());
+};
+const renderTempo=tempo=>{
+  $('#enTempoGrid').innerHTML=TEMPO_COLORS.map(c=>{
+    const grid=tempo[c]||{hc:0,hp:0};
+    return `<div class="field"><label>${TEMPO_LABEL[c]}</label><div class="row">
+      <div class="field"><label>HC €/kWh</label><input type="number" step="0.0001" min="0" id="enT_${c}_hc" value="${grid.hc}"></div>
+      <div class="field"><label>HP €/kWh</label><input type="number" step="0.0001" min="0" id="enT_${c}_hp" value="${grid.hp}"></div>
+    </div></div>`;
+  }).join('');
+};
+const syncMode=()=>{
+  const mode=$('#enMode').value;
+  $('#enFixedWrap').style.display=mode==='fixed'?'block':'none';
+  $('#enRanges').style.display=mode==='ranges'?'block':'none';
+  $('#enTempo').style.display=mode==='tempo'?'block':'none';
+};
+const readTariff=()=>{
+  const mode=$('#enMode').value;
+  if(mode==='fixed')return {mode,fixed_price:Number($('#enFixed').value)};
+  if(mode==='ranges'){
+    const ranges=[...document.querySelectorAll('#enRangeBody tr')].map(tr=>({
+      start:tr.querySelector('.enStart').value.trim(),
+      end:tr.querySelector('.enEnd').value.trim(),
+      price:Number(tr.querySelector('.enPrice').value),
+      label:tr.querySelector('.enLabel').value.trim()
+    }));
+    return {mode,ranges};
+  }
+  const tempo={day:$('#enDay').value};
+  TEMPO_COLORS.forEach(c=>{
+    tempo[c]={hc:Number($('#enT_'+c+'_hc').value),hp:Number($('#enT_'+c+'_hp').value)};
+  });
+  return {mode,tempo};
+};
+const loadEnergy=async()=>{
+  const r=await fetch('/api/energy/tariff',{credentials:'include'});
+  if(r.status===401){location.href='/';return;}
+  const d=await r.json();
+  const t=d.tariff||{mode:'fixed',fixed_price:0.2};
+  $('#enMode').value=t.mode||'fixed';
+  $('#enFixed').value=t.fixed_price!==undefined?t.fixed_price:0.2;
+  renderRanges(t.ranges&&t.ranges.length?t.ranges:[{start:'00:00',end:'24:00',price:0.2,label:'base'}]);
+  renderTempo(t.tempo||{});
+  $('#enDay').value=(t.tempo&&t.tempo.day)||'unknown';
+  $('#enMachineBody').innerHTML=(d.machines||[]).map(m=>`<tr data-uuid="${m.uuid}">
+    <td>${m.name}</td>
+    <td style="text-align:right"><input class="enCpu" type="number" min="0" step="1" value="${m.cpu_power_w==null?'':m.cpu_power_w}" placeholder="ex. 65" style="width:110px"></td>
+    <td style="text-align:right"><input class="enPlat" type="number" min="0" step="1" value="${m.platform_power_w==null?50:m.platform_power_w}" style="width:110px"></td>
+  </tr>`).join('')||'<tr><td colspan="3" class="empty">Aucune machine.</td></tr>';
+  syncMode();
+};
+$('#enMode').addEventListener('change',syncMode);
+$('#enAddRange').addEventListener('click',()=>{
+  $('#enRangeBody').insertAdjacentHTML('beforeend',enRangeRow({start:'',end:'',price:0.2,label:''}));
+  document.querySelectorAll('.enDel').forEach(btn=>btn.onclick=()=>btn.closest('tr').remove());
+});
+$('#enSave').addEventListener('click',async()=>{
+  const r=await fetch('/api/energy/tariff',{method:'PUT',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({tariff:readTariff()})});
+  const data=await r.json().catch(()=>({}));
+  if(!r.ok){toast(data.detail||'Tarif refusé','err');return;}
+  toast('Tarif enregistré');
+  await loadEnergy();
+});
+$('#enSaveMachines').addEventListener('click',async()=>{
+  const machines=[...document.querySelectorAll('#enMachineBody tr[data-uuid]')].map(tr=>({
+    uuid:tr.dataset.uuid,
+    cpu_power_w:tr.querySelector('.enCpu').value===''?null:Number(tr.querySelector('.enCpu').value),
+    platform_power_w:Number(tr.querySelector('.enPlat').value||50)
+  }));
+  const r=await fetch('/api/energy/tariff',{method:'PUT',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({machines})});
+  const data=await r.json().catch(()=>({}));
+  if(!r.ok){toast(data.detail||'Puissances refusées','err');return;}
+  toast('Puissances enregistrées');
+});
+
 document.querySelectorAll('.subtab').forEach(button=>{
   button.addEventListener('click',()=>{
     document.querySelectorAll('.subtab').forEach(b=>b.classList.toggle('active',b===button));
-    const ai=button.dataset.panel==='panel-ai';
-    $('#panel-general').style.display=ai?'none':'block';
-    $('#panel-ai').style.display=ai?'block':'none';
-    if(ai)loadAI();
+    ['panel-general','panel-ai','panel-energy'].forEach(id=>{
+      $('#'+id).style.display=(id===button.dataset.panel)?'block':'none';
+    });
+    if(button.dataset.panel==='panel-ai')loadAI();
+    if(button.dataset.panel==='panel-energy')loadEnergy();
   });
 });
 

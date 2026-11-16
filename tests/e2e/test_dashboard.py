@@ -60,10 +60,16 @@ async def test_dashboard_is_landing_page_with_zero_console_errors(e2e_server):
         assert "hors ligne" in cards.lower()
         assert await page.is_hidden("#emptyMsg")
 
-        # 4. The page refreshes itself every 30 s without reloading.
+        # 4. Cost / net are wired (§4.15): no metric yet → 0.00 € cost, no revenue.
+        await page.wait_for_function(
+            "document.querySelector('#sCost').textContent === '0.00 €'", timeout=10000
+        )
+        assert await page.inner_text("#sNet") == "—"
+
+        # 5. The page refreshes itself every 30 s without reloading.
         assert await page.evaluate("typeof setInterval === 'function'")
 
-        # 5. Zero browser errors at all.
+        # 6. Zero browser errors at all.
         assert console_errors == [], f"console errors: {console_errors}"
         assert page_errors == [], f"page errors: {page_errors}"
 

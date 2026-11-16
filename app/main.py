@@ -13,6 +13,7 @@ from app.routers.update import router as update_router
 from app.routers.metrics import router as metrics_router
 from app.routers.coins import router as coins_router
 from app.routers.mined import router as mined_router
+from app.routers.energy import router as energy_router
 from app.routers.ui import router as ui_router
 from pathlib import Path
 
@@ -38,6 +39,7 @@ app.include_router(update_router)
 app.include_router(metrics_router)
 app.include_router(coins_router)
 app.include_router(mined_router)
+app.include_router(energy_router)
 app.include_router(ui_router)
 
 
