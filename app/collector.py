@@ -306,7 +306,8 @@ async def _enrich_cpu_state(db, machine, raw_stdout: str, stats: dict[str, Any])
 
 def _first_number(*values: Any) -> float | None:
     for value in values:
-        if isinstance(value, (int, float)):
+        # §4.2 bis : 0 W renvoyé par une API veut dire « non mesuré ».
+        if isinstance(value, (int, float)) and float(value) > 0:
             return float(value)
     return None
 

@@ -337,6 +337,61 @@ def scan_hashrate(text: str) -> float | None:
     return round(previous[1] / delta, 1)
 
 
+_TS_PREFIX_RE = re.compile(
+    r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z|\b\d{2}:\d{2}:\d{2}\b)"
+)
+_NONCES_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*(k|M|G)?\s*nonces?\b", re.IGNORECASE)
+
+
+def nonces_hashrate(text: str, workers: int = 1) -> float | None:
+    """Débit estimé d'un script solo : nonces d'un scan × workers / intervalle.
+
+    Utilisé quand le log de ``mine-bigcoin.sh`` ne contient aucun hashrate mais
+    des lignes « <horodatage> … N nonces ». Aucune paire exploitable -> ``None``
+    (la raison exacte est conservée par l'appelant).
+    """
+    from datetime import datetime, timezone
+
+    moments: list[tuple[str, float]] = []
+    for line in (text or "").splitlines():
+        match = _NONCES_RE.search(line)
+        if not match:
+            continue
+        stamp = _TS_PREFIX_RE.search(line)
+        if not stamp:
+            continue
+        number = _to_float(match.group(1)) or 0.0
+        factor = {"k": 1e3, "m": 1e6, "g": 1e9}.get((match.group(2) or "").lower(), 1.0)
+        number *= factor
+        if number > 0:
+            moments.append((stamp.group(1), number))
+    if len(moments) < 2:
+        return None
+
+    def parse(stamp: str) -> float | None:
+        try:
+            if "T" in stamp:
+                return datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(
+                    tzinfo=timezone.utc
+                ).timestamp()
+            now = datetime.now(timezone.utc)
+            parsed = datetime.strptime(stamp, "%H:%M:%S").replace(
+                year=now.year, month=now.month, day=now.day, tzinfo=timezone.utc
+            )
+            return parsed.timestamp()
+        except ValueError:
+            return None
+
+    last, previous = moments[-1], moments[-2]
+    end, start = parse(last[0]), parse(previous[0])
+    if end is None or start is None:
+        return None
+    delta = end - start
+    if not 0 < delta <= 3600:
+        return None
+    return round(previous[1] / delta * max(1, int(workers or 1)), 1)
+
+
 def blocks_found(text: str) -> int:
     """Solo blocks found, counted from the script log (``FOUND: [``)."""
     return len(_FOUND_RE.findall(text or ""))
@@ -904,9 +959,13 @@ def _attach_solo(miner: dict[str, Any], probes: dict[str, Any], report: dict[str
         if estimate is None:
             result = log_hashrate(log_entry.get("text", ""), log_entry.get("mtime"))
             estimate = result["hashrate_hs"]
+    if estimate is None and log_entry:
+        estimate = nonces_hashrate(log_entry.get("text", ""), int(miner.get("workers") or 1))
+        if estimate:
+            miner["hashrate_source"] = "log du script (nonces par scan × workers / intervalle)"
     if estimate:
         miner["hashrate_hs"] = estimate
-        miner["hashrate_source"] = "log du script (nonces / intervalle des scans)"
+        miner["hashrate_source"] = miner.get("hashrate_source") or "log du script (nonces / intervalle des scans)"
     else:
         miner["hashrate_note"] = (
             "hashrate CPU inconnu (source : nœud %s, getmininginfo)" % node.get("key", "?")
@@ -920,6 +979,19 @@ def _attach_solo(miner: dict[str, Any], probes: dict[str, Any], report: dict[str
         "blocks_found": blocks_found(log_entry.get("text", "")) if log_entry else None,
         "log": log_entry.get("path") if log_entry else "",
     }
+
+
+def _format_hs(value: float | None) -> str:
+    """H/s → kH/s… (mêmes seuils que le tableau de bord)."""
+    if not isinstance(value, (int, float)) or value <= 0:
+        return "—"
+    units = ("H/s", "kH/s", "MH/s", "GH/s", "TH/s", "PH/s")
+    index = 0
+    number = float(value)
+    while number >= 1000 and index < len(units) - 1:
+        number /= 1000
+        index += 1
+    return f"{number:.2f} {units[index]}" if number < 100 else f"{number:.0f} {units[index]}"
 
 
 def cpu_state_with(
@@ -938,20 +1010,48 @@ def cpu_state_with(
                        ("power_w", None), ("cores", None), ("model", "")):
         state.setdefault(key, empty)
     state.setdefault("power_source", "")
+    freq_value = state.get("freq_mhz")
+    if isinstance(freq_value, (int, float)) and freq_value > 0:
+        state["freq_mhz"] = round(float(freq_value), 1)
+        state["freq_ghz"] = round(float(freq_value) / 1000.0, 2)
+    else:
+        state["freq_mhz"] = None
+        state["freq_ghz"] = None
     if state.get("temp_c") is None and hive_cputemp is not None:
         state["temp_c"] = hive_cputemp
         state["temp_sensor"] = "HiveOS last_stat cputemp"
-    if api_power_w is not None:
+    # 2026.11.004 : une valeur 0 de l'API veut dire « non mesuré » (l'Athlon
+    # renvoie package_power 0.0) — on garde RAPL/hwmon déjà lu, sinon « non mesurée ».
+    if api_power_w is not None and float(api_power_w) > 0:
         state["power_w"] = api_power_w
         state["power_source"] = "API SRBMiner package_power"
+    if state.get("power_w") is not None and float(state["power_w"]) <= 0:
+        state["power_w"] = None
+        state["power_source"] = "non mesurée"
     state["power_source"] = state.get("power_source") or "non mesurée"
     state["freq_source"] = state.get("freq_source") or ""
-    hashrates = [
-        float(miner["hashrate_hs"])
-        for miner in cpu_miners
-        if isinstance(miner.get("hashrate_hs"), (int, float))
+    # 2026.11.004 : on n'additionne jamais deux algos. Le total du device CPU
+    # n'existe que si un seul algo tourne ; sinon la liste par mineur fait foi
+    # (« WAM 1,17 kH/s · KSH 6,25 kH/s »).
+    groups: dict[str, float] = {}
+    order: list[str] = []
+    for miner in cpu_miners:
+        value = miner.get("hashrate_hs")
+        if not isinstance(value, (int, float)) or value <= 0:
+            continue
+        label = str(miner.get("coin") or miner.get("name") or "CPU").upper()
+        if label not in groups:
+            groups[label] = 0.0
+            order.append(label)
+        groups[label] += float(value)
+    state["hashrate_hs"] = groups[order[0]] if len(order) == 1 else None
+    state["hashrate_by_algo"] = [
+        {"label": label, "hashrate_hs": round(groups[label], 1), "human": _format_hs(groups[label])}
+        for label in order
     ]
-    state["hashrate_hs"] = sum(hashrates) if hashrates else None
+    state["hashrate_label"] = " · ".join(
+        f"{item['label']} {item['human']}" for item in state["hashrate_by_algo"]
+    )
     state["miners"] = [
         {
             "name": miner.get("name") or "",
