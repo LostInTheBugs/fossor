@@ -320,7 +320,9 @@ async def test_live_groups_coins_per_machine(monkeypatch, client):
     response = await client.get("/api/metrics/live")
     assert response.status_code == 200
     payload = [m for m in response.json() if m["name"] == "rig-hiveos"][0]
-    assert payload["coin"] == "PRL"  # PEARL replié sur PRL
+    # 003-c6 : pas de bloc HiveOS → pas de coin machine, mais la liste des coins.
+    assert payload["coin"] == ""
+    assert payload["coins"] == ["PRL", "WAM", "KSH"]
     assert payload["api_error"] is None
     groups = {g["coin"]: g for g in payload["coin_groups"]}
     assert set(groups) == {"PRL", "WAM", "KSH"}

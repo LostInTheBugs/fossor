@@ -97,12 +97,13 @@ def _coin_hosts(db) -> dict[str, str]:
 def _coin_catalogue(db) -> dict[str, Any]:
     """Everything coin inference needs: pool hosts, tickers, names, aliases."""
     from app.ai_config import get_setting
+    from app.coins import builtin_hosts, builtin_names, builtin_tickers
     from app.models import Coin
     from app.external_miners import COIN_ALIASES
 
-    hosts: dict[str, str] = {}
-    names: dict[str, str] = {}
-    tickers: list[str] = []
+    hosts: dict[str, str] = builtin_hosts()
+    names: dict[str, str] = builtin_names()
+    tickers: list[str] = builtin_tickers()
     for coin in db.query(Coin).all():
         ticker = str(coin.ticker or "").strip().upper()
         if not ticker:
@@ -456,15 +457,24 @@ async def collect_machine(machine_id: int) -> dict[str, Any]:
             if api:
                 stats = merge_srbminer(stats, api)
             from app.external_miners import normalize_coin
+            from app.srbminer_api import distinct_coins, expand_miner_algos
 
+            aliases = catalogue["aliases"]
             stats["coin"] = normalize_coin(
-                stats.get("coin", ""), catalogue["aliases"]
+                stats.get("coin", ""), aliases
             )
             # One hashrate per miner: it belongs to the process that answered.
             total = stats.get("total_hashrate_hs")
             for miner in stats.get("miners") or []:
                 if miner.get("api_port") and total is not None:
                     miner["hashrate_hs"] = total
+            # A miner with several algorithms is one line per algorithm, each
+            # with its own coin and hashrate (SRBMiner on the rig, 003-c6).
+            if stats.get("srbminer_algos"):
+                stats["miners"] = expand_miner_algos(
+                    stats.get("miners") or [], stats.pop("srbminer_algos"), aliases
+                )
+            stats["coins"] = distinct_coins(stats.get("miners") or [])
             # A port that yields no hashrate must be visible, never a silent « — ».
             if stats.get("total_hashrate_hs") is None:
                 stats["api_error"] = api_error or (

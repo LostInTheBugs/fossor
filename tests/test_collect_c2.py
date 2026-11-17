@@ -81,7 +81,8 @@ def test_parse_raw_detects_gpu_and_cpu_miners():
     assert "wam-miner" in names
     assert "Script de minage" in names
     assert len(stats["cpu_miners"]) == 3  # cpuminer, wam-miner, script bash
-    assert stats["coin"] == "PRL"
+    assert stats["coin"] == ""  # machine : coin HiveOS seulement (003-c6)
+    assert set(stats["coins"]) == {"PRL", "KSH", "WAM"}
     by_name = {m["name"]: m for m in stats["miners"]}
     assert by_name["cpuminer-opt"]["algorithm"] == "yespower"
     assert by_name["cpuminer-opt"]["threads"] == "4"

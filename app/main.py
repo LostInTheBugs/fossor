@@ -74,6 +74,22 @@ def nav_script():
 @app.on_event("startup")
 async def startup():
     init_db()
+    # §2026.11.003-c6 : un catalogue vide reçoit les coins de base.  Sans cela
+    # la correspondance pool → coin ne trouvait jamais rien (prod : 0 ligne).
+    try:
+        from app.coins import seed_builtin_coins
+        from app.database import SessionLocal
+
+        db = SessionLocal()
+        try:
+            seed_builtin_coins(db)
+        finally:
+            db.close()
+    except Exception:  # pragma: no cover - startup guard
+        import logging
+        logging.getLogger("fossor.coins").warning(
+            "coins de base non créés", exc_info=True
+        )
     # §4.1 bis: Fossor's own SSH identity exists from the very first start.
     # Best-effort: a missing master key must not take the whole app down.
     try:
