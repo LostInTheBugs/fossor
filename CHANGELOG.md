@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026.11.004-c1 — 2026-11-18
+
+### Correctif — hashrate du solo BigCoin en production
+
+- **La sonde du solo suit la redirection réelle du script** : `mine-bigcoin.sh` est
+  lancé par `bash -c … > ~/bigcoin-mine/bigcoin/mine.log 2>&1 &`. Les noms devinés
+  (`mining.log`, `miner.log`) sont supprimés : la sonde lit `/proc/<pid>/fd/1|2` du
+  **script**, puis de son **lanceur**, le **démon** en dernier. Le solo BIG du Ryzen
+  retrouve son hashrate (6952 H/s, 11 workers).
+- **Test de bout en bout** : sortie `ps` réelle → plan de sonde → sortie machine →
+  `6952 H/s`, plus un cas de régression où le journal du démon ne donne rien.
+- **Test d'auto-mise à jour** : la cible est construite depuis la version installée
+  (`NNN + 1`) ; il passait sur `main` mais échouait sur le clone du tag.
+
 ## 2026.11.004 — 2026-11-17
 
 ### Puissance CPU : sources nommées et coût à la prise (§4.2 / §4.15)
