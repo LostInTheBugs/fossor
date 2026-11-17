@@ -150,8 +150,14 @@ class TestProbePlanning:
         assert node["cli"] == "/root/korsh/bin/korsh-cli"
         assert node["datadir"] == "/root/korsh/data"
         assert node["coin"] == "KSH"
-        assert "/root/korsh/mining.log" in node["log_candidates"]
-        assert "/root/korsh/mining.log" in [probe["path"] for probe in probes["logs"]]
+        # 2026.11.004-c1 : plus aucun nom de log deviné — le script est suivi
+        # par /proc/<pid>/fd/1|2, son lanceur (screen) puis le démon.
+        assert "log_candidates" not in node
+        assert node["solo_pids"] == {"script": [4993], "parent": [4992],
+                                     "daemon": [4063]}
+        assert node["pids"] == [4993, 4992, 4063]
+        paths = [probe["path"] for probe in probes["logs"]]
+        assert "/root/korsh/mining.log" not in paths
 
     def test_ryzen_oms_log_and_bigcoin_node(self):
         probes = cs.plan_cpu_probes(fixture("ps_ryzen_c4.txt"))

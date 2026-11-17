@@ -81,6 +81,9 @@ def test_socket_fd_is_read_from_journald():
 # ── 1.3 — nœud solo : cwd + getmininginfo ─────────────────────────────
 BIG_PS = (
     "### PS_MINERS\n"
+    "administrator 1104500 0.0 309300 bash -c cd ~/bigcoin-mine/bigcoin && "
+    "nohup ./mine-bigcoin.sh > ~/bigcoin-mine/bigcoin/mine.log 2>&1 &\n"
+    "administrator 1104502 0.0 309240 bash ./mine-bigcoin.sh\n"
     "administrator 1104510 1096 309240 ./bitcoind -datadir=/home/administrator/"
     "bigcoin-mine/bigcoin/data -daemon\n"
     "administrator 3643649 0.0 25 ./bigcoin-cli -datadir=/home/administrator/"
@@ -112,7 +115,7 @@ def test_getmininginfo_feeds_height_and_network_share():
         '{"blocks": 21458, "networkhashps": 18400000000, "difficulty": 12.5, '
         '"chain": "main"}\n'
         "### NETPS bigcoin\n18400000000\n"
-        "### LOG /home/administrator/bigcoin-mine/bigcoin/mining.log\n"
+        "### LOGI 1104502 /home/administrator/bigcoin-mine/bigcoin/mine.log\n"
         f"{mtime}\n"
         "2026-11-16T10:00:00Z scan 200000\n2026-11-16T10:00:10Z scan 200000\n"
     )
@@ -273,7 +276,7 @@ def probe_ryzen(mtime: int) -> str:
         "### NETPS bigcoin\n18400000000\n"
         "### LOGI 913316 /var/log/cpu-miner.log\n"
         f"{mtime - 7200}\nstarting…\n"
-        "### LOG /home/administrator/bigcoin-mine/bigcoin/mining.log\n"
+        "### LOGI 1104502 /home/administrator/bigcoin-mine/bigcoin/mine.log\n"
         f"{mtime}\n"
         "2026-11-16T10:00:00Z scan 200000\n2026-11-16T10:00:10Z scan 200000\n"
     )
