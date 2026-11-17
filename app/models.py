@@ -196,6 +196,22 @@ class MachineStatus(Base):
     api_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_hashrate_hs: Mapped[float | None] = mapped_column(Float, nullable=True)
     total_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # §4.6 (003-c2): SRBMiner API unreachable from the container *and* over SSH.
+    api_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class RawCollection(Base):
+    """Last raw ``collect_stats`` output of a machine, masked (§4.7 bis).
+
+    One row per machine (``machine_uuid`` primary key): the diagnostic screen
+    shows it to an admin so a parser can be fixed without an SSH session.
+    """
+
+    __tablename__ = "raw_collections"
+
+    machine_uuid: Mapped[str] = mapped_column(String(36), primary_key=True)
+    ts: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+    stdout: Mapped[str] = mapped_column(Text, default="")
 
 
 class Metric(Base):
@@ -232,6 +248,9 @@ class Coin(Base):
     coingecko_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     coingecko_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     exchanges: Mapped[list] = mapped_column(JSON, default=list)
+    # Pool host substrings used to infer a coin from a miner's pool URL
+    # (``pearl-eu2.luckypool.io`` → PRL).  JSON list of hosts.
+    pool_hosts: Mapped[list] = mapped_column(JSON, default=list)
     manual_price_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     manual_price_eur: Mapped[float | None] = mapped_column(Float, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)

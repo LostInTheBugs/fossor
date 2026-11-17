@@ -27,6 +27,14 @@ header h1{font-size:26px}
 .summary .box{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 16px;min-width:170px;flex:1}
 .summary .k{display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.4px;font-weight:600;margin-bottom:3px}
 .summary .v{font-size:20px;font-weight:700}
+.tokens-title{font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700;margin:0 0 8px 2px}
+.tokens{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-bottom:20px}
+.token{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 16px}
+.token .head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.token .ticker{font-size:16px;font-weight:700}
+.token .algo{color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.3px}
+.token .hs{font-size:21px;font-weight:700;margin-top:6px}
+.token .meta{color:var(--muted);font-size:11.5px;margin-top:4px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(480px,1fr));gap:16px}
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 18px}
 .card.offline{border-color:#5a2a2a}
@@ -65,12 +73,14 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 
   <div class="summary">
     <div class="box"><span class="k">Machines en ligne</span><span class="v" id="sOnline">—</span></div>
-    <div class="box"><span class="k">Hashrate total</span><span class="v" id="sHash">—</span></div>
     <div class="box"><span class="k">Consommation</span><span class="v" id="sPower">—</span></div>
     <div class="box"><span class="k">Coût 24 h</span><span class="v" id="sCost">—</span></div>
     <div class="box"><span class="k">Net 24 h</span><span class="v" id="sNet">—</span></div>
     <div class="box"><span class="k">Dernière collecte</span><span class="v" id="sAge">—</span></div>
   </div>
+
+  <h2 class="tokens-title">Hashrate par token</h2>
+  <div class="tokens" id="tokenCards"></div>
 
   <div class="grid" id="cards"></div>
   <div class="empty" id="emptyMsg" style="display:none">Aucune machine configurée. Ajoutez une machine dans l'onglet Machines.</div>
@@ -155,9 +165,59 @@ function deviceRows(devices) {
 function externalMinersHtml(m) {
   const list = m.external_miners || [];
   if (!list.length) return "";
-  const text = list.map((x) => [x.name, x.version].filter(Boolean).join(" ") +
-    (x.algorithm ? " — " + x.algorithm : "") + (x.pool ? " — " + x.pool : "")).join(", ");
+  const text = list.map((x) => {
+    let t = [x.name, x.version].filter(Boolean).join(" ");
+    if (x.kind === "cpu") t += " (CPU)";
+    if (x.algorithm) t += " — " + x.algorithm;
+    if (x.coin) t += " — " + x.coin;
+    if (x.pool) t += " — " + x.pool;
+    if (x.threads) t += " — " + x.threads + " threads";
+    if (x.cpu_pct !== null && x.cpu_pct !== undefined) t += " — " + x.cpu_pct + " % CPU";
+    return t;
+  }).join(", ");
   return '<div class="err">Mineur externe détecté (non géré par Fossor) : ' + esc(text) + "</div>";
+}
+
+function tokenGroups(machines, byUuid) {
+  const groups = {};
+  machines.forEach((m) => {
+    const coin = (m.coin || "").trim();
+    const algo = (m.algo || "").trim();
+    const hashrate = Number(m.total_hashrate_hs || 0);
+    if (!coin && !algo && !hashrate && !(m.external_miners || []).length) return;
+    const key = (coin || "?").toUpperCase() + "|" + algo.toLowerCase();
+    const g = groups[key] || (groups[key] = {
+      coin: coin, algo: algo, hs: 0, machines: 0, devices: 0, revenue: null
+    });
+    g.machines += 1;
+    g.devices += (m.devices || []).filter((d) => !d.integrated).length;
+    g.hs += hashrate;
+    const energy = byUuid[m.uuid];
+    if (energy && energy.revenue_eur_day !== null && energy.revenue_eur_day !== undefined) {
+      g.revenue = (g.revenue || 0) + Number(energy.revenue_eur_day);
+    }
+  });
+  return Object.values(groups).sort((a, b) => b.hs - a.hs);
+}
+
+function renderTokens(machines, byUuid) {
+  const groups = tokenGroups(machines, byUuid);
+  if (!groups.length) {
+    $("#tokenCards").innerHTML = '<div class="empty">Aucun token miné pour le moment.</div>';
+    return;
+  }
+  $("#tokenCards").innerHTML = groups.map((g) => {
+    const ticker = g.coin ? esc(g.coin.toUpperCase()) : "Coin inconnu";
+    const algo = g.algo ? esc(g.algo) : (g.coin ? "" : "algo inconnu");
+    const gain = g.revenue === null ? "gain inconnu" : "gain " + fmtEur(g.revenue) + " / j";
+    return '<div class="token">' +
+      '<div class="head"><span class="ticker">' + ticker + "</span>" +
+      '<span class="algo">' + algo + "</span></div>" +
+      '<div class="hs">' + fmtHs(g.hs || null) + "</div>" +
+      '<div class="meta">' + g.machines + " machine" + (g.machines > 1 ? "s" : "") +
+      " · " + g.devices + " device" + (g.devices > 1 ? "s" : "") + " · " + gain + "</div>" +
+      "</div>";
+  }).join("");
 }
 
 function card(m, e) {
@@ -183,6 +243,7 @@ function card(m, e) {
     '<table><thead><tr><th>Device</th><th style="text-align:right">Hashrate</th><th style="text-align:right">Temp</th>' +
     '<th style="text-align:right">Ventilo</th><th style="text-align:right">Conso</th><th style="text-align:right">Charge</th></tr></thead>' +
     "<tbody>" + deviceRows(m.devices || []) + "</tbody></table>" +
+    (m.api_error ? '<div class="err">⚠️ ' + esc(m.api_error) + "</div>" : "") +
     (m.error ? '<div class="err">' + esc(m.error) + "</div>" : "") +
     "</div>";
 }
@@ -196,8 +257,8 @@ function render(machines, energy) {
   const online = machines.filter((m) => m.online).length;
   $("#sOnline").textContent = online + " / " + machines.length;
 
-  const hs = machines.reduce((acc, m) => acc + (m.total_hashrate_hs || 0), 0);
-  $("#sHash").textContent = fmtHs(hs || null);
+  // Never sum hashrates of different tokens/algos: one card per token.
+  renderTokens(machines, byUuid);
 
   const watts = machines.reduce((acc, m) => acc + (m.total_power_w || 0), 0);
   $("#sPower").textContent = fmtW(watts || null);

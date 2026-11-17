@@ -146,7 +146,7 @@ def test_ps_miners_finds_api_port_and_ignores_grep():
 
 def test_ps_miners_empty_section():
     ps = parse_ps_miners("")
-    assert ps == {"miner": "", "api_port": None, "miners": []}
+    assert ps == {"miner": "", "api_port": None, "miners": [], "cpu_miners": []}
 
 
 # ── SRBMiner HTTP API ─────────────────────────────────────────────────

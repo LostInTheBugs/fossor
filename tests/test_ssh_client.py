@@ -95,7 +95,7 @@ def _patch_key():
 # ── Whitelist ─────────────────────────────────────────────────────────
 class TestWhitelist:
     def test_only_whitelisted_commands(self):
-        assert set(WHITELISTED_COMMANDS.keys()) == {"identify", "detect_hw", "collect_stats"}
+        assert set(WHITELISTED_COMMANDS.keys()) == {"identify", "detect_hw", "collect_stats", "miner_api"}
 
     def test_collect_stats_has_five_sections_and_no_sudo(self):
         cmd = WHITELISTED_COMMANDS["collect_stats"]

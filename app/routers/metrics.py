@@ -153,6 +153,7 @@ def metrics_live(
             "accepted": status.accepted if status else None,
             "rejected": status.rejected if status else None,
             "api_port": status.api_port if status else None,
+            "api_error": status.api_error if status else None,
             "total_hashrate_hs": total_hs,
             "total_hashrate_human": format_hashrate(total_hs),
             "total_power_w": total_w,
@@ -162,6 +163,37 @@ def metrics_live(
             "external_miners": _external_miners(machine),
         })
     return payload
+
+
+@router.get("/miner-patterns")
+def get_miner_patterns(
+    db: Session = Depends(get_db),
+    _user=Depends(require_login),
+):
+    """Configurable external-miner patterns (display name + process regex)."""
+    from app.external_miners import DEFAULT_PATTERNS, get_patterns
+
+    return {
+        "patterns": get_patterns(db),
+        "defaults": [dict(entry) for entry in DEFAULT_PATTERNS],
+    }
+
+
+@router.put("/miner-patterns")
+def put_miner_patterns(
+    data: dict,
+    db: Session = Depends(get_db),
+    _user=Depends(require_login),
+):
+    """Replace the pattern list (Configuration screen, no new release needed)."""
+    from app.external_miners import set_patterns
+
+    entries = data.get("patterns")
+    if not isinstance(entries, list):
+        raise HTTPException(status_code=400, detail="« patterns » doit être une liste")
+    saved = set_patterns(db, entries)
+    db.commit()
+    return {"patterns": saved}
 
 
 @router.get("/history")

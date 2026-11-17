@@ -334,6 +334,36 @@ async def reset_machine_host_key(
     return result
 
 
+# ── §4.7 bis: last raw collection (diagnostic, admin only) ────────────
+@router.get("/{machine_id}/raw-collect")
+def last_raw_collection(
+    machine_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_login),
+):
+    """Raw ``collect_stats`` output of a machine, already masked.
+
+    Admin only: the screen exists to fix a parser without an SSH session.
+    Wallets are truncated and passwords are ``•••`` (``mask_raw_collect``).
+    """
+    from app.models import RawCollection, User
+
+    user = db.query(User).filter(User.username == current_user).first()
+    if user is None or not user.is_admin:
+        raise HTTPException(status_code=403, detail="Réservé à l'administrateur")
+    machine = db.query(Machine).filter(Machine.id == machine_id).first()
+    if machine is None:
+        raise HTTPException(status_code=404, detail="Machine not found")
+    row = (
+        db.query(RawCollection)
+        .filter(RawCollection.machine_uuid == machine.uuid)
+        .first()
+    )
+    if row is None:
+        return {"ts": None, "stdout": "", "machine": machine.name}
+    return {"ts": row.ts, "stdout": row.stdout, "machine": machine.name}
+
+
 # ── §4.1 bis mode 3: automatic preparation through temporary access ───
 @router.post("/{machine_id}/provision")
 async def provision_machine_account(
@@ -365,7 +395,7 @@ async def provision_machine_account(
             actor=current_user if current_user else "system",
         )
     except ProvisionError as exc:
-        _audit(db, machine, "provision", "fail", str(exc), actor=current_user if current_user else "system")
+        # app.provision already journalised the failure (single audit row).
         raise HTTPException(status_code=400, detail=str(exc))
 
     if result.get("ok"):
@@ -375,7 +405,7 @@ async def provision_machine_account(
             machine.auth_type = "fossor_key"
             db.commit()
             result["machine"] = _mask_secret(machine)
-        _audit(db, machine, "provision", "ok", actor=current_user if current_user else "system")
+        # app.provision wrote the single success row with the logged-in actor.
     return result
 
 

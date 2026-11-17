@@ -24,7 +24,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.hw_parser import norm_bus
-from app.stats_parser import merge_srbminer, parse_collect_stats, parse_srbminer_api
+from app.stats_parser import (
+    merge_srbminer,
+    parse_collect_stats,
+    parse_srbminer_api,
+)
 
 logger = logging.getLogger("fossor.collector")
 
@@ -68,6 +72,67 @@ async def fetch_srbminer(host: str, port: int) -> dict[str, Any] | None:
         return parse_srbminer_api(response.text)
     except Exception:
         return None
+
+
+# ── Settings read per call (patterns, coin pool hosts) ────────────────
+def _patterns(db) -> list[dict[str, str]]:
+    from app.external_miners import get_patterns
+
+    return get_patterns(db)
+
+
+def _coin_hosts(db) -> dict[str, str]:
+    """Pool host substring → ticker, from the coin catalogue."""
+    from app.models import Coin
+
+    hosts: dict[str, str] = {}
+    for coin in db.query(Coin).all():
+        for host in (coin.pool_hosts or []):
+            key = str(host or "").strip().lower()
+            if key:
+                hosts[key] = coin.ticker
+    return hosts
+
+
+def _store_raw_collection(db, machine, stdout: str) -> None:
+    """Keep the last raw collection, masked (admin diagnostic screen)."""
+    from app.external_miners import mask_raw_collect
+    from app.models import RawCollection
+
+    if not machine.uuid:
+        machine.uuid = str(uuid_lib.uuid4())
+    row = (
+        db.query(RawCollection)
+        .filter(RawCollection.machine_uuid == machine.uuid)
+        .first()
+    )
+    if row is None:
+        row = RawCollection(machine_uuid=machine.uuid)
+        db.add(row)
+    row.ts = _now()
+    row.stdout = mask_raw_collect(stdout or "")
+
+
+async def _fetch_miner_api(machine, port: int) -> tuple[dict[str, Any] | None, str | None]:
+    """Direct GET, then the SSH relay (SRBMiner bound to 127.0.0.1).
+
+    Returns ``(api, error)``: ``(payload, None)`` on success and
+    ``(None, "API du mineur injoignable")`` when both paths fail.
+    """
+    api = await fetch_srbminer(machine.host, port)
+    if api:
+        return api, None
+    try:
+        from app.ssh_client import ssh_miner_api
+
+        raw = await ssh_miner_api(machine, port)
+    except Exception:
+        raw = None
+    if raw and raw.get("ok"):
+        api = parse_srbminer_api(raw.get("stdout") or "")
+        if api:
+            return api, None
+    return None, "API du mineur injoignable"
 
 
 # ── Storage ───────────────────────────────────────────────────────────
@@ -200,6 +265,7 @@ def _store_metrics(db, machine, stats: dict[str, Any], ts: str) -> int:
     status.api_port = stats.get("api_port")
     status.total_hashrate_hs = _numeric(stats.get("total_hashrate_hs"))
     status.total_power_w = _numeric(stats.get("total_power_w"))
+    status.api_error = stats.get("api_error")
     try:
         from app import notifications
 
@@ -229,7 +295,7 @@ def _store_offline(db, machine, error: str, ts: str) -> None:
     status.online = False
     status.error = (error or "collecte impossible")[:500]
     for field in ("miner", "algo", "coin", "uptime_s", "accepted", "rejected",
-                  "api_port", "total_hashrate_hs", "total_power_w"):
+                  "api_port", "api_error", "total_hashrate_hs", "total_power_w"):
         setattr(status, field, None if field not in ("miner", "algo", "coin") else "")
     try:
         from app import notifications
@@ -314,19 +380,27 @@ async def collect_machine(machine_id: int) -> dict[str, Any]:
             logger.info("machine %s hors ligne: %s", machine.name, error)
             return {"machine_id": machine_id, "name": machine.name, "online": False, "error": error}
 
-        stats = parse_collect_stats(raw.get("stdout", ""))
-        if stats.get("miners") is not None:
-            from app.devices import set_external_miners
+        stats = parse_collect_stats(
+            raw.get("stdout", ""), patterns=_patterns(db), coin_hosts=_coin_hosts(db)
+        )
+        from app.devices import mark_external_devices, set_external_miners
 
-            set_external_miners(machine, stats.get("miners") or [])
-            db.commit()
+        miners = stats.get("miners") or []
+        set_external_miners(machine, miners)
+        _store_raw_collection(db, machine, raw.get("stdout", ""))
+        db.commit()
         # §4.2: first collection of a machine without devices → detect once,
         # so this round's GPU metrics attach by PCI bus instead of NULL.
         await _ensure_devices(db, machine)
+        # Occupancy is refreshed every round, not only on the first detect.
+        mark_external_devices(db, machine, miners)
+        db.commit()
         if stats.get("api_port"):
-            api = await fetch_srbminer(machine.host, int(stats["api_port"]))
+            api, api_error = await _fetch_miner_api(machine, int(stats["api_port"]))
             if api:
                 stats = merge_srbminer(stats, api)
+            else:
+                stats["api_error"] = api_error
 
         rows = _store_metrics(db, machine, stats, ts)
         return {

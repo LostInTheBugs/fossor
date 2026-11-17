@@ -165,6 +165,20 @@ header h1{font-size:26px}
     </div>
 
     <div class="card">
+      <h2>Mineurs externes — motifs de détection</h2>
+      <div class="sub">Nom affiché + motif (expression régulière cherchée dans la ligne de commande). La collecte marque le device occupé et remonte l'algo, le pool, les threads et le coin déduit du pool. Ajoutez ici un mineur maison sans attendre une nouvelle version.</div>
+      <table class="devtab" style="width:100%">
+        <thead><tr><th>Nom affiché</th><th>Motif du processus</th><th style="width:36px"></th></tr></thead>
+        <tbody id="patBody"></tbody>
+      </table>
+      <div class="actions">
+        <button class="btn outline" id="patAdd">+ Ajouter un motif</button>
+        <button class="btn" id="patSave">Enregistrer les motifs</button>
+        <span id="patState" class="sub"></span>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>Mise à jour</h2>
       <div class="sub">Vérification automatique des releases GitHub (intervalle réglable par <span class="mono">FOSSOR_UPDATE_CHECK_INTERVAL</span>, 0 = désactivé).</div>
       <dl class="kv">
@@ -867,6 +881,45 @@ setInterval(()=>{
   updTick++; if(updTick%(busy?1:6)!==0)return;
   if(document.visibilityState==='visible')loadUpdate();
 },5000);
+
+function patRow(name,pattern){
+  const tr=document.createElement('tr');
+  const td1=document.createElement('td');
+  const i1=document.createElement('input');
+  i1.className='pat-name';i1.value=name||'';i1.placeholder='Nom affiché';i1.style.width='100%';
+  const td2=document.createElement('td');
+  const i2=document.createElement('input');
+  i2.className='pat-regex';i2.value=pattern||'';i2.placeholder='motif (regex)';i2.style.width='100%';
+  const td3=document.createElement('td');
+  const b=document.createElement('button');
+  b.className='btn sm danger';b.textContent='✕';b.title='Retirer ce motif';
+  b.onclick=()=>tr.remove();
+  td1.appendChild(i1);td2.appendChild(i2);td3.appendChild(b);
+  tr.append(td1,td2,td3);
+  return tr;
+}
+const loadPatterns=async()=>{
+  const r=await fetch('/api/metrics/miner-patterns',{credentials:'include'});
+  if(!r.ok)return;
+  const d=await r.json();
+  const body=$('#patBody');
+  body.innerHTML='';
+  (d.patterns||[]).forEach(p=>body.appendChild(patRow(p.name,p.pattern)));
+};
+$('#patAdd').onclick=()=>{$('#patBody').appendChild(patRow('',''));};
+$('#patSave').onclick=async()=>{
+  const patterns=[...document.querySelectorAll('#patBody tr')].map(tr=>({
+    name:tr.querySelector('.pat-name').value.trim(),
+    pattern:tr.querySelector('.pat-regex').value.trim()
+  })).filter(p=>p.name&&p.pattern);
+  const r=await fetch('/api/metrics/miner-patterns',{method:'PUT',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({patterns})});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){$('#patState').textContent=d.detail||'Refusé';return;}
+  $('#patState').textContent=(d.patterns||[]).length+' motif(s) enregistré(s)';
+  await loadPatterns();
+};
+loadPatterns();
 </script>
 </body>
 </html>
