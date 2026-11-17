@@ -191,7 +191,7 @@ header h1{font-size:26px}
       </dl>
       <div class="actions">
         <button class="btn outline" id="checkBtn">Vérifier maintenant</button>
-        <button class="btn" id="applyBtn" disabled>Mettre à jour</button>
+        <button class="btn" id="updateApplyBtn" disabled>Mettre à jour</button>
       </div>
       <div id="updError" class="empty" style="margin-top:10px;color:var(--red)"></div>
       <div id="updBanner" class="empty" style="display:none;margin-top:10px;border:1px solid var(--warn,#a60);border-radius:8px;padding:10px"></div>
@@ -229,7 +229,7 @@ header h1{font-size:26px}
       </div>
       <div class="actions">
         <button class="btn outline" id="previewBtn">Aperçu des différences</button>
-        <button class="btn" id="applyBtn" disabled>Appliquer</button>
+        <button class="btn" id="importApplyBtn" disabled>Appliquer</button>
       </div>
       <div class="diff" id="diffBox"></div>
     </div>
@@ -323,7 +323,7 @@ const esc=s=>String(s==null?'':s).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&
 
 const renderUpdater=(d)=>{
   const u=d.updater||{}, a=d.auto||{};
-  const btn=$('#applyBtn');
+  const btn=$('#updateApplyBtn');
   $('#updError').textContent=d.error||'';
   const banner=$('#updBanner');
   if(!u.present){
@@ -385,12 +385,12 @@ const loadUpdate=async()=>{
     ? '<div class="notes">'+d.notes.map(n=>`<div class="note"><h3>${esc(n.version)} — ${esc(n.name)}</h3><div class="body">${esc(n.body||'(pas de notes)')}</div></div>`).join('')+'</div>'
     : '<div class="empty">Aucune note de version manquante.</div>';
 };
-$('#applyBtn').onclick=async()=>{
+$('#updateApplyBtn').onclick=async()=>{
   const d=await (await fetch('/api/update/status',{credentials:'include'})).json();
   const target=d.latest_version;
   if(!target)return;
   if(!confirm(`Mettre à jour vers ${target} ?\n\nUne sauvegarde de la base et de la configuration est prise avant la bascule ; en cas d'échec du contrôle de santé, l'ancienne version est restaurée automatiquement.`))return;
-  $('#applyBtn').disabled=true;
+  $('#updateApplyBtn').disabled=true;
   const r=await fetch('/api/update/apply',{method:'POST',credentials:'include',
     headers:{'Content-Type':'application/json'},body:JSON.stringify({target})});
   const body=await r.json().catch(()=>({}));
@@ -475,16 +475,16 @@ $('#previewBtn').onclick=async()=>{
   const r=await sendImport(true);
   if(!r)return;
   renderDiff(r.diff);
-  $('#applyBtn').disabled=false;
+  $('#importApplyBtn').disabled=false;
   toast('Aperçu calculé — rien n\'a été écrit');
 };
-$('#applyBtn').onclick=async()=>{
+$('#importApplyBtn').onclick=async()=>{
   if(!importedDoc){toast('Aperçu requis avant d\'appliquer','err');return;}
   if(!confirm('Appliquer l\'import ('+$('#impMode').value+') ? Une sauvegarde sera créée avant.'))return;
   const r=await sendImport(false);
   if(!r)return;
   toast('Import appliqué — sauvegarde : '+r.backup);
-  $('#applyBtn').disabled=true;
+  $('#importApplyBtn').disabled=true;
   await loadUpdate();
 };
 
@@ -877,7 +877,7 @@ loadUpdate();
 // à jour, toutes les 30 s au repos — l'écran n'a pas besoin de rechargement.
 let updTick=0;
 setInterval(()=>{
-  const busy=document.querySelector('#applyBtn')&&/en cours/.test($('#applyBtn').textContent||'');
+  const busy=document.querySelector('#updateApplyBtn')&&/en cours/.test($('#updateApplyBtn').textContent||'');
   updTick++; if(updTick%(busy?1:6)!==0)return;
   if(document.visibilityState==='visible')loadUpdate();
 },5000);

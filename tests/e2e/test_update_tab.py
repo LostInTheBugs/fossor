@@ -41,7 +41,7 @@ async def test_update_screen_without_updater(e2e_server):
         # 1. Sans compagnon : bandeau explicite et bouton désactivé.
         banner = await page.inner_text("#updBanner")
         assert "fossor-updater" in banner
-        assert await page.is_disabled("#applyBtn")
+        assert await page.is_disabled("#updateApplyBtn")
 
         # 2. La plage horaire est lue depuis les réglages, pas codée en dur.
         assert await page.input_value("#autoStart") == "03:00"

@@ -4,6 +4,21 @@
 
 All notable changes to fossor are documented in this file.
 
+## [2026.11.003-c3] — 2026-11-17
+
+### Fixed
+- **Bouton « Mettre à jour » inopérant** : le bouton de la mise à jour et celui de
+  l'import de configuration partageaient `id="applyBtn"` ; le gestionnaire de l'import
+  écrasait celui de la mise à jour et répondait « Aperçu requis avant d'appliquer ».
+  Ids uniques `updateApplyBtn` / `importApplyBtn`, sélecteurs JS et testeur « en cours »
+  alignés.
+- **Garde-fou** : test d'unicité des `id` sur chaque page de `static/` (`nav.js` inclus)
+  et d'absence de deux gestionnaires de clic sur un même élément ; e2e du clic réel sur
+  « Mettre à jour vers X » (requête `POST /api/update/apply` + contenu de
+  `request.json`) et de l'import avec et sans aperçu.
+- **Vérification GitHub surchargeable** par `FOSSOR_RELEASES_URL` pour les tests e2e
+  hors ligne.
+
 ## [2026.11.003-c2] — 2026-11-17
 
 ### Fixed
