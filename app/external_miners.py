@@ -704,6 +704,8 @@ def detect_running_miners(
     * the coin comes from the pool host (normalised), else from the wallet
       prefix, and HiveOS spellings are folded through the alias table.
     """
+    from app.coins import coin_for_algo, coin_for_pool
+
     rows = [row for row in parse_ps_rows(section) if _is_real_row(row)]
     solo = detect_solo_miners(rows, coin_names)
     solo_pids: set[int] = set()
@@ -803,8 +805,14 @@ def detect_running_miners(
         if not coin:
             coin = infer_coin(miner.get("pool", ""), hosts)
         if not coin:
+            # Built-in table (003-c6): a real install started with an empty
+            # coin catalogue, so pool → coin must not depend on it.
+            coin = coin_for_pool(miner.get("pool", ""))
+        if not coin:
             wallet = _flag_value((miner.get("cmd") or "").split(), WALLET_FLAGS)
             coin = infer_coin_from_wallet(wallet, tickers)
+        if not coin:
+            coin = coin_for_algo(miner.get("algorithm", ""))
         miner["coin"] = normalize_coin(coin, coin_aliases)
 
     cpu_miners = [m for m in miners if m["kind"] in ("cpu", "solo")]

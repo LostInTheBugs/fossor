@@ -1,0 +1,10 @@
+{"rig_name":"SRBMiner-Multi-Rig","miner_version":"3.8.3","mining_time":381818,
+ "total_cpu_workers":0,"total_gpu_workers":1,"total_workers":1,
+ "cpu_devices":[{"id":0,"device":"cpu0","model":"AMD Ryzen 5 3600 6-Core Processor","package_power":88.96}],
+ "gpu_devices":[{"id":0,"topology_id":"0000:05:00.0","bus_id":5,"device":"gpu0","vendor":"nvidia","model":"nvidia_geforce_rtx_4080","temperature":66,"asic_power":300}],
+ "algorithms":[{"id":0,"name":"pearlhash",
+   "pool":{"pool":"pearl-eu2.luckypool.io:3360","wallet":"prl1testwallet000000000000000000","uptime":278516,"difficulty":1500000.0,"latency":61},
+   "shares":{"total":12610,"accepted":12610,"rejected":0,"avg_find_time":30},
+   "hashrate":{"1min":215249537473082.44,"15min":216130523746758.8,"1hr":216318104529150.44,"6hr":216462549066892.75,
+               "cpu":{"total":0.0},"gpu":{"gpu0":215354020158174.75,"total":215354020158174.75}},
+   "gpu_accepted_shares":{"gpu0":12610},"gpu_rejected_shares":{"gpu0":0}}]}

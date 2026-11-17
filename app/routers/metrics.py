@@ -175,6 +175,13 @@ def metrics_live(
             values = [d["power_w"] for d in device_rows if d["power_w"]]
             total_w = sum(values) if values else None
 
+        miners = _external_miners(machine)
+        groups = _coin_groups(
+            miners,
+            status.coin if status else "",
+            status.algo if status else "",
+            total_hs,
+        )
         payload.append({
             "uuid": machine.uuid,
             "name": machine.name,
@@ -188,6 +195,7 @@ def metrics_live(
             "miner": status.miner if status else "",
             "algo": status.algo if status else "",
             "coin": status.coin if status else "",
+            "coins": [group["coin"] for group in groups if group["coin"]],
             "uptime_s": status.uptime_s if status else None,
             "accepted": status.accepted if status else None,
             "rejected": status.rejected if status else None,
@@ -199,13 +207,8 @@ def metrics_live(
             "last_ts": status.ts if status else None,
             "age_s": _age_seconds(status.ts if status else None, now),
             "devices": device_rows,
-            "external_miners": _external_miners(machine),
-            "coin_groups": _coin_groups(
-                _external_miners(machine),
-                status.coin if status else "",
-                status.algo if status else "",
-                total_hs,
-            ),
+            "external_miners": miners,
+            "coin_groups": groups,
         })
     return payload
 

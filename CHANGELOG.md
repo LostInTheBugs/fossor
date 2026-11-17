@@ -4,6 +4,29 @@
 
 All notable changes to fossor are documented in this file.
 
+## [2026.11.003-c6] — 2026-11-17
+
+### Fixed
+- **Coin vide sur une base réelle** : la table `coins` de la production était
+  vide, et la correspondance pool → coin ne vivait que dans le catalogue : la
+  recherche ne trouvait donc jamais rien et SRBMiner, wam-miner, cpuminer
+  affichaient un coin vide. Une table **intégrée au code** (`app/coins.py`)
+  fait désormais foi : `pearl*.luckypool.io` → PRL, `pool.korsh.org` → KSH,
+  `pool.wamcoin.org` → WAM, et `pearlhash` → PRL en secours. Le catalogue la
+  complète ou la surcharge. Au démarrage, un catalogue vide reçoit les coins
+  de base (PRL, KSH, WAM, BIG avec leur algorithme).
+- **Coin de la machine** : une machine qui lance plusieurs mineurs n'a pas
+  « un » coin. Le champ `coin` ne vient plus que de HiveOS ; l'API expose
+  `coins`, la liste des coins de la machine, affichée dans l'interface.
+- **Hashrate SRBMiner illisible** : le parseur ne connaissait que le format
+  plat. La charge réelle de SRBMiner-MULTI 3.8.3 (`algorithms[]`) est
+  maintenant lue : total = `hashrate.gpu.total` + `hashrate.cpu.total`,
+  hashrate par GPU rattaché au device par `gpu_devices[].topology_id` /
+  `bus_id` (PCI), algo, pool, shares acceptées/rejetées et `asic_power` par
+  carte. Un mineur à plusieurs algorithmes donne une ligne par algorithme.
+  Le format plat déjà géré (HiveOS, anciens SRBMiner) reste lu. Le wallet de
+  la réponse n'est jamais stocké ni affiché.
+
 ## [2026.11.003-c5] — 2026-11-17
 
 ### Fixed

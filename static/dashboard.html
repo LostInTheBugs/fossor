@@ -237,7 +237,8 @@ function renderTokens(machines, byUuid) {
 }
 
 function card(m, e) {
-  const meta = [m.miner || "aucun mineur", m.coin || "", m.algo || ""].filter(Boolean).join(" · ");
+  const coinLabel = (Array.isArray(m.coins) && m.coins.length) ? m.coins.join(" · ") : (m.coin || "");
+  const meta = [m.miner || "aucun mineur", coinLabel, m.algo || ""].filter(Boolean).join(" · ");
   const api = m.api_port ? " · API " + m.api_port : "";
   e = e || {};
   return '<div class="card' + (m.collected && !m.online ? " offline" : "") + '">' +

@@ -422,7 +422,11 @@ def parse_collect_stats(
         })
 
     hive_coin = normalize_coin(hive.get("coin", ""), coin_aliases)
-    inferred = next((m["coin"] for m in ps["miners"] if m.get("coin")), "")
+    coins = []
+    for miner in ps["miners"]:
+        ticker = str(miner.get("coin") or "").strip().upper()
+        if ticker and ticker not in coins:
+            coins.append(ticker)
 
     total_hs = _first(hive.get("total_hashrate_hs"), None)
     if total_hs is None:
@@ -436,7 +440,8 @@ def parse_collect_stats(
         "algo": hive.get("algo", "") or next(
             (m["algorithm"] for m in ps["miners"] if m.get("algorithm")), ""
         ),
-        "coin": hive_coin or inferred,
+        "coin": hive_coin,
+        "coins": coins,
         "uptime_s": _first(uptime, hive.get("uptime_s")),
         "accepted": hive.get("accepted"),
         "rejected": hive.get("rejected"),
@@ -473,6 +478,13 @@ def _hashrate_value(value: Any) -> float | None:
 
 
 def parse_srbminer_api(payload: str | dict[str, Any]) -> dict[str, Any] | None:
+    """SRBMiner-MULTI API — real 3.8.x shape first (``app.srbminer_api``)."""
+    from app.srbminer_api import parse_srbminer_api as _parse
+
+    return _parse(payload)
+
+
+def _parse_srbminer_api_legacy(payload: str | dict[str, Any]) -> dict[str, Any] | None:
     """Parse SRBMiner-Multi's HTTP API payload (tolerant to key variants).
 
     The real payload shape is not documented with a stable schema; this reads
@@ -536,6 +548,13 @@ def parse_srbminer_api(payload: str | dict[str, Any]) -> dict[str, Any] | None:
 
 
 def merge_srbminer(stats: dict[str, Any], api: dict[str, Any] | None) -> dict[str, Any]:
+    """Complete a parsed snapshot with API data (``app.srbminer_api``)."""
+    from app.srbminer_api import merge_srbminer as _merge
+
+    return _merge(stats, api)
+
+
+def _merge_srbminer_legacy(stats: dict[str, Any], api: dict[str, Any] | None) -> dict[str, Any]:
     """Complete a parsed snapshot with SRBMiner API data (never overwrites)."""
     if not api:
         return stats

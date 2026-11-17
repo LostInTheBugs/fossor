@@ -1,0 +1,13 @@
+{"rig_name":"SRBMiner-Multi-Athlon","miner_version":"3.8.3","mining_time":160627,
+ "total_cpu_workers":0,"total_gpu_workers":3,"total_workers":3,
+ "cpu_devices":[{"id":0,"device":"cpu0","model":"AMD Athlon 3000G with Radeon Vega Graphics","package_power":35.0}],
+ "gpu_devices":[
+   {"id":0,"topology_id":"0000:08:00.0","bus_id":8,"device":"gpu0","vendor":"nvidia","model":"nvidia_geforce_rtx_3060_ti","temperature":61,"asic_power":129},
+   {"id":1,"topology_id":"0000:09:00.0","bus_id":9,"device":"gpu1","vendor":"nvidia","model":"nvidia_geforce_rtx_3060_ti","temperature":63,"asic_power":131},
+   {"id":2,"topology_id":"0000:0a:00.0","bus_id":10,"device":"gpu2","vendor":"nvidia","model":"nvidia_geforce_rtx_3060_ti","temperature":64,"asic_power":133}],
+ "algorithms":[{"id":0,"name":"pearlhash",
+   "pool":{"pool":"pearl-eu2.luckypool.io:3360","wallet":"prl1testwallet000000000000000000","uptime":160600,"difficulty":1500000.0,"latency":44},
+   "shares":{"total":4210,"accepted":4205,"rejected":5,"avg_find_time":38},
+   "hashrate":{"1min":71389744120115.31,"15min":71401288300041.5,"1hr":71255800412777.02,"6hr":71002211940001.25,
+               "cpu":{"total":0.0},"gpu":{"gpu0":23802117844002.44,"gpu1":23791588222100.02,"gpu2":23796038054012.85,"total":71389744120115.31}},
+   "gpu_accepted_shares":{"gpu0":1402,"gpu1":1401,"gpu2":1402},"gpu_rejected_shares":{"gpu0":2,"gpu1":1,"gpu2":2}}]}

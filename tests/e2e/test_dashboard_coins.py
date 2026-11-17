@@ -20,17 +20,22 @@ ADMIN_PASSWORD = "adminpass"
 # machine → mineurs (nom, coin, hashrate, workers)
 MINERS = {
     "e2e-rig": [
-        {"name": "SRBMiner-MULTI", "coin": "PRL", "hashrate_hs": 6.5e10, "count": 1},
+        # 2026.11.003-c6 : un SRBMiner multi-algos = une ligne par algo.
+        {"name": "SRBMiner-MULTI", "coin": "PRL", "algorithm": "pearlhash",
+         "hashrate_hs": 6.5e10, "count": 1},
+        {"name": "SRBMiner-MULTI", "coin": "WAM", "algorithm": "yespower",
+         "hashrate_hs": 2.1e9, "count": 1},
+        {"name": "SRBMiner-MULTI", "coin": "KSH", "algorithm": "yespower",
+         "hashrate_hs": 1.4e9, "count": 1},
         {"name": "wam-miner", "coin": "WAM", "count": 1},
         {"name": "Minage solo (nœud)", "coin": "KSH", "count": 1, "workers": 1},
     ],
     "e2e-ryzen": [
-        {"name": "SRBMiner", "coin": "PRL", "hashrate_hs": 1.25e9, "count": 1},
-        {"name": "supryolo", "coin": "OMS", "count": 1},
+        {"name": "SRBMiner", "coin": "PRL", "hashrate_hs": 2.1535e14, "count": 1},
         {"name": "Minage solo (nœud)", "coin": "BIG", "count": 1, "workers": 11},
     ],
     "e2e-athlon": [
-        {"name": "SRBMiner", "coin": "PRL", "hashrate_hs": 9.5e8, "count": 1},
+        {"name": "SRBMiner", "coin": "PRL", "hashrate_hs": 7.1389e13, "count": 1},
         {"name": "cpuminer", "coin": "KSH", "count": 1},
     ],
 }
@@ -41,6 +46,9 @@ def seed_state() -> None:
     path = f"{E2E_DATA_DIR}/fossor.db"
     db = sqlite3.connect(path, timeout=10)
     try:
+        # 003-c6 : le vrai serveur (démarrage) a créé les coins de base.
+        tickers = {row[0] for row in db.execute("SELECT ticker FROM coins").fetchall()}
+        assert {"PRL", "KSH", "WAM", "BIG"} <= tickers, tickers
         rows = db.execute("SELECT id, name FROM machines").fetchall()
         by_name = {name: machine_id for machine_id, name in rows}
         for name, miners in MINERS.items():
@@ -124,7 +132,7 @@ async def test_dashboard_one_card_per_coin(e2e_server):
         by_ticker = {card["ticker"]: card for card in cards}
 
         # Une carte par coin, jamais une carte pour le rig multi-coins.
-        assert set(by_ticker) == {"PRL", "KSH", "WAM", "BIG", "OMS"}, by_ticker
+        assert set(by_ticker) == {"PRL", "KSH", "WAM", "BIG"}, by_ticker
         assert "3 machines" in by_ticker["PRL"]["meta"]      # rig + ryzen + athlon
         assert "2 machines" in by_ticker["KSH"]["meta"]      # rig + athlon
         assert by_ticker["WAM"]["meta"].startswith("1 machine ")  # rig seul
