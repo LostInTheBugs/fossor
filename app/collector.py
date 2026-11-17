@@ -17,6 +17,7 @@ Design
 from __future__ import annotations
 
 import asyncio
+import json as json_lib
 import logging
 import os
 import uuid as uuid_lib
@@ -251,6 +252,77 @@ async def _ensure_devices(db, machine) -> bool:
     return True
 
 
+async def _enrich_cpu_state(db, machine, raw_stdout: str, stats: dict[str, Any]) -> None:
+    """Hashrate CPU et état du CPU (2026.11.003-c7).
+
+    One extra read-only probe per round: the miner APIs and logs found in the
+    command lines, the CPU counters (``/proc/stat`` twice), the hwmon sensors
+    and two RAPL readings.  Every CPU miner ends up with a hashrate **or** an
+    explicit reason; the ``cpu`` device gets charge, temperature, power and the
+    summed CPU hashrate.
+    """
+    from app.cpu_stats import (
+        attach_cpu_hashrates,
+        cpu_state_with,
+        parse_cpu_report,
+        plan_cpu_probes,
+    )
+    from app.ssh_client import ssh_collect_cpu
+    from app.stats_parser import split_sections
+
+    sections = split_sections(raw_stdout)
+    probes = plan_cpu_probes(sections["PS_MINERS"])
+    report: dict[str, Any] = {"state": {}, "logs": {}, "apis": {}, "nodes": {}}
+    if probes["logs"] or probes["apis"] or probes["nodes"]:
+        try:
+            raw = await ssh_collect_cpu(machine, probes)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.info("sonde CPU de %s en échec: %s", machine.name, exc)
+            raw = {"ok": False, "error": str(exc)}
+        if raw.get("ok"):
+            report = parse_cpu_report(raw.get("stdout") or "")
+
+    miners = stats.get("miners") or []
+    attach_cpu_hashrates(miners, probes, report)
+    cpu_miners = [m for m in miners if str(m.get("kind") or "") in ("cpu", "solo")]
+
+    cputemp = _hive_cputemp(sections["HIVE_STAT"])
+    cpu = cpu_state_with(report, cputemp, stats.get("cpu_package_power_w"), cpu_miners)
+    stats["cpu"] = cpu
+
+    for item in stats.get("devices") or []:
+        if item.get("kind") != "cpu":
+            continue
+        item["load_pct"] = cpu.get("load_pct")
+        item["temp_c"] = _first_number(item.get("temp_c"), cpu.get("temp_c"))
+        item["power_w"] = _first_number(item.get("power_w"), cpu.get("power_w"))
+        item["hashrate_hs"] = cpu.get("hashrate_hs")
+
+
+def _first_number(*values: Any) -> float | None:
+    for value in values:
+        if isinstance(value, (int, float)):
+            return float(value)
+    return None
+
+
+def _hive_cputemp(hive_stat: str) -> float | None:
+    """``cputemp`` of ``last_stat.json`` (HiveOS) — first value only."""
+    import json
+
+    try:
+        data = json.loads(hive_stat or "{}")
+    except (TypeError, ValueError):
+        return None
+    temps = data.get("temp") if isinstance(data, dict) else None
+    cputemp = data.get("cputemp") if isinstance(data, dict) else None
+    for value in (cputemp if isinstance(cputemp, list) else [], temps if isinstance(temps, list) else []):
+        for entry in value:
+            if isinstance(entry, (int, float)) and entry > 0:
+                return float(entry)
+    return None
+
+
 def _store_metrics(db, machine, stats: dict[str, Any], ts: str) -> int:
     """Insert one metric row per parsed device, then upsert ``machine_status``."""
     from app.models import Device, MachineStatus, Metric
@@ -317,6 +389,10 @@ def _store_metrics(db, machine, stats: dict[str, Any], ts: str) -> int:
     status.total_hashrate_hs = _numeric(stats.get("total_hashrate_hs"))
     status.total_power_w = _numeric(stats.get("total_power_w"))
     status.api_error = stats.get("api_error")
+    # 2026.11.003-c7: état du CPU + hashrate par mineur CPU.
+    status.cpu_json = (
+        json_lib.dumps(stats.get("cpu"), ensure_ascii=False) if stats.get("cpu") else None
+    )
     try:
         from app import notifications
 
@@ -484,6 +560,7 @@ async def collect_machine(machine_id: int) -> dict[str, Any]:
                 stats["api_error"] = None
 
         # Miners as displayed (coin + per-miner hashrate included).
+        await _enrich_cpu_state(db, machine, raw.get("stdout", ""), stats)
         set_external_miners(machine, stats.get("miners") or [])
         rows = _store_metrics(db, machine, stats, ts)
         return {

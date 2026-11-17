@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import tempfile
 import textwrap
 from typing import Any
@@ -618,6 +619,154 @@ async def ssh_collect_stats(machine: Any, actor: str = "system") -> dict[str, An
         pinned_fp=pinned_fp,
         pinned_public_key=pinned_public_key,
         command=WHITELISTED_COMMANDS["collect_stats"],
+        machine_id=machine.id,
+        audit_kind="collect",
+        actor=actor,
+    )
+
+
+CPU_PROBE_PATH_RE = re.compile(r"^/[A-Za-z0-9_.\-/]{1,300}$")
+CPU_PROBE_BIN_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,80}$")
+
+
+def cpu_probe_command(probes: dict[str, Any]) -> str:
+    """Whitelisted, read-only ``collect_cpu`` command built from *probes*.
+
+    Every interpolated value is validated here: an absolute path with no shell
+    metacharacter, a digit port, a safe basename.  Anything else is dropped, so
+    a hostile command line can never reach the shell of the machine.
+    """
+    from app.cpu_stats import DEFAULT_API_PORTS  # noqa: F401  (documented coupling)
+
+    lines = [
+        # Read-only helper: the plain run first, sudo only when needed (fossor
+        # account with a NOPASSWD sudoers entry), never an interactive prompt.
+        "RD() { \"$@\" 2>/dev/null || sudo -n \"$@\" 2>/dev/null; }",
+        "echo '### PROC_STAT'",
+        "head -n 8 /proc/stat 2>/dev/null",
+        "echo '### POWER'",
+        "for f in /sys/class/powercap/*/energy_uj; do [ -r \"$f\" ] && "
+        "printf '%s|%s\\n' \"$f\" \"$(cat \"$f\" 2>/dev/null)\"; done 2>/dev/null",
+        "echo '### CPUINFO'",
+        "grep -E '^(processor|cpu MHz|model name)' /proc/cpuinfo 2>/dev/null",
+        "echo '### FREQ'",
+        "cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq 2>/dev/null",
+        "echo '### HWMON'",
+        "for d in /sys/class/hwmon/hwmon*/; do "
+        "n=$(cat \"${d}name\" 2>/dev/null); "
+        "for f in \"${d}\"temp*_input; do [ -r \"$f\" ] || continue; "
+        "l=$(cat \"${f%_input}_label\" 2>/dev/null); "
+        "printf '%s|%s|%s\\n' \"$n\" \"$l\" \"$(cat \"$f\" 2>/dev/null)\"; done; "
+        "done 2>/dev/null",
+        "sleep 1",
+        "echo '### PROC_STAT2'",
+        "head -n 8 /proc/stat 2>/dev/null",
+        "echo '### POWER2'",
+        "for f in /sys/class/powercap/*/energy_uj; do [ -r \"$f\" ] && "
+        "printf '%s|%s\\n' \"$f\" \"$(cat \"$f\" 2>/dev/null)\"; done 2>/dev/null",
+    ]
+
+    for probe in probes.get("logs") or []:
+        path = str(probe.get("path") or "")
+        if not CPU_PROBE_PATH_RE.match(path):
+            continue
+        lines += [
+            f"echo '### LOG {path}'",
+            f"stat -c %Y {path} 2>/dev/null",
+            f"RD tail -n 80 {path} 2>/dev/null",
+        ]
+
+    # Log deduced from the process's own stdout/stderr redirection, including
+    # the one a systemd unit sets (``StandardOutput=append:…``): the symlink
+    # /proc/<pid>/fd/1 is the redirection, without any path hard-coded.
+    pids = [
+        int(probe["pid"]) for probe in (probes.get("fds") or [])
+        if isinstance(probe.get("pid"), int) and probe["pid"] > 0
+    ]
+    if pids:
+        targets = " ".join(str(pid) for pid in pids)
+        lines += [
+            f"for p in {targets}; do "
+            "f=$(readlink -f /proc/$p/fd/1 2>/dev/null); "
+            "g=$(readlink -f /proc/$p/fd/2 2>/dev/null); "
+            "for c in \"$f\" \"$g\"; do "
+            "case \"$c\" in /var/log/*|/root/*|/home/*|/tmp/*) "
+            "[ -f \"$c\" ] && echo \"### LOGI $p $c\" && stat -c %Y \"$c\" 2>/dev/null && "
+            "RD tail -n 80 \"$c\" 2>/dev/null;; esac; done; done 2>/dev/null",
+        ]
+
+    for probe in probes.get("apis") or []:
+        try:
+            port = int(probe.get("port"))
+        except (TypeError, ValueError):
+            continue
+        if not 1 <= port <= 65535:
+            continue
+        lines += [
+            f"echo '### API {port}'",
+            f"curl -s -m 4 http://127.0.0.1:{port}/summary 2>/dev/null || "
+            f"curl -s -m 4 http://127.0.0.1:{port}/ 2>/dev/null",
+        ]
+
+    for probe in probes.get("nodes") or []:
+        key = str(probe.get("key") or "")
+        if not CPU_PROBE_BIN_RE.match(key):
+            continue
+        cli = str(probe.get("cli") or "")
+        datadir = str(probe.get("datadir") or "")
+        pid = probe.get("pid")
+        cli = cli if CPU_PROBE_PATH_RE.match(cli) else ""
+        datadir = datadir if CPU_PROBE_PATH_RE.match(datadir) else ""
+        directory = f"/proc/{int(pid)}/cwd" if isinstance(pid, int) and pid > 0 else ""
+        # The client is often started relatively (« ./bigcoin-cli »): resolve it
+        # from the process working directory, then from PATH.  Getters only.
+        lines += [
+            f"echo '### NODE {key}'",
+            "P=" + (cli or ""),
+        ]
+        if directory:
+            lines.append(f"C=$(readlink -f {directory} 2>/dev/null)")
+            lines.append(f"[ -x \"$P\" ] || P=\"$C/{key}-cli\"")
+        lines.append(f"[ -x \"$P\" ] || P=$(command -v {key}-cli 2>/dev/null)")
+        datadir_arg = f" -datadir={datadir}" if datadir else ""
+        lines += [
+            f"[ -n \"$P\" ] && RD \"$P\"{datadir_arg} getmininginfo",
+            f"echo '### CHAIN {key}'",
+            f"[ -n \"$P\" ] && RD \"$P\"{datadir_arg} getblockchaininfo",
+            f"echo '### NETPS {key}'",
+            f"[ -n \"$P\" ] && RD \"$P\"{datadir_arg} getnetworkhashps",
+        ]
+        log_path = str(probe.get("log") or "")
+        if CPU_PROBE_PATH_RE.match(log_path):
+            lines += [
+                f"echo '### LOGS {key} {log_path}'",
+                f"stat -c %Y {log_path} 2>/dev/null",
+                f"RD tail -n 80 {log_path} 2>/dev/null",
+            ]
+
+    lines.append("exit 0")
+    return "\n".join(lines) + "\n"
+
+
+async def ssh_collect_cpu(machine: Any, probes: dict[str, Any], actor: str = "system") -> dict[str, Any]:
+    """Run the read-only ``collect_cpu`` probe (hashrate CPU + état du CPU).
+
+    Nothing is audited on success, like ``collect_stats``: this runs every
+    collection round.  Only ``tail``/``cat``/``stat``/``curl`` local and the
+    node getters are ever executed — no miner or node command that changes state.
+    """
+    pinned_fp = (getattr(machine, "host_key", None) or "").strip() or None
+    pinned_public_key = (getattr(machine, "host_key_public", None) or "").strip() or None
+
+    return await _run_whitelisted(
+        host=machine.host,
+        port=machine.ssh_port,
+        username=machine.ssh_user,
+        secret=_machine_secret(machine),
+        auth_type=machine.auth_type,
+        pinned_fp=pinned_fp,
+        pinned_public_key=pinned_public_key,
+        command=cpu_probe_command(probes),
         machine_id=machine.id,
         audit_kind="collect",
         actor=actor,

@@ -1,0 +1,4 @@
+2026-11-17T09:10:00Z korsh-miner: height=21450 diff=128.42 scan 200k nonces start
+2026-11-17T09:12:40Z korsh-miner: height=21458 diff=128.42 scan 200k nonces start
+2026-11-17T09:15:20Z korsh-miner: height=21458 diff=128.42 scan 200k nonces start
+2026-11-17T09:15:20Z FOUND: [21458] 3f2a1b

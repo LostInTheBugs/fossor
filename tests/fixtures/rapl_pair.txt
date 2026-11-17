@@ -1,0 +1,8 @@
+### POWER
+/sys/class/powercap/intel-rapl:0/energy_uj|12000000
+/sys/class/powercap/intel-rapl:0:0/energy_uj|9000000
+/sys/class/powercap/intel-rapl:0:1/energy_uj|2000000
+### POWER2
+/sys/class/powercap/intel-rapl:0/energy_uj|21820000
+/sys/class/powercap/intel-rapl:0:0/energy_uj|20000000
+/sys/class/powercap/intel-rapl:0:1/energy_uj|3000000

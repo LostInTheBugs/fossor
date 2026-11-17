@@ -61,6 +61,15 @@ def _gpu_devices(body: dict[str, Any]) -> list[dict[str, Any]]:
     return devices
 
 
+def _package_power(body: dict[str, Any]) -> float | None:
+    """CPU package power reported by SRBMiner (``package_power``, e.g. 88.96 W)."""
+    value = body.get("package_power")
+    cpu_block = body.get("cpu")
+    if value is None and isinstance(cpu_block, dict):
+        value = cpu_block.get("package_power")
+    return _to_float(value)
+
+
 def _parse_algorithms(body: dict[str, Any]) -> dict[str, Any] | None:
     """One entry per algorithm: total, per-GPU hashrate, shares, pool, coin."""
     algorithms: list[dict[str, Any]] = []
@@ -251,9 +260,15 @@ def parse_srbminer_api(payload: str | dict[str, Any]) -> dict[str, Any] | None:
         if isinstance(data.get(key), dict):
             body = data[key]
             break
-    if isinstance(body.get("algorithms"), list):
-        return _parse_algorithms(body)
-    return _parse_flat(body)
+    result = (
+        _parse_algorithms(body)
+        if isinstance(body.get("algorithms"), list)
+        else _parse_flat(body)
+    )
+    # 2026.11.003-c7: CPU package power, whatever the payload shape.
+    if result is not None and result.get("cpu_package_power_w") is None:
+        result["cpu_package_power_w"] = _package_power(body)
+    return result
 
 
 def merge_srbminer(
@@ -273,6 +288,8 @@ def merge_srbminer(
         stats["total_hashrate_hs"] = api.get("total_hashrate_hs")
     if stats.get("total_power_w") is None and api.get("total_power_w") is not None:
         stats["total_power_w"] = api["total_power_w"]
+    if stats.get("cpu_package_power_w") is None and api.get("cpu_package_power_w") is not None:
+        stats["cpu_package_power_w"] = api["cpu_package_power_w"]
 
     gpus = [d for d in stats.get("devices", []) if d.get("kind") == "gpu"]
     api_gpus = [gpu for gpu in (api.get("gpus") or []) if gpu.get("pci_bus")]

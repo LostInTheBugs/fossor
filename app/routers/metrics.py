@@ -209,8 +209,25 @@ def metrics_live(
             "devices": device_rows,
             "external_miners": miners,
             "coin_groups": groups,
+            # 2026.11.003-c7 : état du CPU (charge, température, fréquence,
+            # puissance) et hashrate de chaque mineur CPU.
+            "cpu": _cpu_state(status),
         })
     return payload
+
+
+def _cpu_state(status) -> dict[str, Any] | None:
+    """Last CPU state of one machine (JSON column written by the collector)."""
+    import json
+
+    raw = getattr(status, "cpu_json", None) if status else None
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
 
 
 @router.get("/miner-patterns")

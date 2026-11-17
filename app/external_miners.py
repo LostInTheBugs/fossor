@@ -545,6 +545,16 @@ def normalize_coin(value: str, aliases: dict[str, str] | None = None) -> str:
     return table.get(coin, coin)
 
 
+def coin_for_client(key: str, names: dict[str, str] | None = None) -> str:
+    """Ticker of a node client (``korsh-cli`` → ``KSH``), catalogue first.
+
+    The solo entries and the CPU probes must agree on the coin without sharing
+    a mutable group: this is the one place the table is read (2026.11.003-c7).
+    """
+    return _resolve_key(key, {k.lower(): v for k, v in (names or {}).items()},
+                        DEFAULT_COIN_HINTS)
+
+
 def infer_coin_from_wallet(address: str, tickers: Iterable[str] | None = None) -> str:
     """``oms1test…`` → ``OMS`` when that ticker exists in the catalogue."""
     known = {str(t).upper() for t in (tickers or [])}
@@ -599,6 +609,12 @@ def detect_solo_miners(
         if not tokens:
             continue
         base = basename(tokens[0])
+        # Un client lancé par un script (`sh /usr/local/bin/x-cli …`) reste un
+        # client : le shell n'est qu'un interpréteur, pas le programme.  Cela
+        # couvre aussi un `*-cli` livré sous forme de script (003-c7).
+        if base in ("sh", "bash", "dash") and len(tokens) > 1 and basename(tokens[1]).endswith("-cli"):
+            tokens = tokens[1:]
+            base = basename(tokens[0])
         if base.endswith("-cli") and "generatetoaddress" in row["args"]:
             clients.append((row, base[:-4]))
         elif base in DAEMON_BINARIES:

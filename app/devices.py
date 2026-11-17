@@ -204,6 +204,8 @@ def _external_miners_json(entries: list[dict[str, Any]]) -> str | None:
     payload = [
         {
             "name": entry.get("miner_name") or entry.get("label") or entry.get("name") or "",
+            # 2026.11.003-c7: l'exécutable réellement lancé (cpuminer-korsh…).
+            "binary": entry.get("binary") or "",
             "kind": entry.get("kind") or "",
             "version": entry.get("version") or "",
             "algorithm": entry.get("algorithm") or "",
@@ -220,6 +222,11 @@ def _external_miners_json(entries: list[dict[str, Any]]) -> str | None:
             "count": entry.get("count") or 1,
             "workers": entry.get("workers"),
             "hashrate_hs": entry.get("hashrate_hs"),
+            # 2026.11.003-c7: d'où vient le hashrate CPU (API, log, nœud) et,
+            # quand il est inconnu, la raison exacte — jamais un « — » muet.
+            "hashrate_source": entry.get("hashrate_source") or "",
+            "hashrate_note": entry.get("hashrate_note") or "",
+            "node": entry.get("node"),
             "api_port": entry.get("api_port"),
         }
         for entry in entries

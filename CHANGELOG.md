@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026.11.003-c7 — 2026-11-17
+
+### Minage CPU : hashrate et état du CPU
+- Sonde `collect_cpu` en lecture seule (compteurs `/proc`, hwmon, RAPL, journaux,
+  API locales, getters de nœud) : aucune commande ne modifie un mineur.
+- Hashrate CPU par ordre de préférence : API du mineur (port lu dans la commande),
+  journal (chemin lu dans la commande **ou** résolu par `/proc/<pid>/fd/1|2`, donc
+  celui d'un service systemd) avec contrôle de fraîcheur 300 s, puis nœud solo
+  (`getmininginfo`/`getblockchaininfo`/`getnetworkhashps` + estimation
+  « nonces / intervalle des scans »).
+- État du CPU par machine : charge (deux `/proc/stat`), température (k10temp Tctl,
+  coretemp Package, `cputemp` HiveOS), fréquence moyenne, puissance
+  (`package_power` SRBMiner, sinon RAPL, sinon « non mesurée »).
+- Tableau de bord : cartes par coin avec un vrai hashrate (KSH, WAM…), ligne CPU
+  sur la carte machine et dans la fiche, source de chaque hashrate affichée.
+- Un mineur sans hashrate affiche désormais la raison exacte, jamais un « — » muet.
+
+
 > MineCtl a été renommé **Fossor**. Les fonctionnalités et l'API restent identiques.
 
 All notable changes to fossor are documented in this file.
