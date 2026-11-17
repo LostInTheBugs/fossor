@@ -24,6 +24,11 @@ from app.version import compare_versions, is_valid_version, newest_version, pars
 
 REPO = "LostInTheBugs/fossor"
 RELEASES_URL = f"https://api.github.com/repos/{REPO}/releases"
+
+
+def releases_url() -> str:
+    """URL des releases GitHub, surchargeable hors ligne (``FOSSOR_RELEASES_URL``)."""
+    return (os.environ.get("FOSSOR_RELEASES_URL") or RELEASES_URL).strip()
 DEFAULT_INTERVAL = 3600
 JITTER_MIN = 30
 JITTER_MAX = 300
@@ -144,7 +149,7 @@ async def check(force: bool = False) -> dict:
 
     try:
         status, response_headers, body = await asyncio.to_thread(
-            _http_get, RELEASES_URL, headers, TIMEOUT
+            _http_get, releases_url(), headers, TIMEOUT
         )
     except Exception as exc:  # timeout, DNS, TLS, …
         state["error"] = f"{type(exc).__name__}: {exc}"
