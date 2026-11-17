@@ -145,11 +145,17 @@ function statusChip(m) {
   return '<span class="chip off">hors ligne</span>';
 }
 
-function deviceRows(devices) {
+function fmtGhz(mhz) {
+  return mhz ? (mhz / 1000).toFixed(2) + " GHz" : "—";
+}
+
+function deviceRows(devices, cpu) {
   if (!devices.length) return '<tr><td colspan="6" style="color:var(--muted)">Aucun device détecté</td></tr>';
   return devices.map((d) => {
     const label = d.kind === "cpu" ? "CPU" : "GPU" + (d.index === null || d.index === undefined ? "" : " " + d.index);
-    const model = d.model || (d.kind === "cpu" ? "Processeur" : "GPU");
+    // 2026.11.003-c7 : fréquence moyenne du CPU (m.cpu.freq_mhz, /proc/cpuinfo).
+    let model = d.model || (d.kind === "cpu" ? "Processeur" : "GPU");
+    if (d.kind === "cpu" && cpu && cpu.freq_mhz) model += " · " + fmtGhz(cpu.freq_mhz);
     const bus = d.pci_bus ? ' <span class="mono">' + esc(d.pci_bus) + "</span>" : "";
     return "<tr>" +
       '<td><div class="dev-name"><span>' + esc(label) + " · " + esc(model) + bus + "</span></div></td>" +
@@ -173,9 +179,40 @@ function externalMinersHtml(m) {
     if (x.pool) t += " — " + x.pool;
     if (x.threads) t += " — " + x.threads + " threads";
     if (x.cpu_pct !== null && x.cpu_pct !== undefined) t += " — " + x.cpu_pct + " % CPU";
+    // 2026.11.003-c7 : hashrate CPU et sa source (API, log, nœud) — jamais « — » muet.
+    if (x.kind === "cpu" || x.kind === "solo") {
+      t += " — " + (x.hashrate_hs ? fmtHs(x.hashrate_hs) : (x.hashrate_note || "hashrate inconnu"));
+      if (x.hashrate_hs && x.hashrate_source) t += " (source " + x.hashrate_source + ")";
+    }
     return t;
   }).join(", ");
   return '<div class="err">Mineur externe détecté (non géré par Fossor) : ' + esc(text) + "</div>";
+}
+
+function cpuLineHtml(m) {
+  const c = m.cpu;
+  if (!c) return "";
+  const bits = [];
+  if (c.load_pct !== null && c.load_pct !== undefined) bits.push("charge " + fmtPct(c.load_pct));
+  if (c.temp_c !== null && c.temp_c !== undefined) bits.push(fmtTemp(c.temp_c));
+  if (c.freq_mhz) bits.push(fmtGhz(c.freq_mhz));
+  bits.push(
+    c.power_w === null || c.power_w === undefined
+      ? "puissance non mesurée"
+      : fmtW(c.power_w) + (c.power_source ? " (" + c.power_source + ")" : "")
+  );
+  const miners = (c.miners || []).map((x) => {
+    const hr = x.hashrate_hs ? fmtHs(x.hashrate_hs) : (x.note || "hashrate CPU inconnu");
+    let t = (x.coin || "?") + " · " + hr;
+    if (x.threads) t += " · " + x.threads + " threads";
+    if (x.source) t += " · source " + x.source;
+    if (x.node && x.node.height) t += " · hauteur " + x.node.height;
+    if (x.node && x.node.share_pct !== null && x.node.share_pct !== undefined) t += " · " + x.node.share_pct + " % du réseau";
+    if (x.node && x.node.blocks_found) t += " · " + x.node.blocks_found + " bloc(s)";
+    return t;
+  });
+  return '<div style="font-size:11px;color:var(--muted);margin-top:6px">CPU — ' + esc(bits.join(" · ")) +
+    (miners.length ? "<br>" + miners.map((t) => esc(t)).join("<br>") : "") + "</div>";
 }
 
 function tokenGroups(machines, byUuid) {
@@ -246,7 +283,7 @@ function card(m, e) {
       "<div><div class=\"name\">" + esc(m.name) + "</div>" +
       '<div class="sub">' + esc(meta) + esc(api) + "</div>" +
       '<div class="host">' + esc(m.host) + " · " + esc(m.os_kind) + "</div>" +
-      externalMinersHtml(m) + "</div>" +
+      externalMinersHtml(m) + cpuLineHtml(m) + "</div>" +
       statusChip(m) +
     "</div>" +
     '<div class="totals">' +
@@ -259,7 +296,7 @@ function card(m, e) {
     "</div>" +
     '<table><thead><tr><th>Device</th><th style="text-align:right">Hashrate</th><th style="text-align:right">Temp</th>' +
     '<th style="text-align:right">Ventilo</th><th style="text-align:right">Conso</th><th style="text-align:right">Charge</th></tr></thead>' +
-    "<tbody>" + deviceRows(m.devices || []) + "</tbody></table>" +
+    "<tbody>" + deviceRows(m.devices || [], m.cpu) + "</tbody></table>" +
     (m.api_error ? '<div class="err">⚠️ ' + esc(m.api_error) + "</div>" : "") +
     (m.error ? '<div class="err">' + esc(m.error) + "</div>" : "") +
     "</div>";

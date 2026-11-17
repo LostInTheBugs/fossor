@@ -198,6 +198,9 @@ class MachineStatus(Base):
     total_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
     # §4.6 (003-c2): SRBMiner API unreachable from the container *and* over SSH.
     api_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 2026.11.003-c7: CPU state + per-CPU-miner hashrate JSON (charge,
+    # température, fréquence, puissance, source de chaque hashrate).
+    cpu_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class RawCollection(Base):

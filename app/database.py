@@ -73,6 +73,7 @@ def init_db():
     _migrate_machine_external_miners_column()
     _migrate_coin_pool_hosts_column()
     _migrate_machine_status_api_error_column()
+    _migrate_machine_status_cpu_json_column()
 
 
 def _migrate_coin_pool_hosts_column():
@@ -119,6 +120,11 @@ def _migrate_coin_pool_hosts_column():
 def _migrate_machine_status_api_error_column():
     """Add machine_status.api_error — miner API unreachable (§4.6, 003-c2)."""
     _add_column_if_missing("machine_status", "api_error", "api_error TEXT")
+
+
+def _migrate_machine_status_cpu_json_column():
+    """Add machine_status.cpu_json — état du CPU et hashrate CPU (003-c7)."""
+    _add_column_if_missing("machine_status", "cpu_json", "cpu_json TEXT")
 
 
 def _migrate_machine_default_miner_column():

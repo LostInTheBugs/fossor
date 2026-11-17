@@ -1,0 +1,5 @@
+### HWMON
+nvme|Composite|38900
+k10temp|Tctl|68000
+k10temp|Tccd1|61250
+amdgpu|edge|54000

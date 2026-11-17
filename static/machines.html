@@ -222,6 +222,14 @@ const deviceRows=(m)=>{
   }).join('');
   return `<table class="devtab"><thead><tr><th>Type</th><th>Modèle</th><th>Détails</th><th>Bus PCI</th><th>Miner avec</th></tr></thead><tbody>${rows}</tbody></table>`;
 };
+let LIVE={};
+// Même règle de seuils que le tableau de bord (H/s → PH/s).
+const hsText=(hs)=>{
+  if(hs===null||hs===undefined||hs==='')return '—';
+  const u=['H/s','kH/s','MH/s','GH/s','TH/s','PH/s'];let i=0;let v=Number(hs);
+  while(Math.abs(v)>=1000&&i<u.length-1){v/=1000;i++;}
+  return (Math.abs(v)>0&&Math.abs(v)<100?v.toFixed(1):Math.round(v).toString())+' '+u[i];
+};
 const minerAlertHTML=(m)=>{
   if(!m.external_miners||!m.external_miners.length)return '';
   const alerts=m.external_miners.map(miner=>{
@@ -233,9 +241,35 @@ const minerAlertHTML=(m)=>{
     if(miner.pool)txt+=' — '+miner.pool;
     if(miner.threads)txt+=' — '+miner.threads+' threads';
     if(miner.cpu_pct!==null&&miner.cpu_pct!==undefined)txt+=' — '+miner.cpu_pct+' % CPU';
+    // 2026.11.003-c7 : hashrate CPU, sa source, sinon la raison exacte.
+    if(miner.kind==='cpu'||miner.kind==='solo'){
+      txt+=' — '+(miner.hashrate_hs?hsText(miner.hashrate_hs):(miner.hashrate_note||'hashrate CPU inconnu'));
+      if(miner.hashrate_hs&&miner.hashrate_source)txt+=' (source '+miner.hashrate_source+')';
+    }
     return `<div class="miner-alert">🪨 <b>Mineur externe détecté (non géré par Fossor)</b> : ${txt}</div>`;
   }).join('');
   return alerts;
+};
+// 2026.11.003-c7 : ligne CPU de la fiche machine (charge, température,
+// fréquence, puissance) + un mineur CPU par ligne (coin, hashrate, threads, source).
+const cpuLineHTML=(m)=>{
+  const c=(LIVE[m.uuid]||{}).cpu;
+  if(!c)return '';
+  const bits=[];
+  if(c.load_pct!==null&&c.load_pct!==undefined)bits.push('charge '+c.load_pct+' %');
+  if(c.temp_c!==null&&c.temp_c!==undefined)bits.push(c.temp_c+' °C');
+  if(c.freq_mhz)bits.push((c.freq_mhz/1000).toFixed(2)+' GHz');
+  bits.push((c.power_w===null||c.power_w===undefined)?'puissance non mesurée':c.power_w+' W'+(c.power_source?' ('+c.power_source+')':''));
+  const miners=(c.miners||[]).map(x=>{
+    let t=(x.coin||'?')+' · '+(x.hashrate_hs?hsText(x.hashrate_hs):(x.note||'hashrate CPU inconnu'));
+    if(x.threads)t+=' · '+x.threads+' threads';
+    if(x.source)t+=' · source '+x.source;
+    if(x.node&&x.node.height)t+=' · hauteur '+x.node.height;
+    if(x.node&&x.node.share_pct!==null&&x.node.share_pct!==undefined)t+=' · '+x.node.share_pct+' % du réseau';
+    if(x.node&&x.node.blocks_found)t+=' · '+x.node.blocks_found+' bloc(s)';
+    return t;
+  });
+  return `<div class="cpu-line" data-cpu-line="1" style="font-size:11px;color:var(--muted);margin:6px 0">CPU — ${bits.join(' · ')}${miners.length?'<br>'+miners.join('<br>'):''}</div>`;
 };
 const detailRow=(m)=>{
   const devs=DEVICES[m.id]||[];
@@ -258,6 +292,7 @@ const detailRow=(m)=>{
       <button class="btn sm outline" onclick="showRawCollect(${m.id})" title="Sortie brute de la dernière collecte, masquée (administrateur)">📄 Dernière collecte brute</button>
     </div>
     ${minerAlertHTML(m)}
+    ${cpuLineHTML(m)}
     ${extraHtml}
     ${deviceRows(m)}
   </div></td></tr>`;
@@ -314,6 +349,12 @@ const loadMachines=async()=>{
     try{const d=await api('/api/machines/'+m.id+'/devices');DEVICES[m.id]=Array.isArray(d)?d:[];}
     catch(e){DEVICES[m.id]=DEVICES[m.id]||[];}
   }));
+  // 2026.11.003-c7 : état du CPU + hashrate par mineur CPU (API live).
+  try{
+    const live=await api('/api/metrics/live');
+    LIVE={};
+    (Array.isArray(live)?live:[]).forEach(x=>{if(x.uuid)LIVE[x.uuid]=x;});
+  }catch(e){LIVE={};}
   tbody.innerHTML=data.map(m=>{
     const usageChips={cpu:'cpu',gpu:'gpu',both:'both',none:'none'};
     const enabledChip=m.enabled?'on':'off';

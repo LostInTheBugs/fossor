@@ -1,0 +1,5 @@
+### HWMON
+coretemp|Package id 0|57000
+coretemp|Core 0|54000
+coretemp|Core 1|55000
+nvme|Composite|39900
