@@ -4,6 +4,37 @@
 
 All notable changes to fossor are documented in this file.
 
+## [2026.11.003-c5] — 2026-11-17
+
+### Fixed
+- **Compagnon figé après une mise à jour réussie** : le nonce traité n'était pas
+  mémorisé dans la variable de la boucle. La demande restait sur le disque,
+  `handle()` répondait « ignoré » sans réécrire `status.json`, et le battement de
+  cœur s'arrêtait à la seconde du `done` — l'interface en concluait « service
+  absent » alors que le conteneur tournait. Le nonce est désormais écrit dans
+  `status.json` (`handled_nonce`) **avant** tout travail, relu au démarrage, et la
+  boucle bat le cœur avant de rendre la main.
+- **Battement indépendant** : un fil dédié réécrit `heartbeat_at` toutes les
+  `FOSSOR_UPDATER_HEARTBEAT` secondes, y compris pendant un `docker pull` long.
+- **Appels Docker bornés** : `docker pull` ≤ 300 s, `docker compose up` ≤ 120 s,
+  `inspect`/`ps` ≤ 30 s. Un démon muet rend la main (état `failed`) au lieu de figer
+  la boucle pour toujours.
+- **Journal** : chaque étape (démarrage, demande, pull, bascule, santé, fin, erreur)
+  est écrite sur la sortie standard — `docker logs` était vide parce que le
+  compagnon n'imprimait rien.
+
+### Added
+- **Auto-mise à jour du compagnon** : après une bascule réussie, si l'image
+  `fossor-updater:<cible>` existe, `FOSSOR_UPDATER_TAG` est réécrit dans le `.env`
+  et un conteneur d'amorçage détaché recrée le service `fossor-updater`. Si
+  l'amorçage échoue, le `.env` est remis dans son état d'avant et l'ancien
+  compagnon reste en service.
+- **Reprise après arrêt** : un état actif trouvé au démarrage est signalé
+  (`step=recover`) et la demande n'est jamais rejouée.
+- Configuration → Mise à jour affiche la version de l'application **et** celle du
+  compagnon, et distingue « Updater sans réponse depuis X min » (conteneur présent,
+  battement figé, marche à suivre) du service réellement absent.
+
 ## [2026.11.003-c4] — 2026-11-17
 
 ### Fixed
