@@ -258,7 +258,8 @@ class TestOutcomes:
                     res = await ssh_test_machine(machine)
 
         assert res["ok"] is False
-        assert "Permission denied" in res["error"]
+        assert "refusés par la machine" in res["error"]
+        assert "Permission denied" not in res["error"]
         assert "wrongpass" not in res["error"]
 
     @pytest.mark.asyncio
@@ -360,7 +361,8 @@ class TestAgainstRealServer:
         with patch("app.ssh_client.decrypt_secret", return_value="nope-not-it"):
             res = asyncio.run(ssh_test_machine(machine))
         assert res["ok"] is False
-        assert "Permission denied" in res["error"]
+        assert "refusés par la machine" in res["error"]
+        assert "Permission denied" not in res["error"]
 
     def test_detect_hw_reports_cpu_and_no_gpu(self):
         key = asyncio.run(asyncssh.get_server_host_key(SSH_HOST, SSH_PORT))

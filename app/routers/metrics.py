@@ -17,6 +17,20 @@ from app.stats_parser import format_hashrate
 router = APIRouter(prefix="/api/metrics", tags=["metrics"])
 
 
+def _external_miners(machine) -> list[dict]:
+    """Last external miners seen on *machine* (JSON column, masked)."""
+    import json
+
+    raw = getattr(machine, "external_miners", None)
+    if not raw:
+        return []
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    return value if isinstance(value, list) else []
+
+
 def _age_seconds(ts: str | None, now: datetime) -> int | None:
     if not ts:
         return None
@@ -109,6 +123,7 @@ def metrics_live(
                 "pci_bus": device.pci_bus,
                 "integrated": device.integrated,
                 "enabled_for_mining": device.enabled_for_mining,
+                "occupied_external": bool(getattr(device, "occupied_external", False)),
                 **metric,
             })
 
@@ -144,6 +159,7 @@ def metrics_live(
             "last_ts": status.ts if status else None,
             "age_s": _age_seconds(status.ts if status else None, now),
             "devices": device_rows,
+            "external_miners": _external_miners(machine),
         })
     return payload
 

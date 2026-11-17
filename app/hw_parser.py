@@ -13,7 +13,7 @@ import re
 from typing import Any
 
 SECTION_MARK = "### "
-SECTIONS = ("CPU", "MEM", "GPU_NVIDIA", "GPU_PCI", "VIRT", "OS")
+SECTIONS = ("CPU", "MEM", "GPU_NVIDIA", "GPU_COMPUTE", "PS_MINERS", "GPU_PCI", "VIRT", "OS")
 
 # Flags the spec cares about (§4.2), in display order.
 USEFUL_FLAGS = ("aes", "avx2", "avx512f")
@@ -348,7 +348,19 @@ def parse_gpus_pci(section: str) -> list[dict[str, Any]]:
     return gpus
 
 
-# ── Virtualisation ────────────────────────────────────────────────────
+# ── GPU Compute Apps (external miner detection) ───────────────────────
+# Format: PID,Process Name,Used Memory (MiB) — or bare CSV without header.
+def parse_gpu_compute(section: str, ps_section: str = "") -> list[dict[str, Any]]:
+    """External miners from ``nvidia-smi --query-compute-apps`` + ``PS_MINERS``.
+
+    Thin wrapper around :mod:`app.miners`, which owns the miner list, the
+    password masking and the wallet truncation.
+    """
+    from app.external_miners import detect_external_miners
+
+    return detect_external_miners(section, ps_section)
+
+
 def parse_virt(section: str) -> dict[str, bool]:
     flags = {"kvm": False, "virsh": False, "pveversion": False}
     for line in (section or "").splitlines():
@@ -386,5 +398,6 @@ def parse_detect_hw(stdout: str) -> dict[str, Any]:
         "os_kind": os_kind_from_text(sections["OS"]),
         "cpu": cpu,
         "gpus": gpus,
+        "gpu_compute": parse_gpu_compute(sections["GPU_COMPUTE"], sections["PS_MINERS"]),
         "virt": parse_virt(sections["VIRT"]),
     }

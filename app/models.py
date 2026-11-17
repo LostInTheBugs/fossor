@@ -12,6 +12,8 @@ class AuthTypeEnum(str, enum.Enum):
     password = "password"
     # §4.1 bis mode 2: Fossor connects with its own ed25519 key.
     fossor_key = "fossor_key"
+    # Machine created but provisioning (temporary login) hasn't succeeded yet.
+    provision_pending = "provision_pending"
 
 
 class SudoTypeEnum(str, enum.Enum):
@@ -61,12 +63,14 @@ class Machine(Base):
     host: Mapped[str] = mapped_column(String(255), nullable=False)
     ssh_port: Mapped[int] = mapped_column(Integer, default=22)
     ssh_user: Mapped[str] = mapped_column(String(50), default="root")
-    auth_type: Mapped[AuthTypeEnum] = mapped_column(String(20), default=AuthTypeEnum.key)
+    auth_type: Mapped[AuthTypeEnum] = mapped_column(String(20), default=AuthTypeEnum.provision_pending)
     secret_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
     sudo: Mapped[SudoTypeEnum] = mapped_column(String(30), default=SudoTypeEnum.none)
     os_kind: Mapped[OsKindEnum] = mapped_column(String(20), default=OsKindEnum.other)
     host_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     host_key_public: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Last external miners seen (JSON list, masked) — dashboard + machine card.
+    external_miners: Mapped[str | None] = mapped_column(Text, nullable=True)
     usage: Mapped[UsageEnum] = mapped_column(String(10), default=UsageEnum.both)
     vm_host: Mapped[bool] = mapped_column(Boolean, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -137,6 +141,8 @@ class Device(Base):
     # Integrated GPU (Intel UHD/Iris, AMD APU Radeon Graphics, ASPEED/Matrox BMC):
     # detected but never enabled for mining by default.
     integrated: Mapped[bool] = mapped_column(Boolean, default=False)
+    # GPU occupied by an external miner not managed by Fossor.
+    occupied_external: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     created_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -354,7 +360,7 @@ class AuditLog(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     ts: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
-    actor: Mapped[ActorEnum] = mapped_column(String(20), default=ActorEnum.fred)
+    actor: Mapped[str] = mapped_column(String(20), default="fred")
     action: Mapped[str] = mapped_column(String(50), nullable=False)
     machine_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("machines.id"), nullable=True)
     object_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)

@@ -68,3 +68,57 @@ async def test_provision_then_key_connection_then_deprovision(client, capsys):
     with capsys.disabled():
         print("\nDEPROVISION JSON:", json.dumps(removed, ensure_ascii=False, indent=2))
     assert removed["ok"] is True, removed
+
+
+async def test_failed_provision_keeps_pending_then_retry(client, capsys):
+    """§2.2/§2.3: a refused temporary login leaves the machine « à préparer »."""
+    created = await client.post(
+        "/api/machines",
+        json={
+            "name": "jetable-provision-ratee",
+            "host": HOST,
+            "ssh_port": PORT,
+            "ssh_user": "fossor",
+            "auth_type": "provision_pending",
+        },
+    )
+    assert created.status_code == 200, created.text
+    machine_id = created.json()["id"]
+
+    failed = await client.post(
+        f"/api/machines/{machine_id}/provision",
+        json={"temp_user": TEMP_USER, "temp_password": "mauvais-mot-de-passe", "account": "fossor"},
+    )
+    body = failed.json()
+    with capsys.disabled():
+        print("\nPROVISION ECHOUEE JSON:", json.dumps(body, ensure_ascii=False, indent=2))
+    assert body["ok"] is False, body
+    assert "connexion temporaire" in body["error"]
+    assert "refusés par la machine" in body["error"]
+    assert "mauvais-mot-de-passe" not in json.dumps(body)
+
+    machine = (await client.get(f"/api/machines/{machine_id}")).json()
+    with capsys.disabled():
+        print("ETAT MACHINE:", json.dumps(machine, ensure_ascii=False))
+    assert machine["auth_type"] == "provision_pending"
+
+    tested = (await client.post(f"/api/machines/{machine_id}/test")).json()
+    with capsys.disabled():
+        print("TEST PENDANT:", json.dumps(tested, ensure_ascii=False))
+    assert tested["ok"] is False
+    assert "pas encore été préparée" in tested["error"]
+
+    retried = await client.post(
+        f"/api/machines/{machine_id}/provision",
+        json={"temp_user": TEMP_USER, "temp_password": TEMP_PASSWORD, "account": "fossor"},
+    )
+    retry_body = retried.json()
+    with capsys.disabled():
+        print("\nRETRY JSON:", json.dumps(retry_body, ensure_ascii=False, indent=2))
+    assert retry_body["ok"] is True, retry_body
+
+    machine = (await client.get(f"/api/machines/{machine_id}")).json()
+    with capsys.disabled():
+        print("ETAT APRES RETRY:", json.dumps(machine, ensure_ascii=False))
+    assert machine["auth_type"] == "fossor_key"
+    assert machine["ssh_user"] == "fossor"

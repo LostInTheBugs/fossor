@@ -24,21 +24,10 @@ import re
 from typing import Any, Sequence
 
 from app.hw_parser import norm_bus
+from app.external_miners import MINER_TOKENS, mask_command, parse_miner_cmd
 
 SECTIONS = ("HIVE_STAT", "HIVE_GPU", "NVSMI", "PS_MINERS", "UPTIME")
 
-# Miner binaries looked for in ``ps -eo args`` (lower-case, substring).
-MINER_TOKENS = (
-    "srbminer",
-    "xmrig",
-    "t-rex",
-    "lolminer",
-    "gminer",
-    "nbminer",
-    "phoenixminer",
-    "teamredminer",
-    "rigel",
-)
 
 _API_PORT = re.compile(r"--api[-_]port[=\s]+(\d+)")
 
@@ -276,7 +265,10 @@ def parse_nvsmi(section: str) -> list[dict[str, Any]]:
 
 # ── Miners process list and uptime ────────────────────────────────────
 def parse_ps_miners(section: str) -> dict[str, Any]:
-    """Running miner (name + discovered ``--api-port``) from ``ps -eo args``."""
+    """Running miner (name + discovered ``--api-port``) from ``ps -eo args``.
+
+    Also returns full external miner details (cmd, algorithm, pool) for UI display.
+    """
     found: list[dict[str, Any]] = []
     for line in (section or "").splitlines():
         cmd = line.strip()
@@ -287,11 +279,16 @@ def parse_ps_miners(section: str) -> dict[str, Any]:
         if not name:
             continue
         match = _API_PORT.search(cmd)
+        details = parse_miner_cmd(cmd)
         found.append({
             "name": name,
+            "label": details["name"],
+            "version": details["version"],
+            "algorithm": details["algorithm"],
+            "pool": details["pool"],
             "binary": binary,
             "api_port": int(match.group(1)) if match else None,
-            "cmd": cmd[:200],
+            "cmd": mask_command(cmd),
         })
     primary = next((m for m in found if m["api_port"]), found[0] if found else None)
     return {
