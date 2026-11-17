@@ -75,6 +75,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
     <div class="box"><span class="k">Machines en ligne</span><span class="v" id="sOnline">—</span></div>
     <div class="box"><span class="k">Consommation</span><span class="v" id="sPower">—</span></div>
     <div class="box"><span class="k">Coût 24 h</span><span class="v" id="sCost">—</span></div>
+    <div class="box"><span class="k">Coût / mois</span><span class="v" id="sCostMonth">—</span></div>
     <div class="box"><span class="k">Net 24 h</span><span class="v" id="sNet">—</span></div>
     <div class="box"><span class="k">Dernière collecte</span><span class="v" id="sAge">—</span></div>
   </div>
@@ -319,7 +320,8 @@ function render(machines, energy) {
   $("#sPower").textContent = fmtW(watts || null);
 
   const totals = (energy && energy.total) || {};
-  $("#sCost").textContent = fmtEur(totals.cost_eur_day) + " · " + fmtEur(totals.cost_eur_month) + " /mois";
+  $("#sCost").textContent = fmtEur(totals.cost_eur_day);
+  $("#sCostMonth").textContent = fmtEur(totals.cost_eur_month);
   $("#sNet").textContent = fmtEur(totals.net_eur_day);
 
   const ages = machines.map((m) => m.age_s).filter((a) => a !== null && a !== undefined);

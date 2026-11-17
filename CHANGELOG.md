@@ -1,5 +1,58 @@
 # Changelog
 
+## 2026.11.004 — 2026-11-17
+
+### Puissance CPU : sources nommées et coût à la prise (§4.2 / §4.15)
+
+- **Ordre des sources de puissance CPU**, chacune nommée dans `power_source` :
+  `package_power` de l'API du mineur (> 0), puis **RAPL**
+  (`/sys/class/powercap/intel-rapl:*/energy_uj`, deux lectures sur l'intervalle de
+  collecte, `sudo -n` si nécessaire), puis hwmon `power1_input`
+  (`amd_energy` / `zenpower`), puis la valeur saisie sur la machine
+  (`machines.cpu_power_w`), puis « non mesurée ». Une API à 0 ne masque plus RAPL.
+- **RAPL avec plafond** : `max_energy_range_uj` est lu avec `energy_uj` ; un compteur
+  reparti à zéro donne `max - précédent + courant` au lieu d'une puissance écartée.
+  `psys` (`intel-rapl:1`) et le miroir `intel-rapl-mmio:*` ne sont jamais additionnés
+  au paquet.
+- **Coût €/jour et €/mois** par machine et au total, calculé sur la **puissance à la
+  prise** (charge DC / rendement des alimentations) ; `GET /api/energy` expose
+  `cost_eur_month` et une section `coins` : revenu estimé, électricité du coin répartie
+  **au prorata de la puissance** de chaque mineur, coût net par coin. Tarifs fixes,
+  plages heures pleines/creuses et Tempo de §4.15 appliqués minute par minute.
+- Tableau de bord : coût / mois par carte et total (jour · mois).
+
+### Type d'OS choisi à l'ajout (§4.1 ter)
+
+- Champ **Type d'OS** juste après l'IP (HiveOS, Ubuntu/Debian, Proxmox, Autre) :
+  il pré-remplit port, mode d'authentification, login, sudo, usage et hôte de VM.
+  HiveOS : mode « Préparation automatique », login temporaire `user`, **mot de passe
+  jamais pré-rempli** avec le texte d'aide « mot de passe par défaut de HiveOS : 1
+  (à changer) », collecteur HiveOS et mineur du flight sheet signalé externe.
+  Proxmox : compte `root`, `vm_host` coché, pas de minage direct.
+- `GET /api/machines/os-presets` expose les préréglages (aucun secret) ;
+  `POST /api/machines/{id}/os-preset` applique le préréglage détecté.
+- `os_kind` = type **choisi**, `os_kind_detected` = OS **réel** écrit par la détection ;
+  en cas d'écart, bannière « OS détecté : X (choisi : Y) » et bouton « Appliquer le
+  préréglage X ». Les machines existantes reçoivent le type détecté (migration,
+  backfill `os_kind_detected = os_kind`).
+
+### Contenu de l'étape depuis 2026.11.003
+
+- **3a — pilotage des mineurs** : profils validés (`shlex` puis substitution,
+  `re.fullmatch`), démarrage/arrêt par `Step`, refus **409 `psu_overload`** au-delà de
+  80 % de charge prévue sauf `confirm_overload`, mode simulation par défaut.
+- **004-a — parc et consommation** : GPU intégrés masqués du minage par défaut
+  (réglage global), alimentations multiples avec courbes 80 PLUS 230 V, déclassement,
+  affectation des devices (dont GPU réparti sur deux PSU), inventaire des composants
+  (RAM, disques classés par TRAN avant ROTA, cartes PCIe, ventilateurs) et consommation
+  totale par machine distinguant mesuré et estimé, à la prise.
+- **004-a2 — solo BIG** : hashrate lu au format réel du log
+  (`N hashes/s/worker (~T total over W workers)`), total machine déjà sommé.
+- **Correctifs c1 à c9** (déjà publiés, détail ci-dessous) : préparation SSH et
+  provisionnement, empreinte d'hôte, cookies forgés, import/export, collecte HiveOS et
+  SRBMiner, sonde CPU (log redirigé, fréquence), solo stable, garde-fou de tag
+  (`VERSION` == tag) et compagnon de mise à jour qui tire son image.
+
 ## 2026.11.003-c9 — 2026-11-17
 
 ### Correctif : image c8 retirée, garde-fou de tag
