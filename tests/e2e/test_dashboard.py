@@ -85,7 +85,7 @@ async def test_dashboard_is_landing_page_with_zero_console_errors(e2e_server):
         assert len(groups) == 2, groups
         prl = [g for g in groups if g["coin"] == "PRL"][0]
         ksh = [g for g in groups if g["coin"] == "KSH"][0]
-        assert prl["hs"] == 2e9 and prl["machines"] == 2 and prl["devices"] == 3
+        assert prl["hs"] == 2e9 and prl["machines"] == 2 and prl["miners"] == 2
         assert ksh["hs"] == 5e6 and ksh["machines"] == 1
         assert await page.query_selector("#tokenCards") is not None
 

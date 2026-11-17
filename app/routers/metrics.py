@@ -31,6 +31,45 @@ def _external_miners(machine) -> list[dict]:
     return value if isinstance(value, list) else []
 
 
+def _coin_groups(miners: list[dict], coin: str, algo: str,
+                 total_hs: float | None) -> list[dict[str, Any]]:
+    """One group per coin mined by *machine* (2026.11.003-c4).
+
+    A machine may run several miners on different coins (PRL + WAM + KSH on the
+    rig): the dashboard needs one card per coin, never one card per machine.
+    """
+    groups: dict[str, dict[str, Any]] = {}
+    for miner in miners:
+        ticker = str(miner.get("coin") or "").strip().upper()
+        key = ticker or "?"
+        group = groups.setdefault(key, {
+            "coin": ticker,
+            "algo": "",
+            "hashrate_hs": None,
+            "miners": 0,
+            "workers": 0,
+        })
+        group["miners"] += 1
+        try:
+            group["workers"] += int(miner.get("workers") or miner.get("count") or 1)
+        except (TypeError, ValueError):
+            group["workers"] += 1
+        if not group["algo"] and miner.get("algorithm"):
+            group["algo"] = str(miner["algorithm"])
+        hashrate = miner.get("hashrate_hs")
+        if isinstance(hashrate, (int, float)):
+            group["hashrate_hs"] = (group["hashrate_hs"] or 0) + float(hashrate)
+    if not groups and (coin or total_hs):
+        groups["?"] = {
+            "coin": str(coin or "").upper(),
+            "algo": str(algo or ""),
+            "hashrate_hs": total_hs,
+            "miners": 0,
+            "workers": 0,
+        }
+    return list(groups.values())
+
+
 def _age_seconds(ts: str | None, now: datetime) -> int | None:
     if not ts:
         return None
@@ -161,6 +200,12 @@ def metrics_live(
             "age_s": _age_seconds(status.ts if status else None, now),
             "devices": device_rows,
             "external_miners": _external_miners(machine),
+            "coin_groups": _coin_groups(
+                _external_miners(machine),
+                status.coin if status else "",
+                status.algo if status else "",
+                total_hs,
+            ),
         })
     return payload
 

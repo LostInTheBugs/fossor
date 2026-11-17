@@ -219,7 +219,7 @@ def miner_for(text: str) -> tuple[str, str]:
     return "", ""
 
 
-def _flag_value(tokens: list[str], flags: tuple[str, ...]) -> str:
+def _flag_value(tokens: Sequence[str], flags: Iterable[str]) -> str:
     for index, token in enumerate(tokens):
         base, sep, value = token.partition("=")
         if base not in flags:
@@ -269,7 +269,9 @@ def parse_miner_cmd(cmd: str, name_hint: str = "") -> dict[str, str]:
 
     return {
         "name": label,
-        "binary": binary or tokens[0].split("/")[-1].lower(),
+        # The executable really running, not the matched pattern: a renamed
+        # ``cpuminer-korsh`` stays readable in the UI (2026.11.003-c4).
+        "binary": tokens[0].split("/")[-1].lower() if tokens else binary,
         "version": version,
         "algorithm": algorithm,
         "pool": pool,
@@ -288,14 +290,23 @@ def pool_host(value: str) -> str:
 
 
 def infer_coin(pool: str, hosts: dict[str, str] | Iterable[tuple[str, str]]) -> str:
-    """Ticker whose ``pool_hosts`` entry matches *pool* (longest match wins)."""
+    """Ticker whose ``pool_hosts`` entry matches *pool* (exact, then longest).
+
+    Catalogue entries are normalised the same way as the miner's pool, so a
+    stored ``stratum+tcp://pearl-eu2.luckypool.io:3360`` still matches the host
+    ``pearl-eu2.luckypool.io`` (2026.11.003-c4).
+    """
     host = pool_host(pool)
     if not host:
         return ""
     pairs = hosts.items() if isinstance(hosts, dict) else hosts
     best, ticker = "", ""
     for key, value in pairs:
-        needle = str(key or "").strip().lower()
+        needle = pool_host(str(key or "")) or str(key or "").strip().lower()
+        if not needle:
+            continue
+        if needle == host:
+            return str(value or "").upper()
         if needle and needle in host and len(needle) > len(best):
             best, ticker = needle, str(value or "").upper()
     return ticker
@@ -411,6 +422,407 @@ def _cmd_for(process_name: str, ps_lines: list[str]) -> str:
         if head == basename or (basename and basename in line.lower()):
             return line
     return ""
+
+
+# ── 2026.11.003-c4: wrappers, grouping, solo nodes ────────────────────
+# A miner started from ``screen``/``bash -c``/``unbuffer``… appears in ``ps`` as
+# several processes (the launcher and the real binary).  Only the wrapped
+# command is a miner; the launcher is stripped and the remaining command is the
+# grouping key, so the launcher and its child collapse into **one** entry.
+LAUNCHER_BINARIES = frozenset((
+    "screen", "tmux", "script", "unbuffer", "nohup", "timeout", "sudo", "env",
+    "setsid", "stdbuf", "taskset", "nice", "ionice", "su", "exec", "chrt",
+    "caffeinate", "bash", "sh", "dash", "zsh", "ksh", "fish", "busybox",
+))
+
+# Option whose *argument is the wrapped command* (stop stripping right after).
+_COMMAND_OPTIONS: dict[str, frozenset[str]] = {
+    "bash": frozenset(("-c",)),
+    "sh": frozenset(("-c",)),
+    "dash": frozenset(("-c",)),
+    "zsh": frozenset(("-c",)),
+    "ksh": frozenset(("-c",)),
+    "script": frozenset(("-c", "-qc", "--command")),
+    "su": frozenset(("-c",)),
+}
+# Option taking a value that belongs to the launcher (window name, user, …).
+_VALUE_OPTIONS: dict[str, frozenset[str]] = {
+    "screen": frozenset(("-S", "-c", "-t", "-s", "-L", "-p", "-X", "-dmS")),
+    "tmux": frozenset(("-L", "-f", "-S", "-c")),
+    "timeout": frozenset(("-s", "-k", "--signal", "--kill-after")),
+    "sudo": frozenset(("-u", "-g", "-p", "-C", "-h", "-U")),
+    "nice": frozenset(("-n",)),
+    "ionice": frozenset(("-c", "-n", "-p")),
+    "env": frozenset(("-u", "-C", "-S")),
+    "stdbuf": frozenset(("-i", "-o", "-e")),
+    "taskset": frozenset(("-c", "-p")),
+    "chrt": frozenset(("-p",)),
+}
+
+_REDIRECT_RE = re.compile(r"\s+\d?>{1,2}\s*\S+|\s+\d?>&\d|\s+&\s*$")
+_STRATUM_RE = re.compile(r"stratum(?:\+(?:tcp|ssl|tls))?://", re.IGNORECASE)
+_API_PORT_RE = re.compile(r"--api[-_]port[=\s]+(\d+)")
+
+SOLO_LABEL = "Minage solo (nœud)"
+DAEMON_BINARIES = frozenset((
+    "korshd", "bitcoind", "bigcoind", "litecoind", "dogecoind", "dashd",
+    "monerod", "firod", "particld", "pivxd", "grind", "verusd",
+))
+DEFAULT_COIN_HINTS: dict[str, str] = {
+    "bitcoin": "BTC", "litecoin": "LTC", "dogecoin": "DOGE", "monero": "XMR",
+    "dash": "DASH", "korsh": "KSH", "bigcoin": "BIG", "particl": "PART",
+    "pivx": "PIVX", "firo": "FIRO", "verus": "VRSC",
+}
+COIN_ALIASES: dict[str, str] = {"PEARL": "PRL"}
+
+
+def basename(token: str) -> str:
+    return (token or "").rsplit("/", 1)[-1].strip().lower()
+
+
+def split_launcher(args: str) -> tuple[str, str]:
+    """``SCREEN -dmS wam bash -c exec /root/wam/wam-miner -o …`` → inner command.
+
+    Returns ``("", args)`` when the line is not a wrapper, else
+    ``("screen/bash/exec", "/root/wam/wam-miner -o …")`` so the wrapper and the
+    real process share the same signature and group together.
+    """
+    tokens = (args or "").split()
+    if not tokens or basename(tokens[0]) not in LAUNCHER_BINARIES:
+        return "", (args or "").strip()
+    layers: list[str] = []
+    while tokens and basename(tokens[0]) in LAUNCHER_BINARIES:
+        name = basename(tokens[0])
+        layers.append(name)
+        tokens = tokens[1:]
+        takes_value = _VALUE_OPTIONS.get(name, frozenset())
+        command_option = _COMMAND_OPTIONS.get(name, frozenset())
+        index = 0
+        while index < len(tokens) and tokens[index].startswith("-") and tokens[index] != "-":
+            option = tokens[index]
+            index += 1
+            if option in command_option:
+                break  # the following tokens are the wrapped command
+            if option in takes_value and index < len(tokens):
+                index += 1
+        tokens = tokens[index:]
+        if name == "timeout" and tokens and not tokens[0].startswith("-"):
+            tokens = tokens[1:]  # timeout DURATION command
+    return "/".join(layers), " ".join(tokens).strip()
+
+
+def clean_command(cmd: str) -> str:
+    """Strip shell redirections and ``script``'s trailing log file."""
+    text = _REDIRECT_RE.sub("", " " + (cmd or "")).strip()
+    tokens = text.split()
+    while tokens and tokens[-1] in ("/dev/null", "2>&1", "&"):
+        tokens.pop()
+    return " ".join(tokens)
+
+
+def looks_like_miner(cmd: str) -> bool:
+    """An unknown binary is still a miner when it clearly talks to a pool."""
+    text = cmd or ""
+    low = text.lower()
+    if not text.strip():
+        return False
+    if _STRATUM_RE.search(text):
+        return True
+    if "--cpu-threads" in low or low.endswith(" --cpu"):
+        return True
+    for flag in ("--url", "--pool", "--algo", "--algorithm"):
+        if flag in low and ("." in low or "://" in low):
+            return True
+    return False
+
+
+def normalize_coin(value: str, aliases: dict[str, str] | None = None) -> str:
+    """Ticker upper-cased, HiveOS spellings folded (``PEARL`` → ``PRL``)."""
+    coin = (value or "").strip().upper()
+    table = {str(k).upper(): str(v).upper() for k, v in COIN_ALIASES.items()}
+    for key, val in (aliases or {}).items():
+        table[str(key).upper()] = str(val).upper()
+    return table.get(coin, coin)
+
+
+def infer_coin_from_wallet(address: str, tickers: Iterable[str] | None = None) -> str:
+    """``oms1test…`` → ``OMS`` when that ticker exists in the catalogue."""
+    known = {str(t).upper() for t in (tickers or [])}
+    if not known:
+        return ""
+    head = (address or "").split("1", 1)[0]
+    if 1 <= len(head) <= 8 and head.upper() in known:
+        return head.upper()
+    return ""
+
+
+def _datadir(args: str) -> str:
+    match = re.search(r"-datadir[=\s]+(\S+)", args or "")
+    return match.group(1) if match else ""
+
+
+def _coin_key(text: str, names: dict[str, str]) -> str:
+    """First path/argument component naming a known coin (``…/bigcoin/data``)."""
+    for chunk in re.split(r"[/=:,]", text or ""):
+        for token in re.split(r"[-_.]", chunk):
+            token = token.strip().lower()
+            if token and token in names:
+                return token
+    return ""
+
+
+def _resolve_key(key: str, names: dict[str, str], hints: dict[str, str]) -> str:
+    token = (key or "").strip().lower()
+    if token in names:
+        return names[token]
+    if token in hints:
+        return hints[token]
+    return ""
+
+
+def detect_solo_miners(
+    rows: Sequence[dict[str, Any]],
+    coin_names: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Node-driven solo mining (``bitcoind``/``korshd`` + ``*-cli generatetoaddress``).
+
+    One entry per coin: the daemon's charge, the number of worker processes
+    (one ``generatetoaddress`` client per worker) and the coin read from the
+    client name / datadir, never from the machine name.
+    """
+    names = {str(k).lower(): str(v).upper() for k, v in (coin_names or {}).items()}
+    hints = dict(DEFAULT_COIN_HINTS)
+    clients: list[tuple[dict[str, Any], str]] = []
+    daemons: list[tuple[dict[str, Any], str]] = []
+    for row in rows:
+        tokens = (row.get("args") or "").split()
+        if not tokens:
+            continue
+        base = basename(tokens[0])
+        if base.endswith("-cli") and "generatetoaddress" in row["args"]:
+            clients.append((row, base[:-4]))
+        elif base in DAEMON_BINARIES:
+            daemons.append((row, base))
+    if not clients:
+        return []
+
+    groups: dict[str, dict[str, Any]] = {}
+    for row, key in clients:
+        ticker = _resolve_key(key, names, hints)
+        group = groups.setdefault(
+            ticker or key.upper(),
+            {
+                "coin": ticker, "key": key, "workers": 0, "pids": set(),
+                "daemon": "", "cpu_pct": None, "user": "", "pid": None,
+                "elapsed_s": None,
+            },
+        )
+        group["workers"] += 1
+        group["pids"].add(row.get("pid"))
+        if not group["user"]:
+            group["user"] = row.get("user", "")
+            group["pid"] = row.get("pid")
+            group["elapsed_s"] = row.get("elapsed_s")
+
+    for row, base in daemons:
+        datadir = _datadir(row["args"])
+        key = _coin_key(datadir, names) or _coin_key(row["args"], names)
+        ticker = _resolve_key(key, names, hints)
+        target = groups.get(ticker) if ticker else None
+        if target is None and len(groups) == 1:
+            target = next(iter(groups.values()))
+        if target is None:
+            continue
+        target["daemon"] = base
+        target["pids"].add(row.get("pid"))
+        cpu = row.get("cpu_pct")
+        if cpu is not None and (target["cpu_pct"] is None or cpu > target["cpu_pct"]):
+            target["cpu_pct"] = cpu
+            target["user"] = row.get("user", "") or target["user"]
+            target["pid"] = row.get("pid")
+            target["elapsed_s"] = row.get("elapsed_s")
+
+    entries: list[dict[str, Any]] = []
+    for group in groups.values():
+        workers = group["workers"]
+        daemon = group["daemon"] or ""
+        entries.append({
+            "name": SOLO_LABEL,
+            "label": SOLO_LABEL,
+            "miner_name": SOLO_LABEL,
+            "binary": daemon,
+            "kind": "solo",
+            "version": "",
+            "algorithm": "",
+            "pool": "",
+            "coin": group["coin"],
+            "workers": workers,
+            "count": 1,
+            "threads": "",
+            "user": group["user"],
+            "pid": group["pid"],
+            "cpu_pct": group["cpu_pct"],
+            "elapsed_s": group["elapsed_s"],
+            "api_port": None,
+            "cmd": mask_command(
+                f"{daemon or 'nœud'} -datadir=… · {workers} worker(s)"
+            ),
+            "_pids": {pid for pid in group["pids"] if pid},
+            "_match": group["key"],
+        })
+    return entries
+
+
+def _is_real_row(row: dict[str, Any]) -> bool:
+    """Drop kernel threads, the collector's own command and empty rows."""
+    args = (row.get("args") or "").strip()
+    if not args or args.startswith("["):
+        return False
+    if (row.get("user") or "").lower() == "fossor":
+        return False
+    if "### HIVE_STAT" in args or "collect_stats" in args:
+        return False
+    if args.startswith("ps -eo") or args.startswith("awk "):
+        return False
+    return True
+
+
+def detect_running_miners(
+    section: str,
+    patterns: Sequence[dict[str, str]] | None = None,
+    coin_hosts: dict[str, str] | None = None,
+    coin_tickers: Iterable[str] | None = None,
+    coin_names: dict[str, str] | None = None,
+    coin_aliases: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Running miners of one machine, deduplicated and grouped by coin.
+
+    * launchers are stripped and merged with the process they started;
+    * identical processes (same binary + same arguments) become one entry with
+      a ``count``;
+    * node solo mining becomes one ``Minage solo (nœud)`` entry per coin;
+    * the coin comes from the pool host (normalised), else from the wallet
+      prefix, and HiveOS spellings are folded through the alias table.
+    """
+    rows = [row for row in parse_ps_rows(section) if _is_real_row(row)]
+    solo = detect_solo_miners(rows, coin_names)
+    solo_pids: set[int] = set()
+    for entry in solo:
+        solo_pids |= entry.pop("_pids", set())
+
+    entries: dict[tuple[str, str], dict[str, Any]] = {}
+    order: list[tuple[str, str]] = []
+    for row in rows:
+        if row.get("pid") in solo_pids:
+            continue
+        args = row.get("args") or ""
+        launcher, inner = split_launcher(args)
+        target = clean_command(inner if launcher else args)
+        if not target:
+            continue
+        # A launcher is matched on the program it wraps, never on the whole
+        # line: ``bash /hive/bin/miner-run srbminer 1`` is the HiveOS runner,
+        # not an SRBMiner process.
+        name = match_pattern(
+            basename(target.split()[0]) if launcher else target, patterns
+        )
+        if not name and launcher and re.search(SCRIPT_PATTERN, args, re.IGNORECASE):
+            name = "Script de minage"
+        if not name and looks_like_miner(target):
+            name = basename(target.split()[0])
+        if not name:
+            continue
+        details = parse_miner_cmd(target, name_hint=name)
+        if not details["name"]:
+            continue
+        tokens = target.split()
+        signature = (basename(tokens[0]), " ".join(tokens[1:]))
+        group = entries.get(signature)
+        if group is None:
+            group = {
+                "name": details["name"],
+                "label": details["name"],
+                "miner_name": details["name"],
+                "binary": details["binary"],
+                "kind": miner_kind(details["name"], target),
+                "version": details["version"],
+                "algorithm": details["algorithm"],
+                "pool": details["pool"],
+                "threads": details["threads"],
+                "user": row.get("user", ""),
+                "pid": row.get("pid"),
+                "cpu_pct": row.get("cpu_pct"),
+                "elapsed_s": row.get("elapsed_s"),
+                "api_port": None,
+                "cmd": mask_command(target),
+                "coin": "",
+                "count": 0,
+                "_direct": 0,
+                "_total": 0,
+            }
+            entries[signature] = group
+            order.append(signature)
+        group["_total"] += 1
+        if not launcher:
+            group["_direct"] += 1
+        cpu = row.get("cpu_pct")
+        if cpu is not None and (group["cpu_pct"] is None or cpu > group["cpu_pct"]):
+            # The busiest process is the one that really mines.
+            group["cpu_pct"] = cpu
+            group["pid"] = row.get("pid")
+            group["user"] = row.get("user", "")
+            group["elapsed_s"] = row.get("elapsed_s")
+            group["cmd"] = mask_command(target)
+
+    miners: list[dict[str, Any]] = []
+    for signature in order:
+        group = entries[signature]
+        direct, total = group.pop("_direct"), group.pop("_total")
+        group["count"] = direct or total
+        match = _API_PORT_RE.search(group["cmd"])
+        group["api_port"] = int(match.group(1)) if match else None
+        miners.append(group)
+
+    # Node solo mining absorbs the script/CPU lines that drive it.
+    for entry in solo:
+        key = str(entry.pop("_match", "") or "")
+        if key:
+            miners = [
+                miner for miner in miners
+                if not (
+                    miner["name"] == "Script de minage"
+                    and key in (miner.get("cmd") or "").lower()
+                )
+            ]
+        miners.append(entry)
+
+    hosts = coin_hosts or {}
+    tickers = {str(t).upper() for t in (coin_tickers or [])}
+    for miner in miners:
+        coin = miner.get("coin") or ""
+        if not coin:
+            coin = infer_coin(miner.get("pool", ""), hosts)
+        if not coin:
+            wallet = _flag_value((miner.get("cmd") or "").split(), WALLET_FLAGS)
+            coin = infer_coin_from_wallet(wallet, tickers)
+        miner["coin"] = normalize_coin(coin, coin_aliases)
+
+    cpu_miners = [m for m in miners if m["kind"] in ("cpu", "solo")]
+    api_port = next((m["api_port"] for m in miners if m.get("api_port")), None)
+    # Stable order: the process that exposes an API (the one whose hashrate is
+    # read) first, then the others, node solo mining last.
+    miners.sort(key=lambda m: (
+        m["kind"] == "solo",
+        m.get("api_port") is None,
+        m["name"].lower(),
+        str(m.get("pid")),
+    ))
+    return {
+        "miners": miners,
+        "cpu_miners": cpu_miners,
+        "api_port": api_port,
+        "solo": [m for m in miners if m["kind"] == "solo"],
+    }
 
 
 def detect_external_miners(

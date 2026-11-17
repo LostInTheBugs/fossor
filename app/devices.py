@@ -214,6 +214,13 @@ def _external_miners_json(entries: list[dict[str, Any]]) -> str | None:
             "pid": entry.get("pid"),
             "cpu_pct": entry.get("cpu_pct"),
             "gpu_id": entry.get("gpu_id"),
+            # 2026.11.003-c4: identical processes are one entry with a count,
+            # node solo mining reports its worker processes and the daemon's
+            # hashrate, so the dashboard can group by coin.
+            "count": entry.get("count") or 1,
+            "workers": entry.get("workers"),
+            "hashrate_hs": entry.get("hashrate_hs"),
+            "api_port": entry.get("api_port"),
         }
         for entry in entries
     ]

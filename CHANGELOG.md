@@ -4,6 +4,50 @@
 
 All notable changes to fossor are documented in this file.
 
+## [2026.11.003-c4] — 2026-11-17
+
+### Fixed
+- **Mineurs réels mal regroupés** : les lanceurs (`SCREEN`, `script -qc`, `sh -c`,
+  `bash -c`, `unbuffer`, `nohup`, `timeout`, `sudo`, `setsid`…) ne sont plus comptés
+  comme des mineurs ; chaque ligne est ramenée au processus qu'elle enveloppe et les
+  processus identiques (même binaire, mêmes arguments) forment **une** entrée avec un
+  compteur. Le Ryzen n'affiche plus 25 lignes pour un seul minage BigCoin à 11 workers,
+  le rig n'a plus chaque mineur en double. La commande de collecte de Fossor
+  (utilisateur `fossor`, `### HIVE_STAT`) est ignorée.
+- **Mineurs non reconnus** : un processus qui parle à un pool (`stratum://`, `--url`,
+  `--pool`) ou qui mine en CPU (`--cpu-threads`, `--cpu`) est retenu et nommé d'après
+  son binaire (`supryolo`) ; les SRBMiner renommés (`srbminer_custom_bin`,
+  `srbminer_compute`) sont reconnus sur le programme enveloppé, jamais sur la ligne
+  entière — le lanceur HiveOS `miner-run srbminer` n'est plus un mineur.
+- **Minage solo par nœud** : `korsh-cli`/`bigcoin-cli … generatetoaddress` pilotés par
+  un démon (`korshd`, `bitcoind -datadir=…`) donnent **une** entrée
+  « Minage solo (nœud) » avec le coin déduit du client/datadir, le nombre de workers et
+  le %CPU du démon.
+- **Coin vide** : l'hôte du pool est normalisé des deux côtés (le catalogue peut
+  stocker `stratum+tcp://pearl-eu2.luckypool.io:3360`), correspondance exacte puis par
+  sous-chaîne, `PEARL` replié sur `PRL` (alias), et un pool inconnu est résolu par le
+  préfixe du wallet (`oms1…` → OMS) quand ce ticker existe au catalogue.
+- **Hashrate absent** : une réponse HTTP 200 sans hashrate (page web, JSON étranger)
+  ne court-circuite plus le repli SSH — c'était la cause du « — » silencieux. Si un
+  mineur expose un port et que le hashrate reste vide après direct + SSH, `api_error`
+  est renseigné et affiché.
+- **%CPU et utilisateur** : `ps -eo user:32,pid,pcpu,etimes,args` (utilisateur complet,
+  plus d'`adminis+`), %CPU du processus retenu rempli et `count` exposé.
+- **Tableau de bord** : une carte par **coin** (PRL, KSH, WAM, BIG, OMS/inconnu) avec
+  machines, mineurs et workers ; un rig multi-coins ne compte plus comme un seul coin.
+- **Collecte allégée** : filtre `ps` appliqué sur la machine (threads noyau et
+  processus à 0 % sans indice de minage écartés), une seule ligne `raw_collections`
+  par machine.
+- **Version du compagnon** : `Configuration → Mise à jour` affiche la version de
+  `fossor-updater` (une mise à jour ne bascule que l'image de l'app) et signale l'écart
+  avec l'application.
+
+### Tests
+- Fixtures `ps` des trois machines (rig HiveOS, Ryzen 5 3600, athlon-3000g) avec wallets
+  et mots de passe fictifs : parseur figé, collecte → base → `/api/metrics/live`, e2e
+  des cartes par coin, intégration réelle (SSH + faux SRBMiner renommé sur 127.0.0.1)
+  pour le repli et pour le cas d'échec (`api_error`).
+
 ## [2026.11.003-c3] — 2026-11-17
 
 ### Fixed

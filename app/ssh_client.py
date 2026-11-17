@@ -93,7 +93,7 @@ WHITELISTED_COMMANDS: dict[str, str] = {
           nvidia-smi --query-gpu=index,pci.bus_id,temperature.gpu,power.draw,fan.speed,utilization.gpu --format=csv,noheader,nounits 2>/dev/null
         fi
         echo '### PS_MINERS'
-        ps -eo user,pid,pcpu,etimes,args 2>/dev/null
+        ps -eo user:32,pid,pcpu,etimes,args 2>/dev/null | awk 'NR==1{print;next} substr($5,1,1)=="["{next} $3+0>0 || /stratum|srbminer|cpuminer|wam-miner|xmrig|generatetoaddress|mine[-_]|--api-port|--pool|--url|korshd|bitcoind|-cli /{print}'
         echo '### UPTIME'
         cat /proc/uptime 2>/dev/null
         exit 0

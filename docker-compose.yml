@@ -26,6 +26,10 @@ services:
       # L'application doit connaître l'image qu'elle exécute : c'est ce nom que
       # la demande de mise à jour transmet, et l'updater refuse tout autre.
       - FOSSOR_IMAGE=${FOSSOR_IMAGE:-ghcr.io/lostinthebugs/fossor}
+      # Version du compagnon, affichée dans Configuration → Mise à jour : une
+      # mise à jour ne bascule que l'image de l'app, l'updater peut rester en
+      # arrière (-c1 face à une app -c3), et l'écran doit le dire.
+      - FOSSOR_UPDATER_TAG=${FOSSOR_UPDATER_TAG:-latest}
       # Renseigné par l'updater uniquement pendant un retour arrière : le
       # service redémarre alors avec la base sauvegardée (docker-entrypoint.sh).
       - FOSSOR_RESTORE_BACKUP=${FOSSOR_RESTORE_BACKUP:-}
@@ -45,6 +49,9 @@ services:
       # Chemin du projet sur l'hôte : lu dans l'étiquette compose s'il est vide.
       - FOSSOR_UPDATER_PROJECT_DIR=${FOSSOR_HOME:-}
       - FOSSOR_UPDATER_SERVICE=fossor
+      # Version réellement exécutée par le compagnon (tag de son image) : le
+      # rapport de mise à jour doit pouvoir dire qu'il est resté en arrière.
+      - FOSSOR_UPDATER_VERSION=${FOSSOR_UPDATER_TAG:-latest}
       - FOSSOR_UPDATER_EXPECTED_IMAGE=${FOSSOR_IMAGE:-ghcr.io/lostinthebugs/fossor}
       - FOSSOR_UPDATER_DIR=/data/update
       - FOSSOR_UPDATER_BACKUP_DIR=/data/backups

@@ -26,7 +26,7 @@ def test_hiveos_snapshot_maps_gpus_by_pci_bus():
     stats = parse_collect_stats(fixture("collect_stats_hiveos.txt"))
 
     assert stats["miner"] == "srbminer"
-    assert stats["coin"] == "PEARL"
+    assert stats["coin"] == "PRL"  # PEARL (HiveOS) replié sur le ticker du catalogue
     assert stats["algo"] == "pearlhash"
     assert stats["api_port"] == 21550
     assert stats["uptime_s"] == 183455  # /proc/uptime wins over miner uptime

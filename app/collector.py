@@ -94,6 +94,36 @@ def _coin_hosts(db) -> dict[str, str]:
     return hosts
 
 
+def _coin_catalogue(db) -> dict[str, Any]:
+    """Everything coin inference needs: pool hosts, tickers, names, aliases."""
+    from app.ai_config import get_setting
+    from app.models import Coin
+    from app.external_miners import COIN_ALIASES
+
+    hosts: dict[str, str] = {}
+    names: dict[str, str] = {}
+    tickers: list[str] = []
+    for coin in db.query(Coin).all():
+        ticker = str(coin.ticker or "").strip().upper()
+        if not ticker:
+            continue
+        tickers.append(ticker)
+        names[ticker.lower()] = ticker
+        if coin.name:
+            names[str(coin.name).strip().lower()] = ticker
+        for host in (coin.pool_hosts or []):
+            key = str(host or "").strip().lower()
+            if key:
+                hosts[key] = ticker
+    stored = get_setting(db, "coin_aliases", None)
+    aliases = dict(COIN_ALIASES)
+    if isinstance(stored, dict):
+        for key, value in stored.items():
+            if str(key).strip() and str(value).strip():
+                aliases[str(key).strip().upper()] = str(value).strip().upper()
+    return {"hosts": hosts, "tickers": tickers, "names": names, "aliases": aliases}
+
+
 def _store_raw_collection(db, machine, stdout: str) -> None:
     """Keep the last raw collection, masked (admin diagnostic screen)."""
     from app.external_miners import mask_raw_collect
@@ -113,26 +143,46 @@ def _store_raw_collection(db, machine, stdout: str) -> None:
     row.stdout = mask_raw_collect(stdout or "")
 
 
+def _api_hashrate(api: dict[str, Any] | None) -> bool:
+    """An API answer is only usable when it actually carries a hashrate."""
+    return isinstance(api, dict) and api.get("total_hashrate_hs") is not None
+
+
 async def _fetch_miner_api(machine, port: int) -> tuple[dict[str, Any] | None, str | None]:
     """Direct GET, then the SSH relay (SRBMiner bound to 127.0.0.1).
 
-    Returns ``(api, error)``: ``(payload, None)`` on success and
-    ``(None, "API du mineur injoignable")`` when both paths fail.
+    A 200 answer without a hashrate (web page, foreign JSON) is **not** a
+    success: the relay is still tried, and a miner that keeps a port but no
+    hashrate ends up with an ``api_error`` instead of a silent « — »
+    (2026.11.003-c4).
     """
-    api = await fetch_srbminer(machine.host, port)
-    if api:
-        return api, None
+    direct = await fetch_srbminer(machine.host, port)
+    if _api_hashrate(direct):
+        return direct, None
+    direct_note = "réponse sans hashrate" if direct else "port fermé"
+
     try:
         from app.ssh_client import ssh_miner_api
 
         raw = await ssh_miner_api(machine, port)
-    except Exception:
-        raw = None
+    except Exception as exc:  # pragma: no cover - defensive
+        raw = {"ok": False, "error": str(exc)}
+
+    relay: dict[str, Any] | None = None
     if raw and raw.get("ok"):
-        api = parse_srbminer_api(raw.get("stdout") or "")
-        if api:
-            return api, None
-    return None, "API du mineur injoignable"
+        relay = parse_srbminer_api(raw.get("stdout") or "")
+    if _api_hashrate(relay):
+        return relay, None
+
+    if (raw or {}).get("ok"):
+        relay_note = "réponse sans hashrate" if relay else "réponse illisible"
+        message = (
+            f"API du mineur sans hashrate (direct : {direct_note} ; SSH : {relay_note})"
+        )
+        return (relay if relay else None), message
+    relay_note = str((raw or {}).get("error") or "relais SSH indisponible")
+    message = f"API du mineur injoignable (direct : {direct_note} ; SSH : {relay_note})"
+    return None, message
 
 
 # ── Storage ───────────────────────────────────────────────────────────
@@ -380,8 +430,14 @@ async def collect_machine(machine_id: int) -> dict[str, Any]:
             logger.info("machine %s hors ligne: %s", machine.name, error)
             return {"machine_id": machine_id, "name": machine.name, "online": False, "error": error}
 
+        catalogue = _coin_catalogue(db)
         stats = parse_collect_stats(
-            raw.get("stdout", ""), patterns=_patterns(db), coin_hosts=_coin_hosts(db)
+            raw.get("stdout", ""),
+            patterns=_patterns(db),
+            coin_hosts=catalogue["hosts"],
+            coin_tickers=catalogue["tickers"],
+            coin_names=catalogue["names"],
+            coin_aliases=catalogue["aliases"],
         )
         from app.devices import mark_external_devices, set_external_miners
 
@@ -399,9 +455,26 @@ async def collect_machine(machine_id: int) -> dict[str, Any]:
             api, api_error = await _fetch_miner_api(machine, int(stats["api_port"]))
             if api:
                 stats = merge_srbminer(stats, api)
-            else:
-                stats["api_error"] = api_error
+            from app.external_miners import normalize_coin
 
+            stats["coin"] = normalize_coin(
+                stats.get("coin", ""), catalogue["aliases"]
+            )
+            # One hashrate per miner: it belongs to the process that answered.
+            total = stats.get("total_hashrate_hs")
+            for miner in stats.get("miners") or []:
+                if miner.get("api_port") and total is not None:
+                    miner["hashrate_hs"] = total
+            # A port that yields no hashrate must be visible, never a silent « — ».
+            if stats.get("total_hashrate_hs") is None:
+                stats["api_error"] = api_error or (
+                    "Hashrate absent : l'API du mineur n'a rien renvoyé"
+                )
+            else:
+                stats["api_error"] = None
+
+        # Miners as displayed (coin + per-miner hashrate included).
+        set_external_miners(machine, stats.get("miners") or [])
         rows = _store_metrics(db, machine, stats, ts)
         return {
             "machine_id": machine_id,

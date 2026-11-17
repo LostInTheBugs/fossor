@@ -181,23 +181,38 @@ function externalMinersHtml(m) {
 function tokenGroups(machines, byUuid) {
   const groups = {};
   machines.forEach((m) => {
-    const coin = (m.coin || "").trim();
-    const algo = (m.algo || "").trim();
-    const hashrate = Number(m.total_hashrate_hs || 0);
-    if (!coin && !algo && !hashrate && !(m.external_miners || []).length) return;
-    const key = (coin || "?").toUpperCase() + "|" + algo.toLowerCase();
-    const g = groups[key] || (groups[key] = {
-      coin: coin, algo: algo, hs: 0, machines: 0, devices: 0, revenue: null
-    });
-    g.machines += 1;
-    g.devices += (m.devices || []).filter((d) => !d.integrated).length;
-    g.hs += hashrate;
-    const energy = byUuid[m.uuid];
-    if (energy && energy.revenue_eur_day !== null && energy.revenue_eur_day !== undefined) {
-      g.revenue = (g.revenue || 0) + Number(energy.revenue_eur_day);
+    // 2026.11.003-c4: one group per coin mined by the machine (a rig can run
+    // PRL + WAM + KSH at once); fall back to the machine-level coin.
+    let list = m.coin_groups || [];
+    if (!list.length && (m.coin || m.algo || m.total_hashrate_hs)) {
+      list = [{ coin: m.coin, algo: m.algo, hashrate_hs: m.total_hashrate_hs,
+                miners: Math.max(1, (m.external_miners || []).length), workers: 0 }];
     }
+    if (!list.length) return;
+    const primary = list.reduce((a, b) =>
+      Number(b.hashrate_hs || 0) > Number(a.hashrate_hs || 0) ? b : a, list[0]);
+    list.forEach((g) => {
+      const coin = (g.coin || "").trim();
+      const algo = (g.algo || "").trim();
+      const hs = Number(g.hashrate_hs || 0);
+      const key = (coin || "?").toUpperCase();
+      const entry = groups[key] || (groups[key] = {
+        coin: coin, algo: algo, hs: 0, machines: 0, miners: 0, workers: 0, revenue: null
+      });
+      entry.machines += 1;
+      entry.miners += Number(g.miners || 0);
+      entry.workers += Number(g.workers || 0);
+      entry.hs += hs;
+      if (!entry.algo && algo) entry.algo = algo;
+      if (g === primary) {
+        const energy = byUuid[m.uuid];
+        if (energy && energy.revenue_eur_day !== null && energy.revenue_eur_day !== undefined) {
+          entry.revenue = (entry.revenue || 0) + Number(energy.revenue_eur_day);
+        }
+      }
+    });
   });
-  return Object.values(groups).sort((a, b) => b.hs - a.hs);
+  return Object.values(groups).sort((a, b) => (b.hs - a.hs) || a.coin.localeCompare(b.coin));
 }
 
 function renderTokens(machines, byUuid) {
@@ -210,12 +225,13 @@ function renderTokens(machines, byUuid) {
     const ticker = g.coin ? esc(g.coin.toUpperCase()) : "Coin inconnu";
     const algo = g.algo ? esc(g.algo) : (g.coin ? "" : "algo inconnu");
     const gain = g.revenue === null ? "gain inconnu" : "gain " + fmtEur(g.revenue) + " / j";
+    const workers = g.workers > g.miners ? " · " + g.workers + " workers" : "";
     return '<div class="token">' +
       '<div class="head"><span class="ticker">' + ticker + "</span>" +
       '<span class="algo">' + algo + "</span></div>" +
       '<div class="hs">' + fmtHs(g.hs || null) + "</div>" +
       '<div class="meta">' + g.machines + " machine" + (g.machines > 1 ? "s" : "") +
-      " · " + g.devices + " device" + (g.devices > 1 ? "s" : "") + " · " + gain + "</div>" +
+      " · " + g.miners + " mineur" + (g.miners > 1 ? "s" : "") + workers + " · " + gain + "</div>" +
       "</div>";
   }).join("");
 }

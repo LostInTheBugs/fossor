@@ -346,6 +346,7 @@ const renderUpdater=(d)=>{
       <dt>État</dt><dd>${esc(STATE_LABELS[u.state]||u.state)}</dd>
       <dt>Étape</dt><dd class="mono">${esc(u.step||'—')}</dd>
       <dt>Version</dt><dd class="mono">${esc(u.from||'—')} → ${esc(u.to||'—')}</dd>
+      <dt>Version du compagnon</dt><dd class="mono">${esc(u.version||'inconnue')}${u.version&&d.installed_version&&u.version!==d.installed_version?' <span class="chip off">différente de l\'application</span>':''}${!u.version?' <span class="chip idle">non rapportée par un updater antérieur</span>':''}</dd>
       <dt>Message</dt><dd>${esc(u.message||'—')}</dd>
       <dt>Dernier battement</dt><dd>${u.heartbeat_age_seconds==null?'—':u.heartbeat_age_seconds+' s'}</dd>
       <dt>Sauvegarde avant mise à jour</dt><dd class="mono">${esc(u.directory||'')}</dd></dl>`;

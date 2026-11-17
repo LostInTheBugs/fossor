@@ -24,22 +24,8 @@ import re
 from typing import Any, Sequence
 
 from app.hw_parser import norm_bus
-from app.external_miners import (
-    MINER_TOKENS,
-    CPU_MINERS,
-    infer_coin,
-    mask_command,
-    match_pattern,
-    miner_kind,
-    normalize_patterns,
-    parse_miner_cmd,
-    parse_ps_rows,
-)
 
 SECTIONS = ("HIVE_STAT", "HIVE_GPU", "NVSMI", "PS_MINERS", "UPTIME")
-
-
-_API_PORT = re.compile(r"--api[-_]port[=\s]+(\d+)")
 
 _HS_UNITS: dict[str, float] = {
     "": 1.0,
@@ -274,44 +260,36 @@ def parse_nvsmi(section: str) -> list[dict[str, Any]]:
 
 
 # ── Miners process list and uptime ────────────────────────────────────
-def parse_ps_miners(section: str, patterns: Sequence[dict[str, str]] | None = None) -> dict[str, Any]:
-    """Running miners from ``ps -eo user,pid,pcpu,etimes,args``.
+def parse_ps_miners(
+    section: str,
+    patterns: Sequence[dict[str, str]] | None = None,
+    coin_hosts: dict[str, str] | None = None,
+    coin_tickers: Sequence[str] | None = None,
+    coin_names: dict[str, str] | None = None,
+    coin_aliases: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Running miners from ``ps -eo user:32,pid,pcpu,etimes,args``.
 
-    Also returns full external miner details (cmd, algorithm, pool, threads,
-    CPU charge) for the UI.  ``patterns`` is the configurable pattern list
-    (name + process regex); ``None`` means the built-in defaults.
+    Delegates to :func:`app.external_miners.detect_running_miners`, which
+    strips launchers (``screen``, ``script -qc``, ``bash -c``, ``unbuffer``…),
+    groups identical processes with a ``count`` and turns node solo mining into
+    one ``Minage solo (nœud)`` entry per coin (2026.11.003-c4).
     """
-    found: list[dict[str, Any]] = []
-    for row in parse_ps_rows(section):
-        cmd = row["args"]
-        name = match_pattern(cmd, patterns)
-        if not name:
-            continue
-        details = parse_miner_cmd(cmd, name_hint=name)
-        match = _API_PORT.search(cmd)
-        found.append({
-            "name": details["name"],
-            "label": details["name"],
-            "version": details["version"],
-            "algorithm": details["algorithm"],
-            "pool": details["pool"],
-            "threads": details["threads"],
-            "binary": details["binary"],
-            "kind": miner_kind(details["name"], cmd),
-            "user": row.get("user", ""),
-            "pid": row.get("pid"),
-            "cpu_pct": row.get("cpu_pct"),
-            "elapsed_s": row.get("elapsed_s"),
-            "api_port": int(match.group(1)) if match else None,
-            "cmd": mask_command(cmd),
-        })
-    primary = next((m for m in found if m["api_port"]), found[0] if found else None)
-    cpu_miners = [m for m in found if m["kind"] == "cpu"]
+    from app.external_miners import detect_running_miners
+
+    result = detect_running_miners(
+        section,
+        patterns=patterns,
+        coin_hosts=coin_hosts,
+        coin_tickers=coin_tickers,
+        coin_names=coin_names,
+        coin_aliases=coin_aliases,
+    )
     return {
-        "miner": primary["binary"] if primary else "",
-        "api_port": primary["api_port"] if primary else None,
-        "miners": found,
-        "cpu_miners": cpu_miners,
+        "miner": result["miners"][0]["binary"] if result["miners"] else "",
+        "api_port": result["api_port"],
+        "miners": result["miners"],
+        "cpu_miners": result["cpu_miners"],
     }
 
 
@@ -395,18 +373,33 @@ def parse_collect_stats(
     stdout: str,
     patterns: Sequence[dict[str, str]] | None = None,
     coin_hosts: dict[str, str] | None = None,
+    coin_tickers: Sequence[str] | None = None,
+    coin_names: dict[str, str] | None = None,
+    coin_aliases: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Parse a full ``collect_stats`` output into a normalised snapshot.
 
     *patterns* is the configurable external-miner pattern list (``None`` =
-    built-in defaults); *coin_hosts* maps a pool host substring to a ticker
-    so a miner's coin is inferred from its pool (``pearl.luckypool.io`` → PRL).
+    built-in defaults); *coin_hosts* maps a pool host to a ticker so a miner's
+    coin is inferred from its pool (``pearl-eu2.luckypool.io`` → PRL), then
+    from its wallet prefix (``oms1…`` → OMS).  *coin_names* maps a client or
+    datadir name to a ticker for node solo mining, *coin_aliases* folds HiveOS
+    spellings (``PEARL`` → ``PRL``).
     """
+    from app.external_miners import normalize_coin
+
     sections = split_sections(stdout)
     hive = parse_hive_stat(sections["HIVE_STAT"])
     hive_gpu = parse_hive_gpu(sections["HIVE_GPU"])
     nvsmi = parse_nvsmi(sections["NVSMI"])
-    ps = parse_ps_miners(sections["PS_MINERS"], patterns)
+    ps = parse_ps_miners(
+        sections["PS_MINERS"],
+        patterns,
+        coin_hosts=coin_hosts,
+        coin_tickers=coin_tickers,
+        coin_names=coin_names,
+        coin_aliases=coin_aliases,
+    )
     uptime = parse_uptime(sections["UPTIME"])
 
     devices = _build_gpus(hive, hive_gpu, nvsmi)
@@ -428,10 +421,7 @@ def parse_collect_stats(
             "occupied_external": bool(ps["cpu_miners"]),
         })
 
-    hosts = coin_hosts or {}
-    for miner in ps["miners"]:
-        miner["coin"] = infer_coin(miner.get("pool", ""), hosts)
-    hive_coin = hive.get("coin", "")
+    hive_coin = normalize_coin(hive.get("coin", ""), coin_aliases)
     inferred = next((m["coin"] for m in ps["miners"] if m.get("coin")), "")
 
     total_hs = _first(hive.get("total_hashrate_hs"), None)

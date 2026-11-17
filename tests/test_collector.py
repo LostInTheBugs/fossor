@@ -90,7 +90,7 @@ async def test_collect_stores_one_metric_per_device(monkeypatch):
         assert status.online is True
         assert status.error is None
         assert status.miner == "srbminer"
-        assert status.coin == "PEARL"
+        assert status.coin == "PRL"  # alias PEARL → PRL (2026.11.003-c4)
         assert status.api_port == 21550
         assert status.total_hashrate_hs == pytest.approx(3.28947e14)
     finally:
