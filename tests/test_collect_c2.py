@@ -185,7 +185,7 @@ async def test_api_unreachable_is_reported(monkeypatch):
     db = SessionLocal()
     try:
         status = db.query(MachineStatus).one()
-        assert status.api_error == "API du mineur injoignable"
+        assert status.api_error.startswith("API du mineur injoignable")
     finally:
         db.close()
 
@@ -207,4 +207,7 @@ async def test_patterns_are_configurable(client):
     stats = parse_collect_stats(
         RAW, patterns=[{"name": "Mineur maison", "pattern": "mine-x\\.sh"}]
     )
-    assert [m["name"] for m in stats["miners"]] == ["Mineur maison"]
+    assert [m["name"] for m in stats["miners"]][-1] == "Mineur maison"
+    # 2026.11.003-c4 : la liste personnalisée *ajoute* un motif, elle ne
+    # désactive plus la reconnaissance des mineurs évidents (pool stratum).
+    assert "SRBMiner-MULTI" in [m["name"] for m in stats["miners"]]

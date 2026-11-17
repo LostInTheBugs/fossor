@@ -69,7 +69,27 @@ async def test_dashboard_is_landing_page_with_zero_console_errors(e2e_server):
         # 5. The page refreshes itself every 30 s without reloading.
         assert await page.evaluate("typeof setInterval === 'function'")
 
-        # 6. Zero browser errors at all.
+        # 6. 003-c2: no global "Hashrate total" — one card per token/algo.
+        assert await page.query_selector("#sHash") is None
+        assert "hashrate par token" in (await page.inner_text(".tokens-title")).lower()
+        groups = await page.evaluate(
+            """() => tokenGroups([
+                {uuid:'a', coin:'PRL', algo:'pearlhash', total_hashrate_hs:1e9,
+                 devices:[{kind:'gpu'},{kind:'cpu'}]},
+                {uuid:'b', coin:'PRL', algo:'pearlhash', total_hashrate_hs:1e9,
+                 devices:[{kind:'gpu'}]},
+                {uuid:'c', coin:'KSH', algo:'yespower', total_hashrate_hs:5e6,
+                 devices:[{kind:'cpu'}]}
+            ], {})"""
+        )
+        assert len(groups) == 2, groups
+        prl = [g for g in groups if g["coin"] == "PRL"][0]
+        ksh = [g for g in groups if g["coin"] == "KSH"][0]
+        assert prl["hs"] == 2e9 and prl["machines"] == 2 and prl["devices"] == 3
+        assert ksh["hs"] == 5e6 and ksh["machines"] == 1
+        assert await page.query_selector("#tokenCards") is not None
+
+        # 7. Zero browser errors at all.
         assert console_errors == [], f"console errors: {console_errors}"
         assert page_errors == [], f"page errors: {page_errors}"
 

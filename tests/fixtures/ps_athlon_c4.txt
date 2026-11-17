@@ -1,0 +1,8 @@
+### HIVE_STAT
+### HIVE_GPU
+### NVSMI
+### PS_MINERS
+administrator 1187 6.4 160630 ./srbminer/srbminer_compute --algorithm pearlhash --wallet prl1testwallet000000000000000000 --worker athlon-3000g --pool pearl-eu2.luckypool.io:3360 --api-enable --api-port 21550 --log-file /home/administrator/mining/log/srbminer-athlon.log
+root 1270 198 160627 /home/administrator/cpuminer-korsh --algo yespower --param-n 256 --param-r 8 --url stratum+tcp://pool.korsh.org:3333 --user Ktestaddress000000000000000000.korsh --threads 2
+### UPTIME
+160630.00 999999.00

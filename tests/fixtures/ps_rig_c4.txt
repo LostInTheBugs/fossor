@@ -1,0 +1,17 @@
+### HIVE_STAT
+### HIVE_GPU
+### NVSMI
+### PS_MINERS
+root 697 0.0 264328 SCREEN -dmS wam bash -c exec /root/wam/wam-miner -o stratum+tcp://pool.wamcoin.org:3333 -u wam1testwallet0000000000000000.rig -t 2 >> /root/wam/miner.log 2>&1
+root 699 191 264328 /root/wam/wam-miner -o stratum+tcp://pool.wamcoin.org:3333 -u wam1testwallet0000000000000000.rig -t 2
+root 2978 0.0 264283 SCREEN -dm -c /hive/etc/screenrc.miner bash
+root 2995 0.0 264282 bash /hive/bin/miner-run srbminer 1
+root 3034 0.0 264282 unbuffer ./SRBMiner-MULTI --algorithm pearlhash --pool pearl-eu2.luckypool.io:3360 --wallet prl1testwallet000000000000000000 --password x --api-enable --api-port 21550 --log-file /var/log/miner/srbminer/srbminer.log
+root 3035 34.1 264282 ./SRBMiner-MULTI --algorithm pearlhash --pool pearl-eu2.luckypool.io:3360 --wallet prl1testwallet000000000000000000 --password x --api-enable --api-port 21550 --log-file /var/log/miner/srbminer/srbminer.log
+root 4063 92.8 264275 /root/korsh/bin/korshd -datadir=/root/korsh/data -daemon
+root 4992 0.0 264260 SCREEN -dmS korsh-miner /root/korsh/korsh-miner.sh
+root 4993 0.0 264260 /bin/bash /root/korsh/korsh-miner.sh
+root 3775502 0.0 1 /root/korsh/bin/korsh-cli -datadir=/root/korsh/data generatetoaddress 1 Ktestaddress000000000000000000 200000
+fossor 3775665 0.0 0 bash -c echo '### HIVE_STAT' cat /run/hive/last_stat.json 2>/dev/null; echo '### HIVE_GPU'
+### UPTIME
+264328.00 999999.00

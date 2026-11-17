@@ -298,6 +298,11 @@ def payload() -> dict:
     return {
         "present": present,
         "state": (status or {}).get("state") or ("idle" if present else "absent"),
+        # 2026.11.003-c4: the companion is a *separate* image and can lag
+        # behind the app (prod kept a -c1 updater after a -c3 app update).
+        "version": (status or {}).get("updater_version")
+        or (os.environ.get("FOSSOR_UPDATER_TAG") or "").strip()
+        or None,
         "from": (status or {}).get("from"),
         "to": (status or {}).get("to"),
         "step": (status or {}).get("step"),

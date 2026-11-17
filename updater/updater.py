@@ -40,7 +40,7 @@ STATES = (
     "idle", "pulling", "backing_up", "switching", "health_check",
     "done", "rolled_back", "failed",
 )
-UPDATER_VERSION = "1.0.0"
+UPDATER_VERSION = (os.environ.get("FOSSOR_UPDATER_VERSION") or "1.0.0").strip()
 
 
 def now() -> str:
