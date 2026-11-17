@@ -1,6 +1,53 @@
 # Changelog
 
+## 2026.11.003-c9 — 2026-11-17
+
+### Correctif : image c8 retirée, garde-fou de tag
+
+- **2026.11.003-c8 est retirée** : l'image publiée sous ce tag annonçait
+  `2026.11.004-dev` (le tag avait été déplacé sur un commit de `main`), l'updater
+  l'a refusée au contrôle de santé et la prod est revenue à c7 en 4 s. Utiliser
+  `2026.11.003-c9`.
+- **Garde-fou de release** : `scripts/verify_release_tag.sh` fait échouer les
+  jobs `release` et `docker` si le contenu de `VERSION` dans l'arbre du tag
+  diffère du nom du tag — un tag déplacé ne peut plus publier d'image.
+- **Contrôle avant publication** : le job `docker` construit l'image **sans** la
+  pousser, la lance et vérifie que `/api/version` renvoie exactement le nom du
+  tag ; `:<tag>` puis `:latest` ne partent qu'après ce contrôle.
+- **Règle** : un tag publié ne se déplace jamais ; les tests écrits après coup
+  vont dans la version suivante.
+- Tests : fixtures c8 et harnais d'intégration du compagnon
+  (`tests/docker/selfupdate_c8.sh`, `tests/test_collect_c8.py`) désormais
+  versionnés sous un tag cohérent.
+
+### Contenu repris de 2026.11.003-c8
+
+- Compagnon : `_self_update` **tire** désormais son image cible (`docker pull`,
+  délai 300 s) au lieu de vérifier sa seule présence locale ; en cas d'échec du
+  pull seulement, il reste en place avec la raison. Trace `self_pull` dans
+  `history.jsonl`.
+- Journaux des mineurs : `/proc/<pid>/fd/1|2` lu avec `sudo -n readlink`, donc
+  le log d'un lanceur (`/var/log/athlon-korsh-miner.log`) et plus seulement
+  celui écrit dans la ligne de commande ; socket/pty → `journalctl _PID`.
+- Nœuds solo : client relatif (`./bigcoin-cli`) résolu par
+  `/proc/<pid>/cwd` + `-datadir` relatif ; `getmininginfo` appelé avec `sudo -n`.
+- Solo stable : démon `*d -daemon` qui consomme du CPU, ou script
+  `*-miner.sh`/`mine-*.sh` ; le client `generatetoaddress` ne compte que les
+  workers (le solo KORSH du rig ne disparaît plus entre deux collectes).
+- Mineur à 0 % CPU : « mineur inactif (0 % CPU, log sans hashrate récent) » avec
+  la date de dernière modification du log, au lieu de « inconnu ».
+- CPU : sonde exécutée à chaque collecte (fréquence `cpu MHz` normalisée même
+  sans mineur), puissance SRBMiner `cpu_devices[0].package_power`, RAPL via
+  `sudo -n`, puis `amd_energy`/`zenpower` ; la source de la valeur est exposée.
+- Diagnostic : `raw_collections` porte la sortie de la sonde CPU, toujours masquée.
+- Tests : fixtures fd fichier/socket, `TTF @ 237.8 Mh/s`, cwd + `getmininginfo`,
+  korshd sans client, `cpu MHz`, RAPL root, `package_power` ; bout en bout
+  athlon/Ryzen/rig ; intégration Docker du compagnon (pull absent → c8, puis
+  c7 → c8 image pré-tirée).
+
 ## 2026.11.003-c8 — 2026-11-17
+
+> **Retirée** : image publiée avec une mauvaise version, utiliser `2026.11.003-c9`.
 
 ### Correctif : auto-mise à jour, hashrate CPU, fréquence et puissance
 - Compagnon : `_self_update` **tire** désormais son image cible (`docker pull`,

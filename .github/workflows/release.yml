@@ -16,6 +16,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Garde-fou 2026.11.003-c9 : l'arbre du tag doit annoncer sa propre
+      # version. Un tag déplacé sur un commit d'une autre version a publié une
+      # image « -c8 » qui répondait « 2026.11.004-dev » (incident du 17/11).
+      - name: Verify VERSION matches tag
+        run: bash scripts/verify_release_tag.sh "$GITHUB_REF_NAME"
+
       - name: Read VERSION
         id: version
         run: echo "version=$(cat VERSION)" >> $GITHUB_OUTPUT
@@ -48,6 +54,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify VERSION matches tag
+        run: bash scripts/verify_release_tag.sh "$GITHUB_REF_NAME"
+
       - name: Image name (lowercase registry path)
         id: image
         run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> $GITHUB_OUTPUT
@@ -66,14 +75,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
+      # Construite sans être poussée : l'image doit d'abord prouver qu'elle
+      # annonce bien la version de son tag, sinon :latest publierait une
+      # fausse version (c'est exactement ce qui est arrivé en c8).
+      - name: Build app image (no push)
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: true
-          tags: |
-            ${{ steps.image.outputs.name }}:${{ github.ref_name }}
-            ${{ steps.image.outputs.name }}:latest
+          push: false
+          load: true
+          tags: fossor-smoke:${{ github.ref_name }}
           labels: |
             org.opencontainers.image.title=fossor
             org.opencontainers.image.version=${{ github.ref_name }}
@@ -81,6 +92,50 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Smoke test /api/version before publishing
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          PORT=18008
+          docker run -d --name fossor-smoke -p "${PORT}:8008" \
+            -e FOSSOR_UPDATE_CHECK_INTERVAL=0 \
+            "fossor-smoke:${TAG}"
+          cleanup() {
+            docker logs fossor-smoke || true
+            docker rm -f fossor-smoke >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          BODY=""
+          for _ in $(seq 1 60); do
+            if BODY="$(curl -fsS "http://127.0.0.1:${PORT}/api/version" 2>/dev/null)"; then
+              [ -n "${BODY}" ] && break
+            fi
+            BODY=""
+            sleep 2
+          done
+          if [ -z "${BODY}" ]; then
+            echo "::error::/api/version ne répond pas dans l'image ${TAG}"
+            exit 1
+          fi
+          IN_IMAGE="$(printf '%s' "${BODY}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')"
+          echo "tag         : ${TAG}"
+          echo "api/version : ${IN_IMAGE}"
+          if [ "${IN_IMAGE}" != "${TAG}" ]; then
+            echo "::error::L'image annonce '${IN_IMAGE}' au lieu de '${TAG}' — publication annulée."
+            exit 1
+          fi
+          echo "OK : l'image annonce la version de son tag"
+
+      - name: Push app image (tag, then latest)
+        run: |
+          set -euo pipefail
+          IMAGE="${{ steps.image.outputs.name }}"
+          TAG="${GITHUB_REF_NAME}"
+          docker tag "fossor-smoke:${TAG}" "${IMAGE}:${TAG}"
+          docker tag "fossor-smoke:${TAG}" "${IMAGE}:latest"
+          docker push "${IMAGE}:${TAG}"
+          docker push "${IMAGE}:latest"
 
       - name: Build and push updater
         uses: docker/build-push-action@v6
