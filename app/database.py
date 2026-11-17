@@ -68,6 +68,8 @@ def init_db():
     _migrate_device_integrated_column()
     _migrate_wallet_pool_host_column()
     _migrate_machine_power_columns()
+    _migrate_device_occupied_external_column()
+    _migrate_machine_external_miners_column()
 
 
 def _migrate_device_integrated_column():
@@ -116,6 +118,24 @@ def _migrate_machine_power_columns():
     _add_column_if_missing("machines", "cpu_power_w", "cpu_power_w FLOAT")
     _add_column_if_missing(
         "machines", "platform_power_w", "platform_power_w FLOAT NOT NULL DEFAULT 50"
+    )
+
+
+def _migrate_device_occupied_external_column():
+    """Add devices.occupied_external — GPU occupied by external miner (§4.24)."""
+    _add_column_if_missing(
+        "devices",
+        "occupied_external",
+        "occupied_external BOOLEAN NOT NULL DEFAULT 0",
+    )
+
+
+def _migrate_machine_external_miners_column():
+    """Add machines.external_miners — last external miners seen (§2.6)."""
+    _add_column_if_missing(
+        "machines",
+        "external_miners",
+        "external_miners TEXT",
     )
 
 

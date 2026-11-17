@@ -96,7 +96,7 @@ async def _ensure_devices(db, machine) -> bool:
         return False
 
     try:
-        raw = await ssh_detect_hw(machine)
+        raw = await ssh_detect_hw(machine, actor="system")
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("détection automatique de %s en échec: %s", machine.name, exc)
         return False
@@ -104,7 +104,7 @@ async def _ensure_devices(db, machine) -> bool:
     if not raw.get("ok"):
         logger.info("détection automatique de %s impossible: %s", machine.name, raw.get("error"))
         db.add(AuditLog(
-            actor="scheduler",
+            actor="system",
             action="detect",
             machine_id=machine.id,
             object_ref=machine.name,
@@ -121,9 +121,10 @@ async def _ensure_devices(db, machine) -> bool:
 
         detected = parse_detect_hw(raw.get("stdout", ""))
 
-    summary = apply_detection(db, machine, detected)
+    external_miners = raw.get("gpu_compute", [])
+    summary = apply_detection(db, machine, detected, gpu_compute=external_miners)
     db.add(AuditLog(
-        actor="scheduler",
+        actor="system",
         action="detect",
         machine_id=machine.id,
         object_ref=machine.name,
@@ -296,8 +297,16 @@ async def collect_machine(machine_id: int) -> dict[str, Any]:
             return {"machine_id": machine_id, "online": False, "error": "machine inconnue"}
         if not machine.enabled or str(machine.usage) == "none":
             return {"machine_id": machine_id, "skipped": True}
+        if str(machine.auth_type) == "provision_pending":
+            # §2.2: never attempt a connection before the account exists.
+            return {
+                "machine_id": machine_id,
+                "name": machine.name,
+                "skipped": True,
+                "error": "machine pas encore préparée (provision_pending)",
+            }
 
-        raw = await ssh_collect_stats(machine)
+        raw = await ssh_collect_stats(machine, actor="system")
         ts = _now()
         if not raw.get("ok"):
             error = raw.get("error", "collecte impossible")
@@ -306,6 +315,11 @@ async def collect_machine(machine_id: int) -> dict[str, Any]:
             return {"machine_id": machine_id, "name": machine.name, "online": False, "error": error}
 
         stats = parse_collect_stats(raw.get("stdout", ""))
+        if stats.get("miners") is not None:
+            from app.devices import set_external_miners
+
+            set_external_miners(machine, stats.get("miners") or [])
+            db.commit()
         # §4.2: first collection of a machine without devices → detect once,
         # so this round's GPU metrics attach by PCI bus instead of NULL.
         await _ensure_devices(db, machine)

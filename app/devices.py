@@ -60,8 +60,12 @@ def _apply(db: Session, device: Device, values: dict[str, Any]) -> None:
     device.updated_at = _now()
 
 
-def apply_detection(db: Session, machine: Machine, detected: dict[str, Any]) -> dict[str, Any]:
-    """Create/update/soft-remove devices for *machine*; commit and report."""
+def apply_detection(db: Session, machine: Machine, detected: dict[str, Any], gpu_compute: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Create/update/soft-remove devices for *machine*; commit and report.
+
+    *gpu_compute* is a list of external miner GPU entries from nvidia-smi.
+    GPUs whose gpu_id matches an external miner are marked occupied_external.
+    """
     seen: set[int] = set()
     created = 0
     updated = 0
@@ -132,12 +136,34 @@ def apply_detection(db: Session, machine: Machine, detected: dict[str, Any]) -> 
         db.flush()
         seen.add(device.id)
 
+    # Mark GPUs occupied by external miners
+    if gpu_compute:
+        occupied_indices: set[int] = set()
+        for miner in gpu_compute:
+            gid = miner.get("gpu_id")
+            if gid is not None:
+                occupied_indices.add(gid)
+        for device in db.query(Device).filter(
+            Device.machine_id == machine.id,
+            Device.kind == "gpu",
+            Device.present.is_(True),
+        ).all():
+            dev_idx = device.index
+            if dev_idx is not None and dev_idx in occupied_indices:
+                device.occupied_external = True
+            else:
+                device.occupied_external = False
+            device.updated_at = _now()
+
     missing = 0
     for device in db.query(Device).filter(Device.machine_id == machine.id).all():
         if device.id not in seen and device.present:
             device.present = False
             device.updated_at = _now()
             missing += 1
+
+    if gpu_compute is not None:
+        machine.external_miners = _external_miners_json(gpu_compute)
 
     virt = detected.get("virt") or {}
     machine.vm_host = bool(virt.get("kvm") or virt.get("pveversion"))
@@ -154,6 +180,30 @@ def apply_detection(db: Session, machine: Machine, detected: dict[str, Any]) -> 
         "missing": missing,
         "device_count": len(seen),
     }
+
+
+def _external_miners_json(entries: list[dict[str, Any]]) -> str | None:
+    """Serialise the display fields of external miners (already masked)."""
+    import json
+
+    if not entries:
+        return None
+    payload = [
+        {
+            "name": entry.get("miner_name") or entry.get("label") or entry.get("name") or "",
+            "version": entry.get("version") or "",
+            "algorithm": entry.get("algorithm") or "",
+            "pool": entry.get("pool") or "",
+            "gpu_id": entry.get("gpu_id"),
+        }
+        for entry in entries
+    ]
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def set_external_miners(machine: Machine, entries: list[dict[str, Any]]) -> None:
+    """Persist the last external miners seen on *machine*."""
+    machine.external_miners = _external_miners_json(entries)
 
 
 def compute_usage(db: Session, machine: Machine) -> str:
@@ -205,6 +255,7 @@ def device_to_dict(device: Device) -> dict[str, Any]:
         "present": device.present,
         "enabled_for_mining": device.enabled_for_mining,
         "integrated": device.integrated,
+        "occupied_external": device.occupied_external,
         "created_at": device.created_at,
         "updated_at": device.updated_at,
     }

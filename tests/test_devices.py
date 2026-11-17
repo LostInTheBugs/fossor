@@ -176,6 +176,7 @@ class TestDeviceApi:
     async def _create_machine(self, client) -> int:
         r = await client.post("/api/machines", json={
             "name": "jetable", "host": "192.0.2.10", "ssh_user": "root",
+            "auth_type": "key",
         })
         assert r.status_code == 200, r.text
         return r.json()["id"]
@@ -183,7 +184,7 @@ class TestDeviceApi:
     def _fake_detect(self, fixture: str):
         payload = detect(fixture)
 
-        async def fake_detect_hw(machine):
+        async def fake_detect_hw(machine, actor="system"):
             return {
                 "ok": True,
                 "latency_ms": 1.0,
@@ -230,7 +231,7 @@ class TestDeviceApi:
     async def test_detect_refuses_changed_fingerprint(self, client, monkeypatch):
         machine_id = await self._create_machine(client)
 
-        async def fake_refused(machine):
+        async def fake_refused(machine, actor="system"):
             return {
                 "ok": False,
                 "error": "Empreinte changée : ancienne SHA256:aaa, nouvelle SHA256:bbb",

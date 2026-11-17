@@ -55,7 +55,7 @@ async def test_collect_stores_one_metric_per_device(monkeypatch):
     machine_id = seed_machine()
     from app import collector
 
-    async def fake_ssh(machine):
+    async def fake_ssh(machine, actor=None):
         return {"ok": True, "stdout": HIVE}
 
     async def no_api(host, port):  # pragma: no cover - HiveOS covers hashrates
@@ -101,7 +101,7 @@ async def test_collect_marks_machine_offline_with_its_error(monkeypatch):
     machine_id = seed_machine(name="rig-offline")
     from app import collector
 
-    async def failing_ssh(machine):
+    async def failing_ssh(machine, actor=None):
         return {"ok": False, "error": "Empreinte changée : ancienne A, nouvelle B"}
 
     monkeypatch.setattr("app.ssh_client.ssh_collect_stats", failing_ssh)
@@ -129,7 +129,7 @@ async def test_usage_none_is_never_contacted(monkeypatch):
 
     calls: list[int] = []
 
-    async def spy_ssh(machine):
+    async def spy_ssh(machine, actor=None):
         calls.append(machine.id)
         return {"ok": True, "stdout": HIVE}
 
@@ -149,7 +149,7 @@ async def test_srbminer_api_completes_ubuntu_machine(monkeypatch):
     from app import collector
     from app.stats_parser import parse_srbminer_api
 
-    async def fake_ssh(machine):
+    async def fake_ssh(machine, actor=None):
         return {"ok": True, "stdout": UBUNTU}
 
     async def fake_api(host, port):
@@ -182,7 +182,7 @@ async def test_hiveos_secrets_reach_neither_database_nor_logs(monkeypatch, caplo
     machine_id = seed_machine(name="rig-secrets")
     from app import collector
 
-    async def fake_ssh(machine):
+    async def fake_ssh(machine, actor=None):
         return {"ok": True, "stdout": HIVE}
 
     async def no_api(host, port):

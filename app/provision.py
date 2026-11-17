@@ -236,16 +236,17 @@ async def _exec(conn, script: str, password: str | None = None) -> tuple[int, st
     return int(status or 0), _redact(stdout, password or ""), _redact(stderr, password or "")
 
 
-def _audit(machine_id: int | None, result: str, output: str) -> None:
+def _audit(machine_id: int | None, result: str, output: str,
+           actor: str = "system") -> None:
     """Audit entry — never contains the temporary password."""
     from app.database import SessionLocal
-    from app.models import ActorEnum, AuditLog
+    from app.models import AuditLog
 
     db = SessionLocal()
     try:
         db.add(
             AuditLog(
-                actor=ActorEnum.fred,
+                actor=actor or "system",
                 action="provision",
                 machine_id=machine_id,
                 result=result,
@@ -257,12 +258,27 @@ def _audit(machine_id: int | None, result: str, output: str) -> None:
         db.close()
 
 
+def _french_connection_error(error: str) -> str:
+    """Name the network failure in French instead of leaking errno text."""
+    text = str(error or "")
+    lowered = text.lower()
+    if "name or service not known" in lowered or "no address associated" in lowered:
+        return "hôte introuvable : vérifiez l'adresse IP ou le nom DNS de la machine"
+    if "connection refused" in lowered or "connect failed" in lowered:
+        return "connexion refusée par la machine : vérifiez l'adresse et le port SSH"
+    if "timed out" in lowered or "timeout" in lowered:
+        return "délai dépassé : la machine ne répond pas"
+    return text
+
+
+
+
 def _failed(machine_id: int | None, step: str, detail: str, steps: list[str],
-            rollback: str = "") -> dict[str, Any]:
+            rollback: str = "", actor: str = "system") -> dict[str, Any]:
     message = f"préparation échouée à l'étape « {step} » — {detail}"
     if rollback:
         message += f" ; {rollback}"
-    _audit(machine_id, "fail", message)
+    _audit(machine_id, "fail", message, actor=actor)
     return {
         "ok": False,
         "step": step,
@@ -317,6 +333,7 @@ async def provision_machine(
     temp_user: str,
     temp_password: str,
     account: str = "fossor",
+    actor: str = "system",
 ) -> dict[str, Any]:
     """Prepare the dedicated account through one temporary SSH session."""
     from app import fossor_keys
@@ -343,44 +360,49 @@ async def provision_machine(
         pinned_public_key=(machine.host_key_public or "").strip() or None,
         machine_id=machine.id,
         audit_kind="provision",
+        actor=actor,
     )
     if failure is not None:
         return _failed(
-            machine.id, STEP_TEMP_CONNECTION, _redact(failure.get("error", ""), temp_password), steps
+            machine.id,
+            STEP_TEMP_CONNECTION,
+            _french_connection_error(_redact(failure.get("error", ""), temp_password)),
+            steps,
+            actor=actor,
         )
 
     try:
         status, out, err = await _exec(conn, _PREFLIGHT)
         if status != 0 or "PREFLIGHT_OK" not in out:
-            return _failed(machine.id, STEP_PREFLIGHT, _missing_tool_message(out or err), steps)
+            return _failed(machine.id, STEP_PREFLIGHT, _missing_tool_message(out or err), steps, actor=actor)
         steps.append("préflight")
 
         status, out, err = await _exec(conn, _script_create_account(account), temp_password)
         if status != 0 or ("ACCOUNT_CREATED" not in out and "ACCOUNT_EXISTS" not in out):
             note = await _rollback(conn, machine.id, state, account, public_key, temp_password)
-            return _failed(machine.id, STEP_ACCOUNT, _detail(out, err), steps, note)
+            return _failed(machine.id, STEP_ACCOUNT, _detail(out, err), steps, note, actor=actor)
         state["account_created"] = "ACCOUNT_CREATED" in out
         steps.append("compte")
 
         status, out, err = await _exec(conn, _script_install_key(account, public_key), temp_password)
         if status != 0 or ("KEY_INSTALLED" not in out and "KEY_PRESENT" not in out):
             note = await _rollback(conn, machine.id, state, account, public_key, temp_password)
-            return _failed(machine.id, STEP_KEY, _detail(out, err), steps, note)
+            return _failed(machine.id, STEP_KEY, _detail(out, err), steps, note, actor=actor)
         state["key_installed"] = "KEY_INSTALLED" in out
         steps.append("clé")
 
         status, out, err = await _exec(conn, _script_install_sudoers(account), temp_password)
         if status != 0 or "SUDOERS_INSTALLED" not in out:
             note = await _rollback(conn, machine.id, state, account, public_key, temp_password)
-            return _failed(machine.id, STEP_SUDOERS, _detail(out, err), steps, note)
+            return _failed(machine.id, STEP_SUDOERS, _detail(out, err), steps, note, actor=actor)
         state["sudoers"] = True
         steps.append("sudoers")
     except asyncio.TimeoutError:
         note = await _rollback(conn, machine.id, state, account, public_key, temp_password)
-        return _failed(machine.id, STEP_ACCOUNT, f"délai dépassé ({STEP_TIMEOUT} s)", steps, note)
+        return _failed(machine.id, STEP_ACCOUNT, f"délai dépassé ({STEP_TIMEOUT} s)", steps, note, actor=actor)
     except (asyncssh.Error, OSError) as exc:
         note = await _rollback(conn, machine.id, state, account, public_key, temp_password)
-        return _failed(machine.id, STEP_ACCOUNT, _redact(exc, temp_password), steps, note)
+        return _failed(machine.id, STEP_ACCOUNT, _redact(exc, temp_password), steps, note, actor=actor)
     finally:
         conn.close()
         try:
@@ -399,6 +421,7 @@ async def provision_machine(
         pinned_public_key=(machine.host_key_public or "").strip() or None,
         machine_id=machine.id,
         audit_kind="provision",
+        actor=actor,
     )
     verified = False
     verify_error = ""
@@ -431,6 +454,7 @@ async def provision_machine(
             pinned_public_key=(machine.host_key_public or "").strip() or None,
             machine_id=machine.id,
             audit_kind="provision",
+        actor=actor,
         )
         note = "rien à annuler"
         if rollback_conn is not None:
@@ -440,7 +464,7 @@ async def provision_machine(
                 await rollback_conn.wait_closed()
             except Exception:
                 pass
-        return _failed(machine.id, STEP_VERIFY, verify_error or "sudo -n impossible", steps, note)
+        return _failed(machine.id, STEP_VERIFY, verify_error or "sudo -n impossible", steps, note, actor=actor)
 
     steps.append("vérification")
     _apply_success(machine.id, account)
