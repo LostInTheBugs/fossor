@@ -48,6 +48,7 @@ def _coin_json(coin: Coin, wallets: int = 0) -> dict[str, Any]:
         "coingecko_id": coin.coingecko_id,
         "coingecko_verified": bool(coin.coingecko_verified),
         "exchanges": coin.exchanges or [],
+        "pool_hosts": coin.pool_hosts or [],
         "manual_price_usd": coin.manual_price_usd,
         "manual_price_eur": coin.manual_price_eur,
         "notes": coin.notes,
@@ -82,6 +83,7 @@ class CoinIn(BaseModel):
     coingecko_id: str | None = None
     coingecko_verified: bool = False
     exchanges: list[dict[str, Any]] = Field(default_factory=list)
+    pool_hosts: list[str] = Field(default_factory=list)
     manual_price_usd: float | None = None
     manual_price_eur: float | None = None
     notes: str | None = None
@@ -99,6 +101,7 @@ class CoinUpdate(BaseModel):
     coingecko_id: str | None = None
     coingecko_verified: bool | None = None
     exchanges: list[dict[str, Any]] | None = None
+    pool_hosts: list[str] | None = None
     manual_price_usd: float | None = None
     manual_price_eur: float | None = None
     notes: str | None = None

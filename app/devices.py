@@ -155,6 +155,19 @@ def apply_detection(db: Session, machine: Machine, detected: dict[str, Any], gpu
                 device.occupied_external = False
             device.updated_at = _now()
 
+    # CPU miners (cpuminer, wam-miner, SRBMiner --cpu-threads) occupy the CPU.
+    if gpu_compute is not None:
+        cpu_device = (
+            db.query(Device)
+            .filter(Device.machine_id == machine.id, Device.kind == "cpu")
+            .first()
+        )
+        if cpu_device is not None:
+            cpu_device.occupied_external = any(
+                str(entry.get("kind") or "") == "cpu" for entry in gpu_compute
+            )
+            cpu_device.updated_at = _now()
+
     missing = 0
     for device in db.query(Device).filter(Device.machine_id == machine.id).all():
         if device.id not in seen and device.present:
@@ -191,9 +204,15 @@ def _external_miners_json(entries: list[dict[str, Any]]) -> str | None:
     payload = [
         {
             "name": entry.get("miner_name") or entry.get("label") or entry.get("name") or "",
+            "kind": entry.get("kind") or "",
             "version": entry.get("version") or "",
             "algorithm": entry.get("algorithm") or "",
             "pool": entry.get("pool") or "",
+            "coin": entry.get("coin") or "",
+            "threads": entry.get("threads") or "",
+            "user": entry.get("user") or "",
+            "pid": entry.get("pid"),
+            "cpu_pct": entry.get("cpu_pct"),
             "gpu_id": entry.get("gpu_id"),
         }
         for entry in entries
@@ -204,6 +223,33 @@ def _external_miners_json(entries: list[dict[str, Any]]) -> str | None:
 def set_external_miners(machine: Machine, entries: list[dict[str, Any]]) -> None:
     """Persist the last external miners seen on *machine*."""
     machine.external_miners = _external_miners_json(entries)
+
+
+def mark_external_devices(db: Session, machine: Machine, entries: list[dict[str, Any]]) -> None:
+    """Flag devices occupied by the current external miners (every round).
+
+    GPU entries match by ``gpu_id`` when nvidia-smi reported one; a ps-only
+    GPU miner (older driver, AMD) marks the non-integrated GPUs.  A CPU miner
+    marks the CPU device.
+    """
+    gpu_ids = {e.get("gpu_id") for e in entries if e.get("gpu_id") is not None}
+    gpu_ps_only = any(
+        str(e.get("kind") or "gpu") == "gpu" and e.get("gpu_id") is None
+        for e in entries
+    )
+    cpu_busy = any(str(e.get("kind") or "") == "cpu" for e in entries)
+    for device in db.query(Device).filter(
+        Device.machine_id == machine.id, Device.present.is_(True)  # noqa: E712
+    ).all():
+        if device.kind == "cpu":
+            device.occupied_external = cpu_busy
+        elif device.index is not None and device.index in gpu_ids:
+            device.occupied_external = True
+        elif gpu_ps_only and not device.integrated:
+            device.occupied_external = True
+        else:
+            device.occupied_external = False
+        device.updated_at = _now()
 
 
 def compute_usage(db: Session, machine: Machine) -> str:

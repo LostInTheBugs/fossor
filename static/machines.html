@@ -170,6 +170,17 @@ tr.absent td{opacity:.5}
 
 <div class="toast" id="toast"></div>
 
+<div class="modal" id="rawModal">
+  <div class="modal-box" style="width:820px">
+    <h2>Dernière collecte brute — <span id="rawMachine"></span></h2>
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">Sortie masquée : wallets tronqués, mots de passe •••. Réservé à l'administrateur.</div>
+    <pre id="rawOut" style="white-space:pre-wrap;word-break:break-word;background:#0e1218;border:1px solid var(--border);border-radius:8px;padding:10px;max-height:60vh;overflow:auto;font-family:ui-monospace,Consolas,monospace;font-size:11px"></pre>
+    <div class="actions" style="justify-content:flex-end;margin-top:14px">
+      <button class="btn outline" id="rawClose">Fermer</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const $=s=>document.querySelector(s);
 const $$=s=>document.querySelectorAll(s);
@@ -199,7 +210,7 @@ const deviceRows=(m)=>{
   const rows=devs.map(d=>{
     const isCpu=d.kind==='cpu';
     const details=isCpu
-      ?`${d.cores||'?'} cœurs / ${d.threads||'?'} threads · ${d.ram_mb||'?'} Mo RAM${d.flags?' · '+d.flags:''}`
+      ?`${d.cores||'?'} cœurs / ${d.threads||'?'} threads · ${d.ram_mb||'?'} Mo RAM${d.flags?' · '+d.flags:''}${d.occupied_external?' · <span class="chip miner" style="font-size:8px">occupé (externe)</span>':''}`
       :`${d.vram_mb?d.vram_mb+' Mo VRAM':'VRAM inconnue'}${d.driver?' · pilote '+d.driver:''}${d.occupied_external?' · <span class="chip miner" style="font-size:8px">occupé (externe)</span>':''}`;
     return `<tr class="${d.present?'':'absent'}">
       <td><span class="chip ${isCpu?'cpu':'gpu'}">${isCpu?'CPU':'GPU'}</span></td>
@@ -216,8 +227,12 @@ const minerAlertHTML=(m)=>{
   const alerts=m.external_miners.map(miner=>{
     let txt=miner.name;
     if(miner.version)txt+=' '+miner.version;
+    if(miner.kind==='cpu')txt+=' (CPU)';
     if(miner.algorithm)txt+=' — '+miner.algorithm;
+    if(miner.coin)txt+=' — '+miner.coin;
     if(miner.pool)txt+=' — '+miner.pool;
+    if(miner.threads)txt+=' — '+miner.threads+' threads';
+    if(miner.cpu_pct!==null&&miner.cpu_pct!==undefined)txt+=' — '+miner.cpu_pct+' % CPU';
     return `<div class="miner-alert">🪨 <b>Mineur externe détecté (non géré par Fossor)</b> : ${txt}</div>`;
   }).join('');
   return alerts;
@@ -240,6 +255,7 @@ const detailRow=(m)=>{
           ${['both','cpu','gpu','none'].map(u=>`<option value="${u}"${m.usage===u?' selected':''}>${USAGE_LABEL[u]}</option>`).join('')}
         </select>
       </label>
+      <button class="btn sm outline" onclick="showRawCollect(${m.id})" title="Sortie brute de la dernière collecte, masquée (administrateur)">📄 Dernière collecte brute</button>
     </div>
     ${minerAlertHTML(m)}
     ${extraHtml}
@@ -571,6 +587,21 @@ const loadUpdateBanner=async()=>{
   }catch(e){/* best-effort, jamais bloquant */}
 };
 checkAuth().then(ok=>{if(ok){loadMachines();loadUpdateBanner();}});
+const showRawCollect=async(id)=>{
+  const m=MACHINES[id]||{};
+  $('#rawMachine').textContent=m.name||('#'+id);
+  $('#rawOut').textContent='Chargement…';
+  $('#rawModal').classList.add('open');
+  try{
+    const r=await fetch('/api/machines/'+id+'/raw-collect',{credentials:'include'});
+    if(r.status===401){location.href='/';return;}
+    const d=await r.json();
+    if(!r.ok){$('#rawOut').textContent=d.detail||('HTTP '+r.status);return;}
+    $('#rawOut').textContent=(d.ts?'Collecte du '+new Date(d.ts).toLocaleString('fr-FR')+'\n\n':'')+(d.stdout||'Aucune collecte enregistrée.');
+  }catch(e){$('#rawOut').textContent='Erreur réseau';}
+};
+$('#rawClose').addEventListener('click',()=>$('#rawModal').classList.remove('open'));
+$('#rawModal').addEventListener('click',e=>{if(e.target===$('#rawModal'))$('#rawModal').classList.remove('open');});
 </script>
 </body>
 </html>

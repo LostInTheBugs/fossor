@@ -71,6 +71,54 @@ def init_db():
     _migrate_machine_default_miner_column()
     _migrate_device_occupied_external_column()
     _migrate_machine_external_miners_column()
+    _migrate_coin_pool_hosts_column()
+    _migrate_machine_status_api_error_column()
+
+
+def _migrate_coin_pool_hosts_column():
+    """Add coins.pool_hosts (§4.6, 003-c2) and seed the known coins.
+
+    A miner's coin is inferred from its pool host; the catalogue owns the
+    mapping so it can be edited without a new release.
+    """
+    import json
+    import sqlite3
+
+    _add_column_if_missing(
+        "coins", "pool_hosts", "pool_hosts JSON NOT NULL DEFAULT '[]'"
+    )
+    db_path = _sqlite_path()
+    if not db_path:
+        return
+    seeds = {
+        "PRL": ["pearl.luckypool.io", "pearl"],
+        "KSH": ["korsh.luckypool.io", "korsh"],
+        "WAM": ["wamcoin.luckypool.io", "wamcoin", "wam"],
+    }
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute("SELECT ticker, pool_hosts FROM coins").fetchall()
+        for ticker, stored in rows:
+            hosts = seeds.get(str(ticker).upper())
+            if not hosts:
+                continue
+            try:
+                current = json.loads(stored or "[]")
+            except (TypeError, ValueError):
+                current = []
+            if not current:
+                conn.execute(
+                    "UPDATE coins SET pool_hosts = ? WHERE ticker = ?",
+                    (json.dumps(hosts), ticker),
+                )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _migrate_machine_status_api_error_column():
+    """Add machine_status.api_error — miner API unreachable (§4.6, 003-c2)."""
+    _add_column_if_missing("machine_status", "api_error", "api_error TEXT")
 
 
 def _migrate_machine_default_miner_column():

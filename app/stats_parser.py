@@ -24,7 +24,17 @@ import re
 from typing import Any, Sequence
 
 from app.hw_parser import norm_bus
-from app.external_miners import MINER_TOKENS, mask_command, parse_miner_cmd
+from app.external_miners import (
+    MINER_TOKENS,
+    CPU_MINERS,
+    infer_coin,
+    mask_command,
+    match_pattern,
+    miner_kind,
+    normalize_patterns,
+    parse_miner_cmd,
+    parse_ps_rows,
+)
 
 SECTIONS = ("HIVE_STAT", "HIVE_GPU", "NVSMI", "PS_MINERS", "UPTIME")
 
@@ -264,37 +274,44 @@ def parse_nvsmi(section: str) -> list[dict[str, Any]]:
 
 
 # ── Miners process list and uptime ────────────────────────────────────
-def parse_ps_miners(section: str) -> dict[str, Any]:
-    """Running miner (name + discovered ``--api-port``) from ``ps -eo args``.
+def parse_ps_miners(section: str, patterns: Sequence[dict[str, str]] | None = None) -> dict[str, Any]:
+    """Running miners from ``ps -eo user,pid,pcpu,etimes,args``.
 
-    Also returns full external miner details (cmd, algorithm, pool) for UI display.
+    Also returns full external miner details (cmd, algorithm, pool, threads,
+    CPU charge) for the UI.  ``patterns`` is the configurable pattern list
+    (name + process regex); ``None`` means the built-in defaults.
     """
     found: list[dict[str, Any]] = []
-    for line in (section or "").splitlines():
-        cmd = line.strip()
-        if not cmd or "grep" in cmd.lower():
-            continue
-        binary = cmd.split()[0].split("/")[-1].lower()
-        name = next((token for token in MINER_TOKENS if token in binary), "")
+    for row in parse_ps_rows(section):
+        cmd = row["args"]
+        name = match_pattern(cmd, patterns)
         if not name:
             continue
+        details = parse_miner_cmd(cmd, name_hint=name)
         match = _API_PORT.search(cmd)
-        details = parse_miner_cmd(cmd)
         found.append({
-            "name": name,
+            "name": details["name"],
             "label": details["name"],
             "version": details["version"],
             "algorithm": details["algorithm"],
             "pool": details["pool"],
-            "binary": binary,
+            "threads": details["threads"],
+            "binary": details["binary"],
+            "kind": miner_kind(details["name"], cmd),
+            "user": row.get("user", ""),
+            "pid": row.get("pid"),
+            "cpu_pct": row.get("cpu_pct"),
+            "elapsed_s": row.get("elapsed_s"),
             "api_port": int(match.group(1)) if match else None,
             "cmd": mask_command(cmd),
         })
     primary = next((m for m in found if m["api_port"]), found[0] if found else None)
+    cpu_miners = [m for m in found if m["kind"] == "cpu"]
     return {
-        "miner": primary["name"] if primary else "",
+        "miner": primary["binary"] if primary else "",
         "api_port": primary["api_port"] if primary else None,
         "miners": found,
+        "cpu_miners": cpu_miners,
     }
 
 
@@ -374,29 +391,48 @@ def _build_gpus(
     return gpus
 
 
-def parse_collect_stats(stdout: str) -> dict[str, Any]:
-    """Parse a full ``collect_stats`` output into a normalised snapshot."""
+def parse_collect_stats(
+    stdout: str,
+    patterns: Sequence[dict[str, str]] | None = None,
+    coin_hosts: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Parse a full ``collect_stats`` output into a normalised snapshot.
+
+    *patterns* is the configurable external-miner pattern list (``None`` =
+    built-in defaults); *coin_hosts* maps a pool host substring to a ticker
+    so a miner's coin is inferred from its pool (``pearl.luckypool.io`` → PRL).
+    """
     sections = split_sections(stdout)
     hive = parse_hive_stat(sections["HIVE_STAT"])
     hive_gpu = parse_hive_gpu(sections["HIVE_GPU"])
     nvsmi = parse_nvsmi(sections["NVSMI"])
-    ps = parse_ps_miners(sections["PS_MINERS"])
+    ps = parse_ps_miners(sections["PS_MINERS"], patterns)
     uptime = parse_uptime(sections["UPTIME"])
 
     devices = _build_gpus(hive, hive_gpu, nvsmi)
+    for device in devices:
+        device.setdefault("occupied_external", False)
 
     cputemp = [_to_float(v) for v in (hive.get("cputemp") or [])]
     cputemp = [v for v in cputemp if v is not None]
-    if cputemp:
+    if cputemp or ps["cpu_miners"]:
         devices.insert(0, {
             "kind": "cpu",
             "pci_bus": "",
             "hashrate_hs": None,
-            "temp_c": cputemp[0],
+            "temp_c": cputemp[0] if cputemp else None,
             "fan_pct": None,
             "power_w": None,
             "load_pct": None,
+            # A running CPU miner occupies the CPU even without any sensor.
+            "occupied_external": bool(ps["cpu_miners"]),
         })
+
+    hosts = coin_hosts or {}
+    for miner in ps["miners"]:
+        miner["coin"] = infer_coin(miner.get("pool", ""), hosts)
+    hive_coin = hive.get("coin", "")
+    inferred = next((m["coin"] for m in ps["miners"] if m.get("coin")), "")
 
     total_hs = _first(hive.get("total_hashrate_hs"), None)
     if total_hs is None:
@@ -407,15 +443,20 @@ def parse_collect_stats(stdout: str) -> dict[str, Any]:
 
     return {
         "miner": _first(hive.get("miner"), ps["miner"], "") or "",
-        "algo": hive.get("algo", ""),
-        "coin": hive.get("coin", ""),
+        "algo": hive.get("algo", "") or next(
+            (m["algorithm"] for m in ps["miners"] if m.get("algorithm")), ""
+        ),
+        "coin": hive_coin or inferred,
         "uptime_s": _first(uptime, hive.get("uptime_s")),
         "accepted": hive.get("accepted"),
         "rejected": hive.get("rejected"),
         "api_port": ps["api_port"],
+        "api_error": None,
         "total_hashrate_hs": total_hs,
         "total_power_w": total_w,
         "devices": devices,
+        "miners": ps["miners"],
+        "cpu_miners": ps["cpu_miners"],
     }
 
 
@@ -525,6 +566,17 @@ def merge_srbminer(stats: dict[str, Any], api: dict[str, Any] | None) -> dict[st
     for gpu, value in zip(gpus, per_device):
         if gpu.get("hashrate_hs") is None:
             gpu["hashrate_hs"] = value
+    # CPU miner (cpuminer/SRBMiner --cpu-threads): the API total belongs to
+    # the CPU device when no GPU reported a hashrate.
+    cpu = next((d for d in stats.get("devices", []) if d.get("kind") == "cpu"), None)
+    if (
+        cpu is not None
+        and cpu.get("hashrate_hs") is None
+        and stats.get("cpu_miners")
+        and api.get("total_hashrate_hs") is not None
+        and not any(g.get("hashrate_hs") for g in gpus)
+    ):
+        cpu["hashrate_hs"] = api["total_hashrate_hs"]
     if stats.get("total_hashrate_hs") is None:
         values = [g["hashrate_hs"] for g in gpus if g.get("hashrate_hs")]
         if values:

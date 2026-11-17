@@ -4,6 +4,25 @@
 
 All notable changes to fossor are documented in this file.
 
+## [2026.11.003-c2] — 2026-11-17
+
+### Fixed
+- **Mineurs externes jamais enregistrés** : la collecte persiste désormais la liste
+  détectée (`parse_collect_stats` renvoie `miners`), marque le CPU et les GPU
+  occupés à chaque tour, et un test part de la sortie brute jusqu'à
+  `/api/metrics/live`.
+- **Hashrate nul** : repli SSH (`curl`/`wget` sur `127.0.0.1`) quand l'API SRBMiner
+  n'écoute pas sur l'interface réseau ; les deux échecs affichent
+  « API du mineur injoignable ».
+- **Minage CPU** : motifs par défaut (cpuminer, cpuminer-opt, cpuminer-multi,
+  wam-miner, xmrig, SRBMiner `--cpu-threads`/`--disable-gpu`, scripts maison),
+  liste configurable dans Configuration, lecture `ps -eo user,pid,pcpu,etimes,args`,
+  algo/pool/threads/%CPU et coin déduit du pool (`coins.pool_hosts`).
+- **Diagnostic** : bouton « Voir la dernière collecte brute » (admin), sortie masquée.
+- **Tableau de bord** : une carte par token/algo, plus aucune somme de hashrates
+  d'algorithmes différents.
+- **Audit** : une seule ligne de préparation, acteur = utilisateur connecté.
+
 ## 2026.11.004 — en cours (étape 3a)
 
 ### Étape 3a — profils de minage, simulation, lancement/arrêt (mode host)

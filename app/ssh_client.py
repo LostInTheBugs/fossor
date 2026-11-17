@@ -93,11 +93,19 @@ WHITELISTED_COMMANDS: dict[str, str] = {
           nvidia-smi --query-gpu=index,pci.bus_id,temperature.gpu,power.draw,fan.speed,utilization.gpu --format=csv,noheader,nounits 2>/dev/null
         fi
         echo '### PS_MINERS'
-        ps -eo args 2>/dev/null | grep -Ei 'srbminer|bzminer|xmrig|t-rex|lolminer|gminer|nbminer|onezerominer|peakminer|phoenixminer|teamredminer' | grep -v grep
+        ps -eo user,pid,pcpu,etimes,args 2>/dev/null
         echo '### UPTIME'
         cat /proc/uptime 2>/dev/null
         exit 0
     """).strip(),
+    # SRBMiner / miner HTTP API bound to 127.0.0.1 on the machine: the
+    # container cannot reach it, so the request is relayed through SSH
+    # (fallback used by the collector; {port} is validated as an int).
+    "miner_api": (
+        "curl -s -m 5 http://127.0.0.1:{port}/ 2>/dev/null "
+        "|| wget -qO- -T 5 http://127.0.0.1:{port}/ 2>/dev/null "
+        "|| exit 0"
+    ),
 }
 
 
@@ -614,6 +622,42 @@ async def ssh_collect_stats(machine: Any, actor: str = "system") -> dict[str, An
         audit_kind="collect",
         actor=actor,
     )
+
+
+async def ssh_miner_api(machine: Any, port: int, actor: str = "system") -> dict[str, Any]:
+    """Read a miner HTTP API **from the machine** (repli SSH, §4.6 003-c2).
+
+    SRBMiner usually listens on ``127.0.0.1`` only, so the container's direct
+    ``GET http://host:port/`` fails in silence.  This relays
+    ``curl http://127.0.0.1:<port>/`` (``wget`` fallback) through the pinned
+    SSH connection.  The port is validated here, never interpolated raw.
+    """
+    try:
+        port = int(port)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "port d'API invalide"}
+    if not 1 <= port <= 65535:
+        return {"ok": False, "error": "port d'API invalide"}
+
+    pinned_fp = (getattr(machine, "host_key", None) or "").strip() or None
+    pinned_public_key = (getattr(machine, "host_key_public", None) or "").strip() or None
+
+    result = await _run_whitelisted(
+        host=machine.host,
+        port=machine.ssh_port,
+        username=machine.ssh_user,
+        secret=_machine_secret(machine),
+        auth_type=machine.auth_type,
+        pinned_fp=pinned_fp,
+        pinned_public_key=pinned_public_key,
+        command=WHITELISTED_COMMANDS["miner_api"].format(port=port),
+        machine_id=machine.id,
+        audit_kind="miner_api",
+        actor=actor,
+    )
+    if result.get("ok") and not str(result.get("stdout") or "").strip():
+        return {"ok": False, "error": "API du mineur injoignable"}
+    return result
 
 
 async def reset_machine_host_key(machine_id: int, actor: str = "system") -> dict[str, Any]:
