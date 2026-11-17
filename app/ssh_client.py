@@ -59,6 +59,12 @@ WHITELISTED_COMMANDS: dict[str, str] = {
         if command -v nvidia-smi >/dev/null 2>&1; then
           nvidia-smi --query-gpu=index,name,memory.total,pci.bus_id,driver_version,uuid --format=csv,noheader,nounits 2>/dev/null
         fi
+        echo '### GPU_COMPUTE'
+        if command -v nvidia-smi >/dev/null 2>&1; then
+          nvidia-smi --query-compute-apps=pid,process_name,gpu_id,used_memory --format=csv,noheader 2>/dev/null
+        fi
+        echo '### PS_MINERS'
+        ps -eo args 2>/dev/null | grep -Ei 'srbminer|bzminer|xmrig|t-rex|lolminer|gminer|nbminer|onezerominer|peakminer|phoenixminer|teamredminer' | grep -v grep
         echo '### GPU_PCI'
         if command -v lspci >/dev/null 2>&1; then
           lspci -nn 2>/dev/null | grep -Ei 'vga|3d|display'
@@ -87,7 +93,7 @@ WHITELISTED_COMMANDS: dict[str, str] = {
           nvidia-smi --query-gpu=index,pci.bus_id,temperature.gpu,power.draw,fan.speed,utilization.gpu --format=csv,noheader,nounits 2>/dev/null
         fi
         echo '### PS_MINERS'
-        ps -eo args 2>/dev/null | grep -Ei 'srbminer|xmrig|t-rex|lolminer|gminer|nbminer|phoenixminer|teamredminer' | grep -v grep
+        ps -eo args 2>/dev/null | grep -Ei 'srbminer|bzminer|xmrig|t-rex|lolminer|gminer|nbminer|onezerominer|peakminer|phoenixminer|teamredminer' | grep -v grep
         echo '### UPTIME'
         cat /proc/uptime 2>/dev/null
         exit 0
@@ -151,15 +157,16 @@ def _audit_log(
     action: str,
     result: str,
     output: str = "",
+    actor: str = "system",
 ) -> None:
-    """Write an audit log entry."""
+    """Write an audit log entry (actor = connected user or ``system``)."""
     from app.database import SessionLocal
-    from app.models import ActorEnum, AuditLog
+    from app.models import AuditLog
 
     db = SessionLocal()
     try:
         entry = AuditLog(
-            actor=ActorEnum.hermes,
+            actor=actor or "system",
             action=action,
             machine_id=machine_id,
             result=result,
@@ -248,6 +255,7 @@ async def _resolve_host_key(
     machine_id: int | None,
     audit_kind: str,
     start: float,
+    actor: str = "system",
 ) -> tuple[Any | None, str, dict[str, Any] | None]:
     """Read, verify and (on first contact) pin the host key.
 
@@ -263,6 +271,12 @@ async def _resolve_host_key(
     new_fp = _fingerprint_of(server_key)
     new_pub = _public_key_of(server_key)
 
+    # Fresh read: never trust a possibly stale machine object (double pin).
+    if machine_id is not None:
+        db_fp, db_pub = _get_host_key_data(machine_id)
+        if db_fp:
+            pinned_fp, pinned_public_key = db_fp, db_pub
+
     trusted_key = None
     if pinned_fp:
         if not pinned_public_key:
@@ -271,28 +285,28 @@ async def _resolve_host_key(
                 "connexion refusée, lancez reset-host-key"
             )
             if machine_id is not None:
-                _audit_log(machine_id, "host-key-check", "fail", msg)
-                _audit_log(machine_id, audit_kind, "fail", msg)
+                _audit_log(machine_id, "host-key-check", "fail", msg, actor=actor)
+                _audit_log(machine_id, audit_kind, "fail", msg, actor=actor)
             return None, new_fp, _failure(start, msg, new_fp)
         if new_fp != pinned_fp:
             msg = f"Empreinte changée : ancienne {pinned_fp}, nouvelle {new_fp}"
             if machine_id is not None:
-                _audit_log(machine_id, "host-key-mismatch", "fail", msg)
-                _audit_log(machine_id, audit_kind, "fail", msg)
+                _audit_log(machine_id, "host-key-mismatch", "fail", msg, actor=actor)
+                _audit_log(machine_id, audit_kind, "fail", msg, actor=actor)
             return None, new_fp, _failure(start, msg, new_fp)
         try:
             trusted_key = asyncssh.import_public_key(pinned_public_key)
         except Exception:
             msg = "Clé publique épinglée illisible — connexion refusée, lancez reset-host-key"
             if machine_id is not None:
-                _audit_log(machine_id, "host-key-check", "fail", msg)
-                _audit_log(machine_id, audit_kind, "fail", msg)
+                _audit_log(machine_id, "host-key-check", "fail", msg, actor=actor)
+                _audit_log(machine_id, audit_kind, "fail", msg, actor=actor)
             return None, new_fp, _failure(start, msg, new_fp)
 
     if trusted_key is None:
         if machine_id is not None:
             _pin_host_key(machine_id, new_fp, new_pub)
-            _audit_log(machine_id, "host-key-pinned", "ok", f"Host key pinned: {new_fp}")
+            _audit_log(machine_id, "host-key-pinned", "ok", f"Host key pinned: {new_fp}", actor=actor)
         trusted_key = server_key
 
     return trusted_key, new_fp, None
@@ -309,6 +323,7 @@ async def _run_whitelisted(
     command: str,
     machine_id: int | None = None,
     audit_kind: str = "ssh-test",
+    actor: str = "system",
 ) -> dict[str, Any]:
     """Pin/verify the host key, connect, then run one whitelisted *command*."""
     start = asyncio.get_running_loop().time() * 1000
@@ -321,6 +336,7 @@ async def _run_whitelisted(
         machine_id=machine_id,
         audit_kind=audit_kind,
         start=start,
+        actor=actor,
     )
     if failure is not None:
         return failure
@@ -339,7 +355,7 @@ async def _run_whitelisted(
     except Exception as exc:
         msg = f"Credentials unavailable: {exc}"
         if machine_id is not None:
-            _audit_log(machine_id, audit_kind, "fail", msg)
+            _audit_log(machine_id, audit_kind, "fail", msg, actor=actor)
         return _failure(start, msg, new_fp)
     connect_kwargs.update(auth_kwargs)
 
@@ -356,10 +372,10 @@ async def _run_whitelisted(
     except asyncssh.HostKeyNotVerifiable:
         msg = f"Empreinte changée : ancienne {pinned_fp or 'aucune'}, nouvelle {new_fp}"
         if machine_id is not None:
-            _audit_log(machine_id, audit_kind, "fail", msg)
+            _audit_log(machine_id, audit_kind, "fail", msg, actor=actor)
         return _failure(start, msg, new_fp)
     except asyncssh.PermissionDenied:
-        return _failure(start, "Permission denied — credentials rejected", new_fp)
+        return _failure(start, "Le login ou le mot de passe temporaires ont été refusés par la machine", new_fp)
     except asyncio.TimeoutError:
         return _failure(
             start,
@@ -398,6 +414,7 @@ async def open_pinned_connection(
     pinned_public_key: str | None = None,
     machine_id: int | None = None,
     audit_kind: str = "ssh",
+    actor: str = "system",
 ) -> tuple[Any | None, str, dict[str, Any] | None]:
     """Open an authenticated connection after the same host-key policy.
 
@@ -414,6 +431,7 @@ async def open_pinned_connection(
         machine_id=machine_id,
         audit_kind=audit_kind,
         start=start,
+        actor=actor,
     )
     if failure is not None:
         return None, new_fp, failure
@@ -430,14 +448,14 @@ async def open_pinned_connection(
     except Exception as exc:
         msg = f"Credentials unavailable: {exc}"
         if machine_id is not None:
-            _audit_log(machine_id, audit_kind, "fail", msg)
+            _audit_log(machine_id, audit_kind, "fail", msg, actor=actor)
         return None, new_fp, _failure(start, msg, new_fp)
     connect_kwargs.update(auth_kwargs)
 
     try:
         conn = await asyncio.wait_for(asyncssh.connect(**connect_kwargs), timeout=CONNECT_TIMEOUT)
     except asyncssh.PermissionDenied:
-        return None, new_fp, _failure(start, "Permission denied — credentials rejected", new_fp)
+        return None, new_fp, _failure(start, "Le login ou le mot de passe temporaires ont été refusés par la machine", new_fp)
     except asyncio.TimeoutError:
         return None, new_fp, _failure(start, f"SSH connection timed out ({CONNECT_TIMEOUT} s)", new_fp)
     except (asyncssh.Error, OSError, ConnectionError) as exc:
@@ -463,6 +481,7 @@ async def _collect_identify(
     pinned_fp: str | None,
     pinned_public_key: str | None,
     machine_id: int | None = None,
+    actor: str = "system",
 ) -> dict[str, Any]:
     """Pin/verify the host key, connect, then run the *identify* command."""
     raw = await _run_whitelisted(
@@ -476,6 +495,7 @@ async def _collect_identify(
         command=WHITELISTED_COMMANDS["identify"],
         machine_id=machine_id,
         audit_kind="ssh-test",
+        actor=actor,
     )
     if not raw.get("ok"):
         return raw
@@ -503,7 +523,7 @@ def _machine_secret(machine: Any) -> str:
     return ""
 
 
-async def ssh_test_machine(machine: Any) -> dict[str, Any]:
+async def ssh_test_machine(machine: Any, actor: str = "system") -> dict[str, Any]:
     """Test the SSH connection to a Machine ORM object."""
     # The caller passes the Machine row it just loaded: use its pinned key
     # (a fresh read, so no stale cache can weaken the check).
@@ -519,6 +539,7 @@ async def ssh_test_machine(machine: Any) -> dict[str, Any]:
         pinned_fp=pinned_fp,
         pinned_public_key=pinned_public_key,
         machine_id=machine.id,
+        actor=actor,
     )
 
     if result["ok"]:
@@ -528,12 +549,13 @@ async def ssh_test_machine(machine: Any) -> dict[str, Any]:
             "ok",
             f"hostname={result.get('hostname')}, os={result.get('os_kind')}, "
             f"fp={result.get('host_key_fingerprint')}",
+            actor=actor,
         )
     # Failures are already audited by _collect_identify.
     return result
 
 
-async def ssh_detect_hw(machine: Any) -> dict[str, Any]:
+async def ssh_detect_hw(machine: Any, actor: str = "system") -> dict[str, Any]:
     """Run the whitelisted ``detect_hw`` inventory through the pinned host key.
 
     Returns the parsed detection (``cpu``, ``gpus``, ``virt``, ``os_kind``) or
@@ -556,6 +578,7 @@ async def ssh_detect_hw(machine: Any) -> dict[str, Any]:
         command=WHITELISTED_COMMANDS["detect_hw"],
         machine_id=machine.id,
         audit_kind="detect",
+        actor=actor,
     )
     if not raw.get("ok"):
         return raw
@@ -568,7 +591,7 @@ async def ssh_detect_hw(machine: Any) -> dict[str, Any]:
     }
 
 
-async def ssh_collect_stats(machine: Any) -> dict[str, Any]:
+async def ssh_collect_stats(machine: Any, actor: str = "system") -> dict[str, Any]:
     """Run the whitelisted ``collect_stats`` snapshot through the pinned host key.
 
     Returns ``{"ok": True, "stdout": ...}`` (raw sections, parsed by
@@ -589,10 +612,11 @@ async def ssh_collect_stats(machine: Any) -> dict[str, Any]:
         command=WHITELISTED_COMMANDS["collect_stats"],
         machine_id=machine.id,
         audit_kind="collect",
+        actor=actor,
     )
 
 
-async def reset_machine_host_key(machine_id: int) -> dict[str, Any]:
+async def reset_machine_host_key(machine_id: int, actor: str = "system") -> dict[str, Any]:
     """Clear the pinned host key of a machine (admin action)."""
     from app.database import SessionLocal
     from app.models import Machine
@@ -614,5 +638,6 @@ async def reset_machine_host_key(machine_id: int) -> dict[str, Any]:
         "host-key-reset",
         "ok",
         f"Host key cleared (was {previous or 'none'}) — next test pins the new key",
+        actor=actor,
     )
     return {"ok": True, "message": "Host key cleared — next SSH test will pin a new key"}
