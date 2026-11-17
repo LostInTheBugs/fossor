@@ -152,6 +152,14 @@ function deviceRows(devices) {
   }).join("");
 }
 
+function externalMinersHtml(m) {
+  const list = m.external_miners || [];
+  if (!list.length) return "";
+  const text = list.map((x) => [x.name, x.version].filter(Boolean).join(" ") +
+    (x.algorithm ? " — " + x.algorithm : "") + (x.pool ? " — " + x.pool : "")).join(", ");
+  return '<div class="err">Mineur externe détecté (non géré par Fossor) : ' + esc(text) + "</div>";
+}
+
 function card(m, e) {
   const meta = [m.miner || "aucun mineur", m.coin || "", m.algo || ""].filter(Boolean).join(" · ");
   const api = m.api_port ? " · API " + m.api_port : "";
@@ -160,7 +168,8 @@ function card(m, e) {
     '<div class="card-head">' +
       "<div><div class=\"name\">" + esc(m.name) + "</div>" +
       '<div class="sub">' + esc(meta) + esc(api) + "</div>" +
-      '<div class="host">' + esc(m.host) + " · " + esc(m.os_kind) + "</div></div>" +
+      '<div class="host">' + esc(m.host) + " · " + esc(m.os_kind) + "</div>" +
+      externalMinersHtml(m) + "</div>" +
       statusChip(m) +
     "</div>" +
     '<div class="totals">' +

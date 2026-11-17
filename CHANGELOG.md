@@ -4,6 +4,19 @@
 
 All notable changes to fossor are documented in this file.
 
+## 2026.11.003-c1 — 2026-11-17
+
+### Correctif hotfix — détection mineurs externes et état de préparation
+
+- **Mineurs externes (§4.24)** : `nvidia-smi --query-compute-apps=pid,process_name,gpu_id,used_memory` enrichi pour extraire le `gpu_id`. Le parser `parse_gpu_compute` détecte les mineurs (SRBMiner, lolMiner, xmrig…), lit la ligne de commande pour `--algorithm`, `--pool`, tronque les wallets et masque les mots de passe. Les GPU concernés sont marqués `occupied_external=True` sur le dashboard et la fiche machine.
+- **État de préparation** : nouvelle valeur `auth_type=provision_pending` — tant que la préparation n'a pas réussi, la machine reste "à préparer" ; test/detect/collecte répondent sans tenter de connexion. Bouton "Réessayer la préparation" en frontend.
+- **Messages d'erreur** : tous les messages d'échec SSH sont en français explicite ("Le login ou le mot de passe temporaires ont été refusés par la machine").
+- **Acteur d'audit** : `host-key-pinned` et tous les audits utilisent maintenant l'utilisateur connecté (ou `system` pour la collecte automatique au lieu de `hermes` codé en dur).
+- **Formulaire d'ajout** : labels corrigés par mode (Login/Mot de passe, Compte sur la machine + clé, Login temporaire/Mot de passe temporaire/Compte à créer).
+- **Bouton ✏️** : `editMachine(id)` implémenté (alias vers `openModal`) ; la fermeture du modal fonctionne (`closeModal` retirait la classe `undefined`).
+- **Validation** : nom, hôte (IPv4 / IPv6 / nom DNS) et port SSH (1-65535) validés côté API (422, message français) et côté formulaire — plus de machine créée avec un hôte vide.
+- **Migration** : `devices.occupied_external` ajouté via `_migrate_device_occupied_external_column`.
+
 ## 2026.11.003 — 2026-11-16
 
 ### Étape 2f — navigation unique et notifications
