@@ -1,6 +1,7 @@
 """Restes de la 2026.11.003-c9 (§2.4) : fréquence, puissance 0, deux algos, BIG."""
 
 import json
+import time
 import uuid as uuid_lib
 from pathlib import Path
 
@@ -60,25 +61,31 @@ def test_two_algorithms_are_never_summed():
     assert single["hashrate_label"] == "KSH 6.25 kH/s"
 
 
-def test_solo_big_estimate_from_nonces_and_workers():
-    text = (FIXTURES / "solo_big_log.txt").read_text()
+def test_solo_big_nonces_is_only_the_unverified_fallback():
+    # FORMAT NON VÉRIFIÉ : aucun relevé réel de ce motif, dernier recours.
+    text = "22:00:00 524288 nonces\n22:00:20 524288 nonces"
     assert nonces_hashrate(text, workers=1) == pytest.approx(26214.4)
     assert nonces_hashrate(text, workers=2) == pytest.approx(52428.8)
     assert nonces_hashrate("aucune ligne exploitable", workers=2) is None
 
+
+def test_solo_big_reads_the_real_log_format():
+    text = (FIXTURES / "solo_big_log.txt").read_text()
     miner = {"kind": "solo", "coin": "BIG", "workers": 2, "hashrate_hs": None,
              "hashrate_source": "", "hashrate_note": ""}
     probes = {"nodes": [{"coin": "BIG", "key": "big",
                          "log_candidates": ["/var/log/mine-bigcoin.log"], "pids": []}]}
     report = {
-        "logs": {"/var/log/mine-bigcoin.log": {"mtime": 1700000000, "text": text}},
+        "logs": {"/var/log/mine-bigcoin.log": {
+            "mtime": int(time.time()) - 5, "text": text}},
         "log_pids": {},
         "nodes": {"big": {"height": 1200, "network_hs": 1e6}},
         "apis": {},
     }
     _attach_solo(miner, probes, report)
-    assert miner["hashrate_hs"] == pytest.approx(52428.8)
-    assert "nonces par scan" in miner["hashrate_source"]
+    assert miner["hashrate_hs"] == pytest.approx(6952.0)
+    assert miner["workers"] == 11
+    assert "hashes/s/worker" in miner["hashrate_source"]
     assert miner["node"]["height"] == 1200
 
 

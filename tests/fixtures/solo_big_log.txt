@@ -1,2 +1,2 @@
-2026-11-16T22:00:00Z 524288 nonces
-2026-11-16T22:00:20Z 524288 nonces
+[21:53:30] mining ... height=20353 difficulty=0.003300662640699338 algo=yespower 629 hashes/s/worker (~6919 total over 11 workers)
+[21:55:00] mining ... height=20353 difficulty=0.003300662640699338 algo=yespower 632 hashes/s/worker (~6952 total over 11 workers)

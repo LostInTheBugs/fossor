@@ -14,7 +14,9 @@ Sources, in the order the brief asks for:
    against known hashrate wordings, with a 300 s freshness gate;
 3. **nœud solo** — the ``*-cli`` found in the command line, getters only
    (``getmininginfo``, ``getblockchaininfo``, ``getnetworkhashps``), plus the
-   « 200k nonces / intervalle des scans » estimate when the script log allows it.
+   « 200k nonces / intervalle des scans » estimate (its log format is NOT
+   verified, see ``nonces_hashrate``), and the real ``hashes/s/worker`` log of
+   ``mine-bigcoin.sh`` as the primary solo source.
 
 A source that yields nothing produces an explicit note, never a silent « — ».
 """
@@ -342,13 +344,108 @@ _TS_PREFIX_RE = re.compile(
 )
 _NONCES_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*(k|M|G)?\s*nonces?\b", re.IGNORECASE)
 
+# ── Log du script solo : format RÉEL, relevé le 2026-11-17 ──────────────
+# ``mine-bigcoin.sh`` est lancé dans son dossier et sa sortie est redirigée
+# vers ``mine.log`` (retrouvable par ``readlink /proc/<pid du script>/fd/1``).
+# Le script y écrit une ligne par minute environ :
+#   [21:55:00] mining ... height=20353 difficulty=0.003300662640699338 #   algo=yespower 632 hashes/s/worker (~6952 total over 11 workers)
+_SCRIPT_HASHRATE_RE = re.compile(
+    r"(\d+)\s+hashes/s/worker\s+\(~(\d+)\s+total\s+over\s+(\d+)\s+workers\s*\)",
+    re.IGNORECASE,
+)
+_SCRIPT_STAMP_RE = re.compile(r"\[(\d{2}:\d{2}:\d{2})\]")
+_SCRIPT_HEIGHT_RE = re.compile(r"\bheight=(\d+)")
+_SCRIPT_DIFF_RE = re.compile(r"\bdifficulty=(\d+(?:\.\d+)?)")
+_SCRIPT_ALGO_RE = re.compile(r"\balgo=([A-Za-z0-9_-]+)")
+
+
+def _local_stamp_age(stamp: str, now: float) -> int | None:
+    """Âge en secondes d'un horodatage ``[HH:MM:SS]`` (heure locale machine)."""
+    from time import localtime
+
+    try:
+        hour, minute, second = (int(part) for part in stamp.split(":"))
+    except ValueError:
+        return None
+    if not (0 <= hour < 24 and 0 <= minute < 60 and 0 <= second < 60):
+        return None
+    current = localtime(now)
+    age = (current.tm_hour * 3600 + current.tm_min * 60 + current.tm_sec) - (
+        hour * 3600 + minute * 60 + second
+    )
+    if age < 0:
+        age += 86400  # passage de minuit
+    return age
+
+
+def script_hashrate(
+    text: str,
+    mtime: int | None = None,
+    now: float | None = None,
+    max_age: int = LOG_MAX_AGE,
+) -> dict[str, Any]:
+    """Hashrate du log d'un script solo, au format **relevé** sur la machine.
+
+    Dernière ligne ``N hashes/s/worker (~T total over W workers)`` → ``T`` H/s
+    et ``W`` workers, plus ``height=``, ``difficulty=`` et ``algo=``.  Fraîcheur :
+    la ligne est périmée seulement quand l'horodatage ``[HH:MM:SS]`` (heure
+    locale de la machine) **et** le mtime du fichier dépassent *max_age*.
+    """
+    import time
+
+    moment = time.time() if now is None else now
+    last_line, last_match = "", None
+    for line in (text or "").splitlines():
+        match = _SCRIPT_HASHRATE_RE.search(line)
+        if match:
+            last_line, last_match = line, match
+    if last_match is None:
+        return {
+            "hashrate_hs": None, "workers": None, "height": None,
+            "difficulty": None, "algo": "", "line": "", "age_s": None,
+            "state": "unknown",
+            "note": "aucune ligne « hashes/s/worker » dans le log",
+        }
+    total = _to_float(last_match.group(2))
+    workers = int(last_match.group(3))
+    ages: list[int] = []
+    stamp = _SCRIPT_STAMP_RE.search(last_line)
+    stamp_age = _local_stamp_age(stamp.group(1), moment) if stamp else None
+    if stamp_age is not None:
+        ages.append(stamp_age)
+    if mtime is not None:
+        ages.append(max(0, int(moment - float(mtime))))
+    age = min(ages) if ages else None
+    height = _SCRIPT_HEIGHT_RE.search(last_line)
+    difficulty = _SCRIPT_DIFF_RE.search(last_line)
+    algo = _SCRIPT_ALGO_RE.search(last_line)
+    result: dict[str, Any] = {
+        "hashrate_hs": total if total and total > 0 else None,
+        "workers": workers,
+        "height": int(height.group(1)) if height else None,
+        "difficulty": _to_float(difficulty.group(1)) if difficulty else None,
+        "algo": algo.group(1) if algo else "",
+        "line": last_line.strip(),
+        "age_s": age,
+        "state": "ok",
+        "note": "",
+    }
+    if age is not None and age > max_age:
+        result.update(
+            hashrate_hs=None,
+            state="stale",
+            note=f"log figé depuis {age} s (mineur arrêté ?)",
+        )
+    return result
+
 
 def nonces_hashrate(text: str, workers: int = 1) -> float | None:
-    """Débit estimé d'un script solo : nonces d'un scan × workers / intervalle.
+    """Dernier recours : nonces d'un scan × workers / intervalle.
 
-    Utilisé quand le log de ``mine-bigcoin.sh`` ne contient aucun hashrate mais
-    des lignes « <horodatage> … N nonces ». Aucune paire exploitable -> ``None``
-    (la raison exacte est conservée par l'appelant).
+    **FORMAT NON VÉRIFIÉ** — aucun relevé réel ne montre des lignes
+    « <horodatage> … N nonces » ; le format du log de ``mine-bigcoin.sh`` est
+    celui de ``script_hashrate`` ci-dessus.  Aucune paire exploitable ->
+    ``None`` (la raison exacte est conservée par l'appelant).
     """
     from datetime import datetime, timezone
 
@@ -842,7 +939,7 @@ def attach_cpu_hashrates(
         miner["hashrate_note"] = ""
 
         if miner.get("kind") == "solo":
-            _attach_solo(miner, probes, report)
+            _attach_solo(miner, probes, report, now)
             continue
 
         tried: list[str] = []
@@ -915,7 +1012,12 @@ def _mtime_text(mtime: int) -> str:
         return ""
 
 
-def _attach_solo(miner: dict[str, Any], probes: dict[str, Any], report: dict[str, Any]) -> None:
+def _attach_solo(
+    miner: dict[str, Any],
+    probes: dict[str, Any],
+    report: dict[str, Any],
+    now: float | None = None,
+) -> None:
     """Height, network share and blocks of one node-solo entry, plus an estimate."""
     coin = str(miner.get("coin") or "").upper()
     node = None
@@ -954,27 +1056,54 @@ def _attach_solo(miner: dict[str, Any], probes: dict[str, Any], report: dict[str
     elif log_entry.get("path") is None and node.get("log", {}).get("mtime"):
         miner["log_mtime"] = _mtime_text(int(node["log"]["mtime"]))
     estimate = None
+    script: dict[str, Any] = {}
     if log_entry:
-        estimate = scan_hashrate(log_entry.get("text", ""))
-        if estimate is None:
-            result = log_hashrate(log_entry.get("text", ""), log_entry.get("mtime"))
-            estimate = result["hashrate_hs"]
-    if estimate is None and log_entry:
-        estimate = nonces_hashrate(log_entry.get("text", ""), int(miner.get("workers") or 1))
+        # 1. Format réel du log de mine-bigcoin.sh (une ligne par minute).
+        script = script_hashrate(log_entry.get("text", ""), log_entry.get("mtime"), now)
+        estimate = script["hashrate_hs"]
         if estimate:
-            miner["hashrate_source"] = "log du script (nonces par scan × workers / intervalle)"
+            miner["hashrate_source"] = "log du script (hashes/s/worker × workers)"
+            if script.get("workers"):
+                miner["workers"] = script["workers"]
+            if script.get("algo"):
+                miner["algorithm"] = miner.get("algorithm") or script["algo"]
+        elif script.get("state") == "stale":
+            miner["hashrate_note"] = script["note"]
+        if estimate is None:
+            estimate = scan_hashrate(log_entry.get("text", ""))
+        if estimate is None:
+            result = log_hashrate(log_entry.get("text", ""), log_entry.get("mtime"), now)
+            estimate = result["hashrate_hs"]
+        if estimate is None:
+            # 2. Dernier recours seulement : nonces / intervalle.
+            #    FORMAT NON VÉRIFIÉ (aucun relevé réel de ce motif).
+            estimate = nonces_hashrate(
+                log_entry.get("text", ""), int(miner.get("workers") or 1)
+            )
+            if estimate:
+                miner["hashrate_source"] = (
+                    "log du script (nonces / intervalle, format non vérifié)"
+                )
     if estimate:
         miner["hashrate_hs"] = estimate
-        miner["hashrate_source"] = miner.get("hashrate_source") or "log du script (nonces / intervalle des scans)"
+        miner["hashrate_source"] = miner.get("hashrate_source") or "log du script"
     else:
-        miner["hashrate_note"] = (
+        miner["hashrate_note"] = miner.get("hashrate_note") or (
             "hashrate CPU inconnu (source : nœud %s, getmininginfo)" % node.get("key", "?")
         )
     miner["node"] = {
         "key": node.get("key"),
-        "height": node.get("height"),
+        # Le nœud interrogé peut être muet : le log porte height et difficulty.
+        "height": (
+            node.get("height") if node.get("height") is not None else script.get("height")
+        ),
         "network_hs": node.get("network_hs"),
-        "difficulty": node.get("difficulty"),
+        "difficulty": (
+            node.get("difficulty")
+            if node.get("difficulty") is not None
+            else script.get("difficulty")
+        ),
+        "algo": script.get("algo") or "",
         "share_pct": network_share_pct(miner.get("hashrate_hs"), node.get("network_hs")),
         "blocks_found": blocks_found(log_entry.get("text", "")) if log_entry else None,
         "log": log_entry.get("path") if log_entry else "",
