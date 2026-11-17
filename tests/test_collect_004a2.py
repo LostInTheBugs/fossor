@@ -106,8 +106,8 @@ async def test_solo_big_end_to_end(client, monkeypatch):
         '{"blocks": 20353, "networkhashps": 18400000000, "chain": "main"}\n'
         "### NETPS bigcoin\n18400000000\n"
         # Le log réel n'est pas deviné depuis le datadir : il vient de
-        # /proc/<pid du script>/fd/1 (pid d'un client, rattaché au nœud).
-        f"### LOGI 3643649 {LOG_PATH}\n{mtime}\n"
+        # /proc/<pid du script>/fd/1, suivi en premier par la sonde (c1).
+        f"### LOGI 1104502 {LOG_PATH}\n{mtime}\n"
         + (FIX / "solo_big_log.txt").read_text()
     )
 

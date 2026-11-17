@@ -685,6 +685,40 @@ def _script_miner_key(args: str) -> str:
     return name if _SAFE_BIN_RE.match(name) else ""
 
 
+#: Lanceur shell d'un script solo : ``bash -c 'cd … && nohup ./mine-x.sh > log &'``
+_SOLO_LAUNCHER_RE = re.compile(r"(?:^|\s)-[A-Za-z]*c(?:\s|$)|&&|>>?\s")
+
+
+def _solo_launcher(args: str) -> bool:
+    """True for the row that *starts* a solo script, not for the script itself.
+
+    2026.11.004-c1 : le lanceur est le parent du script (``bash -c cd … && nohup
+    ./mine-bigcoin.sh > ~/…/mine.log 2>&1 &``).  Ses arguments portent la
+    redirection, et ``/proc/<pid>/fd/1`` du script en est la conséquence.
+    """
+    tokens = (args or "").split()
+    first = tokens[0].rsplit("/", 1)[-1].lower() if tokens else ""
+    if first.startswith("screen"):
+        return True
+    return bool(_SOLO_LAUNCHER_RE.search(args or ""))
+
+
+def _ordered_solo_pids(entries: Sequence[dict[str, Any]], limit: int = 2) -> list[int]:
+    """Pids du script/lanceur, le plus ancien d'abord (le principal en tête).
+
+    Un ``mine-bigcoin.sh`` apparaît une fois par worker (11 lignes identiques) :
+    garder les *limit* plus anciens évite 11 sondes ``/proc/<pid>/fd`` pour le
+    même fichier, tout en gardant un repli si le principal a fermé ses fd.
+    """
+    unique: dict[int, float] = {}
+    for entry in entries:
+        pid = entry.get("pid")
+        if isinstance(pid, int) and pid > 0:
+            unique.setdefault(pid, float(entry.get("elapsed_s") or 0))
+    ordered = sorted(unique.items(), key=lambda item: (-item[1], item[0]))
+    return [pid for pid, _ in ordered[:limit]]
+
+
 def plan_cpu_probes(ps_section: str) -> dict[str, list[dict[str, Any]]]:
     """Read-only probes to run for the miners found in ``ps``.
 
@@ -712,10 +746,12 @@ def plan_cpu_probes(ps_section: str) -> dict[str, list[dict[str, Any]]]:
     fds: list[dict[str, Any]] = []
     node_rows: dict[str, dict[str, Any]] = {}
     node_pids: dict[str, list[int]] = {}
+    node_scripts: dict[str, list[dict[str, Any]]] = {}
+    node_launchers: dict[str, list[dict[str, Any]]] = {}
     seen_logs: set[str] = set()
     seen_apis: set[int] = set()
 
-    def add_node(key: str, force: bool = False, **values: Any) -> None:
+    def add_node(key: str, force: bool = False, follow: bool = True, **values: Any) -> None:
         if not key or not _SAFE_BIN_RE.match(key):
             return
         entry = node_rows.setdefault(
@@ -726,7 +762,9 @@ def plan_cpu_probes(ps_section: str) -> dict[str, list[dict[str, Any]]]:
             if value and (force or not entry.get(field)):
                 entry[field] = value
         pid = values.get("pid")
-        if isinstance(pid, int) and pid > 0:
+        # ``follow=False`` : le client ``*-cli`` donne seulement le dossier de
+        # travail (cwd) ; son fd/1 n'est pas un log et son pid est transitoire.
+        if follow and isinstance(pid, int) and pid > 0:
             node_pids.setdefault(key, []).append(pid)
 
     for row in parse_ps_rows(ps_section):
@@ -747,6 +785,7 @@ def plan_cpu_probes(ps_section: str) -> dict[str, list[dict[str, Any]]]:
             add_node(
                 base[:-4],
                 force=True,
+                follow=False,
                 cli=_valid_path(tokens[0]),
                 token=tokens[0] if _SAFE_REL_RE.match(tokens[0]) else "",
                 datadir=_flag(tokens, ("-datadir",)),
@@ -763,11 +802,27 @@ def plan_cpu_probes(ps_section: str) -> dict[str, list[dict[str, Any]]]:
         family = miner_family(args)
         if not family:
             # ``screen … korsh-miner.sh`` : le script reste présent même quand
-            # aucun client ne tourne.  Hors screen, un `mine-x.sh` générique
-            # reste un mineur script, pas un nœud solo.
-            script_key = _script_miner_key(args) if "screen" in args.lower() else ""
+            # aucun client ne tourne.  Hors screen, le lanceur
+            # ``bash -c 'cd … && nohup ./mine-bigcoin.sh > ~/…/mine.log 2>&1 &'``
+            # porte la redirection et le script la subit : les deux pids sont
+            # suivis par /proc/<pid>/fd/1|2 (2026.11.004-c1).  Aucun nom de log
+            # n'est deviné — ``mine.log`` n'était pas dans la liste.
+            script_key = _script_miner_key(args)
             if script_key:
-                add_node(script_key, datadir=_flag(tokens, ("-datadir",)), pid=row.get("pid"))
+                entry = {
+                    "pid": row.get("pid"),
+                    "elapsed_s": row.get("elapsed_s"),
+                    # (b) redirection absolue de la ligne du lanceur ; « ~/… »
+                    # n'est résolu que par /proc/<pid>/fd/1 du script.
+                    "redirect": (
+                        match.group(1) if (match := _REDIRECT_RE.search(args)) else ""
+                    ),
+                }
+                if _solo_launcher(args):
+                    node_launchers.setdefault(script_key, []).append(entry)
+                else:
+                    node_scripts.setdefault(script_key, []).append(entry)
+                add_node(script_key, datadir=_flag(tokens, ("-datadir",)))
             continue
         # SRBMiner is a GPU miner unless it was explicitly told to use the CPU:
         # probing its API here would duplicate the SRBMiner collector.
@@ -796,19 +851,28 @@ def plan_cpu_probes(ps_section: str) -> dict[str, list[dict[str, Any]]]:
         from app.external_miners import coin_for_client
 
         node["coin"] = coin_for_client(key)
-        # The solo script's own log is not in the ps line: probe the two names
-        # every such script uses next to its datadir, then /proc/<pid>/fd.
-        base = node["datadir"].rsplit("/", 1)[0] if node.get("datadir") else ""
-        for candidate in (f"{base}/mining.log", f"{base}/miner.log") if base else ():
-            if _valid_path(candidate) and candidate not in seen_logs:
-                seen_logs.add(candidate)
-                logs.append({"path": candidate, "family": f"node:{key}",
-                             "pid": node.get("pid")})
-                node.setdefault("log_candidates", []).append(candidate)
-        pids = sorted({pid for pid in node_pids.get(key, []) if pid > 0})
+        # 2026.11.004-c1 : le log du solo se déduit de la redirection réelle,
+        # pas d'un nom deviné — ``/proc/<pid>/fd/1|2`` du **script**, puis de
+        # son lanceur, le démon en dernier (son fd est /dev/null ou le
+        # journal).  ``mine.log`` est trouvé par (a) ``readlink fd/1`` et
+        # (b) la redirection du lanceur, qui est la même ouverture.
+        scripts = _ordered_solo_pids(node_scripts.get(key, []), limit=1)
+        launchers = _ordered_solo_pids(node_launchers.get(key, []))
+        daemons = sorted({pid for pid in node_pids.get(key, []) if pid > 0})
+        pids = list(dict.fromkeys(scripts + launchers + daemons))
         node["pids"] = pids
+        node["solo_pids"] = {"script": scripts, "parent": launchers, "daemon": daemons}
         for pid in pids:
             fds.append({"pid": pid, "family": f"node:{key}"})
+        # (b) redirection absolue écrite dans la ligne du lanceur : une seule
+        # chaîne, sans « ~ » (le home n'est pas connu côté application).
+        for entry in node_launchers.get(key, []):
+            raw = _valid_path(str(entry.get("redirect") or ""))
+            if raw and raw not in seen_logs:
+                seen_logs.add(raw)
+                node.setdefault("log_candidates", []).append(raw)
+                logs.append({"path": raw, "family": f"node:{key}",
+                             "pid": entry.get("pid")})
         nodes.append(node)
     return {"logs": logs, "apis": apis, "nodes": nodes, "fds": fds}
 
