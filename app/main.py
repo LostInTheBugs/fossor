@@ -17,6 +17,7 @@ from app.routers.energy import router as energy_router
 from app.routers.ssh import router as ssh_router
 from app.routers.notifications import router as notifications_router
 from app.routers.miners import router as miners_router
+from app.routers.psu import router as psu_router
 from app.routers.ui import router as ui_router
 from pathlib import Path
 
@@ -46,6 +47,7 @@ app.include_router(energy_router)
 app.include_router(ssh_router)
 app.include_router(notifications_router)
 app.include_router(miners_router)
+app.include_router(psu_router)
 app.include_router(ui_router)
 
 

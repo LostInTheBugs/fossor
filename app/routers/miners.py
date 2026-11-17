@@ -114,7 +114,14 @@ def _gpu_indices(db: Session, machine: Machine) -> list[int]:
         .order_by(Device.index.asc())
         .all()
     )
-    return sorted(d.index for d in rows if d.present and d.enabled_for_mining and d.index is not None)
+    from app.devices import integrated_hidden
+
+    hide = integrated_hidden(db)
+    return sorted(
+        d.index for d in rows
+        if d.present and d.enabled_for_mining and d.index is not None
+        and not (d.integrated and hide)
+    )
 
 
 def _cpu_threads(db: Session, machine: Machine) -> int:
@@ -288,6 +295,24 @@ async def start_miner(
     profile = _selected_profile(db, machine, data.get("profile_id"))
     if not profile.enabled:
         raise HTTPException(status_code=400, detail="Profil désactivé")
+    # §4.2 bis : au démarrage, si la charge prévue dépasse 80 %, demander une
+    # confirmation explicite au lieu de lancer à l'aveugle.
+    from app.routers.psu import evaluate_machine_power
+
+    power = evaluate_machine_power(db, machine)
+    if power["worst_load_pct"] > 80 and not data.get("confirm_overload"):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "psu_overload",
+                "message": (
+                    f"Charge prévue de {power['worst_load_pct']} % sur "
+                    f"{power['worst_psu'] or 'une alimentation'} : confirmez le démarrage"
+                ),
+                "worst_load_pct": power["worst_load_pct"],
+                "worst_psu": power["worst_psu"],
+            },
+        )
     try:
         gpus = _gpu_indices(db, machine)
         threads = int(data.get("threads") or profile.threads or _cpu_threads(db, machine))

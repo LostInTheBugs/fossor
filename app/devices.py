@@ -24,6 +24,16 @@ from app.hw_parser import norm_bus
 from app.models import Device, Machine
 
 
+def integrated_hidden(db: Session) -> bool:
+    """Global « Masquer les GPU intégrés du minage » (§4.2), activé par défaut."""
+    from app.ai_config import get_setting
+
+    try:
+        return bool(get_setting(db, "hide_integrated_gpus", True))
+    except Exception:
+        return True
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -133,6 +143,9 @@ def apply_detection(db: Session, machine: Machine, detected: dict[str, Any], gpu
         else:
             updated += 1
         _apply(db, device, values)
+        # §4.2: un GPU intégré n'est jamais miné tant que le masquage est actif.
+        if device.integrated and integrated_hidden(db):
+            device.enabled_for_mining = False
         db.flush()
         seen.add(device.id)
 
@@ -279,7 +292,12 @@ def compute_usage(db: Session, machine: Machine) -> str:
         .all()
     )
     cpu = any(device.kind == "cpu" and device.enabled_for_mining for device in rows)
-    gpu = any(device.kind == "gpu" and device.enabled_for_mining for device in rows)
+    hide = integrated_hidden(db)
+    gpu = any(
+        device.kind == "gpu" and device.enabled_for_mining
+        and not (device.integrated and hide)
+        for device in rows
+    )
     if cpu and gpu:
         return "both"
     if cpu:
@@ -316,6 +334,10 @@ def device_to_dict(device: Device) -> dict[str, Any]:
         "enabled_for_mining": device.enabled_for_mining,
         "integrated": device.integrated,
         "occupied_external": device.occupied_external,
+        # §4.2 bis : PSU qui porte la carte (et seconde PSU si réparti).
+        "psu_id": device.psu_id,
+        "psu2_id": device.psu2_id,
+        "split_w": device.split_w,
         "created_at": device.created_at,
         "updated_at": device.updated_at,
     }

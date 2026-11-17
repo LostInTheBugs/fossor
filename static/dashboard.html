@@ -288,7 +288,7 @@ function card(m, e) {
     "</div>" +
     '<div class="totals">' +
       '<div><span class="k">Hashrate</span><span class="v">' + fmtHs(m.total_hashrate_hs) + "</span></div>" +
-      '<div><span class="k">Conso</span><span class="v">' + fmtW(m.total_power_w) + "</span></div>" +
+      '<div><span class="k">Conso</span><span class="v">' + fmtW(m.wall_power_w || m.total_power_w) + "</span></div>" +
       '<div><span class="k">Uptime</span><span class="v">' + fmtUptime(m.uptime_s) + "</span></div>" +
       '<div><span class="k">Coût 24 h</span><span class="v">' + fmtEur(e.cost_eur_day) + "</span></div>" +
       '<div><span class="k">Net 24 h</span><span class="v">' + fmtEur(e.net_eur_day) + "</span></div>" +
@@ -314,7 +314,7 @@ function render(machines, energy) {
   // Never sum hashrates of different tokens/algos: one card per token.
   renderTokens(machines, byUuid);
 
-  const watts = machines.reduce((acc, m) => acc + (m.total_power_w || 0), 0);
+  const watts = machines.reduce((acc, m) => acc + (m.wall_power_w || m.total_power_w || 0), 0);
   $("#sPower").textContent = fmtW(watts || null);
 
   const totals = (energy && energy.total) || {};

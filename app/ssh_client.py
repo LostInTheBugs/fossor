@@ -99,6 +99,22 @@ WHITELISTED_COMMANDS: dict[str, str] = {
         cat /proc/uptime 2>/dev/null
         exit 0
     """).strip(),
+    # Read-only inventory of the *other* components (§4.2 bis): RAM, disks,
+    # non-GPU PCI cards and HiveOS fans.  sudo -n never prompts; a missing tool
+    # leaves its section empty and the command still exits 0.
+    "inventory": textwrap.dedent("""\
+        echo '### DMIDECODE'
+        sudo -n dmidecode -t memory 2>/dev/null
+        echo '### MEMINFO'
+        cat /proc/meminfo 2>/dev/null
+        echo '### LSBLK'
+        lsblk -d -o NAME,ROTA,TRAN,SIZE,MODEL 2>/dev/null
+        echo '### LSPCI'
+        lspci 2>/dev/null
+        echo '### HIVE_STAT'
+        cat /run/hive/last_stat.json 2>/dev/null
+        exit 0
+    """).strip(),
     # SRBMiner / miner HTTP API bound to 127.0.0.1 on the machine: the
     # container cannot reach it, so the request is relayed through SSH
     # (fallback used by the collector; {port} is validated as an int).
@@ -797,6 +813,30 @@ async def ssh_collect_cpu(machine: Any, probes: dict[str, Any], actor: str = "sy
         pinned_fp=pinned_fp,
         pinned_public_key=pinned_public_key,
         command=cpu_probe_command(probes),
+        machine_id=machine.id,
+        audit_kind="collect",
+        actor=actor,
+    )
+
+
+async def ssh_collect_inventory(machine: Any, actor: str = "system") -> dict[str, Any]:
+    """Run the read-only ``inventory`` command (§4.2 bis).
+
+    dmidecode via ``sudo -n``, /proc/meminfo, lsblk, lspci and the HiveOS fan
+    list: nothing is written on the machine and a missing tool is not an error.
+    """
+    pinned_fp = (getattr(machine, "host_key", None) or "").strip() or None
+    pinned_public_key = (getattr(machine, "host_key_public", None) or "").strip() or None
+
+    return await _run_whitelisted(
+        host=machine.host,
+        port=machine.ssh_port,
+        username=machine.ssh_user,
+        secret=_machine_secret(machine),
+        auth_type=machine.auth_type,
+        pinned_fp=pinned_fp,
+        pinned_public_key=pinned_public_key,
+        command=WHITELISTED_COMMANDS["inventory"],
         machine_id=machine.id,
         audit_kind="collect",
         actor=actor,

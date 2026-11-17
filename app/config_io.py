@@ -28,7 +28,7 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from sqlalchemy.orm import Session
 
 from app.ai_config import NON_EXPORTED_SETTINGS, PROVIDER_FIELDS, PROVIDER_TYPES, WHICHES
-from app.models import AiProvider, AppSetting, Device, Machine
+from app.models import AiProvider, AppSetting, Device, Machine, MachineComponent, Psu
 from app.secrets import decrypt_secret, encrypt_secret
 
 FORMAT_VERSION = 1
@@ -170,6 +170,9 @@ def build_export(db: Session, include_secrets: bool = False, passphrase: str | N
     machines = db.query(Machine).order_by(Machine.id).all()
     devices = db.query(Device).order_by(Device.id).all()
     machine_uuid = {machine.id: machine.uuid for machine in machines}
+    # §4.2 bis : les affectations de PSU sont exportées par uuid, jamais par id SQL.
+    psus_all = db.query(Psu).order_by(Psu.id).all()
+    psu_uuid_by_id = {psu.id: psu.uuid for psu in psus_all}
 
     doc: dict[str, Any] = {
         "format_version": FORMAT_VERSION,
@@ -196,6 +199,45 @@ def build_export(db: Session, include_secrets: bool = False, passphrase: str | N
             }
             for device in devices
         ],
+        "psus": [
+            {
+                "uuid": psu.uuid,
+                "machine_uuid": machine_uuid.get(psu.machine_id),
+                "name": psu.name,
+                "rated_w": psu.rated_w,
+                "certification": psu.certification,
+                "amps_12v": psu.amps_12v,
+                "derate_pct": psu.derate_pct,
+                "measured_efficiency": psu.measured_efficiency,
+                "brand": psu.brand,
+                "model": psu.model,
+                "is_default": bool(psu.is_default),
+            }
+            for psu in psus_all
+        ],
+        "components": [
+            {
+                "uuid": component.uuid,
+                "machine_uuid": machine_uuid.get(component.machine_id),
+                "kind": component.kind,
+                "label": component.label,
+                "watts": component.watts,
+                "quantity": component.quantity,
+                "measured": bool(component.measured),
+                "source": component.source,
+                "psu_uuid": psu_uuid_by_id.get(component.psu_id),
+            }
+            for component in db.query(MachineComponent).order_by(MachineComponent.id).all()
+        ],
+        "device_psus": {
+            device.uuid: {
+                "psu_uuid": psu_uuid_by_id.get(device.psu_id),
+                "psu2_uuid": psu_uuid_by_id.get(device.psu2_id),
+                "split_w": device.split_w,
+            }
+            for device in devices
+            if device.psu_id or device.psu2_id or device.split_w is not None
+        },
         "settings": _settings_snapshot(db),
         "ai": {
             "providers": [
@@ -344,6 +386,27 @@ def validate_document(doc: Any) -> None:
                 f"devices[{position}] : machine_uuid inconnu ({device['machine_uuid']})"
             )
 
+    # §4.2 bis : sections optionnelles pour que les anciens exports restent lisibles.
+    for field in ("psus", "components", "device_psus"):
+        if field in doc and not isinstance(doc[field], (list, dict)):
+            raise ConfigError(f"Le champ « {field} » a un type invalide")
+    psu_uuids: set[str] = set()
+    for position, psu in enumerate(doc.get("psus") or []):
+        if not isinstance(psu, dict) or not psu.get("uuid"):
+            raise ConfigError(f"psus[{position}] : uuid manquant")
+        if psu.get("machine_uuid") not in machine_uuids:
+            raise ConfigError(f"psus[{position}] : machine_uuid inconnu")
+        if not psu.get("name") or not psu.get("rated_w"):
+            raise ConfigError(f"psus[{position}] : nom et puissance requis")
+        psu_uuids.add(psu["uuid"])
+    for position, component in enumerate(doc.get("components") or []):
+        if not isinstance(component, dict) or not component.get("uuid"):
+            raise ConfigError(f"components[{position}] : uuid manquant")
+        if component.get("machine_uuid") not in machine_uuids:
+            raise ConfigError(f"components[{position}] : machine_uuid inconnu")
+        if component.get("psu_uuid") not in (None, "") and component["psu_uuid"] not in psu_uuids:
+            raise ConfigError(f"components[{position}] : psu_uuid inconnu")
+
     _validate_ai(doc)
 
 
@@ -360,6 +423,8 @@ def compute_diff(db: Session, doc: dict) -> dict:
     """Additions / modifications / deletions compared by uuid, without writing."""
     machines = {machine.uuid: machine for machine in db.query(Machine).all()}
     devices = {device.uuid: device for device in db.query(Device).all()}
+    psus = {row.uuid: row for row in db.query(Psu).all()}
+    components = {row.uuid: row for row in db.query(MachineComponent).all()}
     machine_uuid_by_id = {machine.id: machine.uuid for machine in db.query(Machine).all()}
     settings = _settings_snapshot(db)
 
@@ -422,6 +487,21 @@ def compute_diff(db: Session, doc: dict) -> dict:
             "modified": sorted(k for k in incoming_settings if k in settings and settings[k] != incoming_settings[k]),
             "removed": sorted(k for k in settings if k not in incoming_settings),
         },
+        "psus": {
+            "added": [{"uuid": u, "name": r.get("name")} for u, r in
+                      {row["uuid"]: row for row in (doc.get("psus") or [])}.items() if u not in psus],
+            "modified": [],
+            "removed": [{"uuid": u, "name": p.name} for u, p in psus.items()
+                        if u not in {row["uuid"] for row in (doc.get("psus") or [])}],
+        },
+        "components": {
+            "added": [{"uuid": u, "label": r.get("label")} for u, r in
+                      {row["uuid"]: row for row in (doc.get("components") or [])}.items()
+                      if u not in components],
+            "modified": [],
+            "removed": [{"uuid": u, "label": c.label} for u, c in components.items()
+                        if u not in {row["uuid"] for row in (doc.get("components") or [])}],
+        },
         "ai": {
             "added": [{"which": w, "name": r.get("name") or w} for w, r in incoming_ai.items() if w not in current_ai],
             "modified": ai_modified,
@@ -469,6 +549,8 @@ def apply_import(
         "devices": {"created": 0, "updated": 0, "deleted": 0},
         "settings": {"created": 0, "updated": 0, "deleted": 0},
         "ai": {"created": 0, "updated": 0, "deleted": 0},
+        "psus": {"created": 0, "updated": 0, "deleted": 0},
+        "components": {"created": 0, "updated": 0, "deleted": 0},
     }
 
     if mode == "replace":
@@ -578,5 +660,69 @@ def apply_import(
 
         _notifications.apply_secrets(db, notif_secrets)
 
+    # §4.2 bis : alimentations, composants et affectations (uuid).
+    _apply_power_sections(db, doc, machines, stats)
+
     db.commit()
     return {"mode": mode, "backup": backup_path, "stats": stats}
+
+
+def _apply_power_sections(db: Session, doc: dict, machines: dict, stats: dict) -> None:
+    """PSUs, composants et affectations de devices (§4.2 bis), par uuid."""
+    incoming_psus = {row["uuid"]: row for row in (doc.get("psus") or [])}
+    incoming_components = {row["uuid"]: row for row in (doc.get("components") or [])}
+    existing_psus = {row.uuid: row for row in db.query(Psu).all()}
+    psu_by_uuid: dict[str, Psu] = {}
+    for uuid, row in incoming_psus.items():
+        machine = machines.get(row["machine_uuid"])
+        if machine is None:
+            continue
+        psu = existing_psus.get(uuid)
+        if psu is None:
+            psu = Psu(uuid=uuid, machine_id=machine.id, created_at=_now())
+            db.add(psu)
+            stats["psus"]["created"] += 1
+        else:
+            stats["psus"]["updated"] += 1
+        for key in ("name", "rated_w", "certification", "amps_12v", "derate_pct",
+                    "measured_efficiency", "brand", "model", "is_default"):
+            if key in row:
+                setattr(psu, key, row[key])
+        psu.machine_id = machine.id
+        psu.updated_at = _now()
+        db.flush()
+        psu_by_uuid[uuid] = psu
+    for uuid, psu in existing_psus.items():
+        psu_by_uuid.setdefault(uuid, psu)
+
+    existing_components = {row.uuid: row for row in db.query(MachineComponent).all()}
+    for uuid, row in incoming_components.items():
+        machine = machines.get(row["machine_uuid"])
+        if machine is None:
+            continue
+        component = existing_components.get(uuid)
+        if component is None:
+            component = MachineComponent(uuid=uuid, machine_id=machine.id, created_at=_now())
+            db.add(component)
+            stats["components"]["created"] += 1
+        else:
+            stats["components"]["updated"] += 1
+        component.machine_id = machine.id
+        for key in ("kind", "label", "watts", "quantity", "measured", "source"):
+            if key in row:
+                setattr(component, key, row[key])
+        psu = psu_by_uuid.get(row.get("psu_uuid") or "")
+        component.psu_id = psu.id if psu is not None else None
+        component.updated_at = _now()
+
+    devices = {device.uuid: device for device in db.query(Device).all()}
+    for device_uuid, row in (doc.get("device_psus") or {}).items():
+        device = devices.get(device_uuid)
+        if device is None:
+            continue
+        psu = psu_by_uuid.get(row.get("psu_uuid") or "")
+        psu2 = psu_by_uuid.get(row.get("psu2_uuid") or "")
+        device.psu_id = psu.id if psu is not None else None
+        device.psu2_id = psu2.id if psu2 is not None else None
+        device.split_w = row.get("split_w")
+    db.flush()

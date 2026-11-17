@@ -158,6 +158,11 @@ header h1{font-size:26px}
       </div>
       <div class="actions"><button class="btn" id="simSave">Enregistrer</button><span id="simState" class="chip warn">simulation</span></div>
       <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
+      <h2>GPU intégrés</h2>
+      <div class="sub">Masqués par défaut : ils restent visibles et grisés dans la fiche machine, mais ne sont jamais proposés au minage (ni dans {gpus}, ni dans les campagnes, le boost ou le calcul de puissance).</div>
+      <div class="field"><label><input type="checkbox" id="igpuToggle" checked> Masquer les GPU intégrés du minage</label></div>
+      <div class="actions"><button class="btn outline" id="igpuSave">Enregistrer</button><span id="igpuState" class="chip off">—</span></div>
+      <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
       <h2>Token par défaut</h2>
       <div class="sub">Profil exécuté par les devices cochés « miner avec » quand aucune campagne ne les occupe (l'étape 3b s'en sert pour le retour automatique). Une machine peut le surcharger.</div>
       <div class="field"><label>Profil par défaut</label><select id="defProfile"><option value="">— aucun —</option></select></div>
@@ -934,6 +939,12 @@ $('#patSave').onclick=async()=>{
   await loadPatterns();
 };
 loadPatterns();
+const loadIgpu=async()=>{try{const r=await fetch('/api/power/settings',{credentials:'include'});if(!r.ok)return;const d=await r.json();$('#igpuToggle').checked=!!d.hide_integrated_gpus;$('#igpuState').textContent=d.hide_integrated_gpus?'masqués':'visibles';}catch(e){}};
+$('#igpuSave').addEventListener('click',async()=>{
+  const r=await fetch('/api/power/settings',{method:'PUT',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({hide_integrated_gpus:$('#igpuToggle').checked})});
+  if(r.ok){const d=await r.json();$('#igpuState').textContent=d.hide_integrated_gpus?'masqués':'visibles';}
+});
+loadIgpu();
 </script>
 </body>
 </html>

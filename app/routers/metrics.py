@@ -150,6 +150,11 @@ def metrics_live(
         )
         devices.sort(key=lambda d: (0 if d.kind == "cpu" else 1, d.index if d.index is not None else 0))
 
+        cpu_state = _cpu_state(status)
+        cpu_extra = ({
+            "hashrate_by_algo": cpu_state.get("hashrate_by_algo") or [],
+            "hashrate_label": cpu_state.get("hashrate_label") or "",
+        } if cpu_state else {})
         device_rows = []
         for device in devices:
             metric = _metric_dict(latest.get(device.uuid))
@@ -163,6 +168,7 @@ def metrics_live(
                 "integrated": device.integrated,
                 "enabled_for_mining": device.enabled_for_mining,
                 "occupied_external": bool(getattr(device, "occupied_external", False)),
+                **(cpu_extra if device.kind == "cpu" else {}),
                 **metric,
             })
 
@@ -182,6 +188,15 @@ def metrics_live(
             status.algo if status else "",
             total_hs,
         )
+        wall_w, worst_pct = total_w, 0.0
+        try:
+            from app.routers.psu import evaluate_machine_power
+
+            psu_power = evaluate_machine_power(db, machine)
+            wall_w = psu_power["total_wall_w"]
+            worst_pct = psu_power["worst_load_pct"]
+        except Exception:  # pragma: no cover - la conso ne casse jamais le live
+            pass
         payload.append({
             "uuid": machine.uuid,
             "name": machine.name,
@@ -204,6 +219,8 @@ def metrics_live(
             "total_hashrate_hs": total_hs,
             "total_hashrate_human": format_hashrate(total_hs),
             "total_power_w": total_w,
+            "wall_power_w": wall_w,
+            "worst_psu_load_pct": worst_pct,
             "last_ts": status.ts if status else None,
             "age_s": _age_seconds(status.ts if status else None, now),
             "devices": device_rows,
@@ -211,7 +228,8 @@ def metrics_live(
             "coin_groups": groups,
             # 2026.11.003-c7 : état du CPU (charge, température, fréquence,
             # puissance) et hashrate de chaque mineur CPU.
-            "cpu": _cpu_state(status),
+            "cpu": cpu_state,
+            "cpu_freq_mhz": (cpu_state or {}).get("freq_mhz"),
         })
     return payload
 
@@ -227,7 +245,21 @@ def _cpu_state(status) -> dict[str, Any] | None:
         value = json.loads(raw)
     except (TypeError, ValueError):
         return None
-    return value if isinstance(value, dict) else None
+    if not isinstance(value, dict):
+        return None
+    # 2026.11.004 : les champs de fréquence existent toujours, même vides — une
+    # clé absente se lisait comme « l'API ne remonte pas la fréquence ».
+    value.setdefault("freq_mhz", None)
+    value.setdefault("freq_source", "")
+    freq = value.get("freq_mhz")
+    if isinstance(freq, (int, float)) and freq > 0:
+        value["freq_mhz"] = round(float(freq), 1)
+        value["freq_ghz"] = round(float(freq) / 1000.0, 2)
+    else:
+        value["freq_mhz"] = None
+        value["freq_ghz"] = None
+        value["freq_source"] = value.get("freq_source") or "non mesurée"
+    return value
 
 
 @router.get("/miner-patterns")

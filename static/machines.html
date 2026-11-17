@@ -65,6 +65,17 @@ tr.absent td{opacity:.5}
 .miner-alert{margin-top:8px;padding:8px 10px;background:#2a1a1a;border:1px solid var(--red);border-radius:8px;font-size:11.5px;color:var(--red)}
 .pending-warning{margin-top:8px;padding:8px 10px;background:#2a2416;border:1px solid var(--yellow);border-radius:8px;font-size:11.5px;color:var(--yellow)}
 .pending-warning .btn{margin-top:6px}
+.psu-row{margin:6px 0}
+.psu-head{display:flex;justify-content:space-between;gap:12px;font-size:11.5px}
+.bar{height:8px;background:#0e1218;border:1px solid var(--border);border-radius:6px;overflow:hidden;margin:3px 0}
+.bar span{display:block;height:100%;background:var(--green)}
+.bar span.orange{background:var(--yellow)}
+.bar span.red{background:var(--red)}
+.bar span.spare{background:#39424f}
+.igpu-masked td{opacity:.45}
+.psu-form{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center}
+.psu-form input,.psu-form select,.assign-row select,.assign-row input{background:var(--bg);color:var(--txt);border:1px solid var(--border);border-radius:7px;padding:4px 7px;font-size:11.5px;font-family:inherit}
+.assign-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:4px 0;font-size:11.5px}
 </style>
   <script src="/static/nav.js" defer></script>
 </head>
@@ -193,7 +204,8 @@ const toast=(msg,type='ok')=>{
   const t=$('#toast');t.textContent=msg;t.className='toast '+type;t.style.display='block';
   setTimeout(()=>t.style.display='none',3000);
 };
-const MACHINES={},DEVICES={};
+const MACHINES={},DEVICES={},POWER={};
+let HIDE_IGPU=true;
 const USAGE_LABEL={both:'CPU+GPU',cpu:'CPU seul',gpu:'GPU seul',none:'Aucun'};
 const machineUsage=id=>{
   const rows=(DEVICES[id]||[]).filter(d=>d.present);
@@ -209,18 +221,101 @@ const deviceRows=(m)=>{
   if(!devs.length)return '<div class="empty" style="padding:8px">Aucun device détecté — cliquez « Détecter le matériel ».</div>';
   const rows=devs.map(d=>{
     const isCpu=d.kind==='cpu';
+    const masked=!!d.integrated&&HIDE_IGPU;
     const details=isCpu
       ?`${d.cores||'?'} cœurs / ${d.threads||'?'} threads · ${d.ram_mb||'?'} Mo RAM${d.flags?' · '+d.flags:''}${d.occupied_external?' · <span class="chip miner" style="font-size:8px">occupé (externe)</span>':''}`
       :`${d.vram_mb?d.vram_mb+' Mo VRAM':'VRAM inconnue'}${d.driver?' · pilote '+d.driver:''}${d.occupied_external?' · <span class="chip miner" style="font-size:8px">occupé (externe)</span>':''}`;
-    return `<tr class="${d.present?'':'absent'}">
+    return `<tr class="${d.present?'':'absent'}${masked?' igpu-masked':''}">
       <td><span class="chip ${isCpu?'cpu':'gpu'}">${isCpu?'CPU':'GPU'}</span></td>
-      <td><b>${d.model||'inconnu'}</b>${d.integrated?' <span class="chip off" title="GPU intégré au CPU / à la carte mère — jamais miné par défaut">intégré</span>':''}${d.present?'':' <span class="chip off">absent</span>'}</td>
+      <td><b>${d.model||'inconnu'}</b>${d.integrated?` <span class="chip off" title="GPU intégré au CPU / à la carte mère — jamais miné par défaut">${masked?'intégré, masqué':'intégré'}</span>`:''}${d.present?'':' <span class="chip off">absent</span>'}</td>
       <td class="mono">${details}</td>
       <td class="mono">${d.pci_bus||'—'}</td>
-      <td><input type="checkbox" class="dev-check" ${d.enabled_for_mining?'checked':''} ${d.present?'':'disabled'} onchange="toggleDevice(${d.id},${m.id},this.checked)" title="Miner avec ce device"></td>
+      <td>${masked?'<span class="mono">—</span>':`<input type="checkbox" class="dev-check" ${d.enabled_for_mining?'checked':''} ${d.present?'':'disabled'} onchange="toggleDevice(${d.id},${m.id},this.checked)" title="Miner avec ce device">`}</td>
     </tr>`;
   }).join('');
   return `<table class="devtab"><thead><tr><th>Type</th><th>Modèle</th><th>Détails</th><th>Bus PCI</th><th>Miner avec</th></tr></thead><tbody>${rows}</tbody></table>`;
+};
+// ── Alimentations et consommation (§4.2 / §4.2 bis) ──────────────────
+const psuOpts=(m,sel)=>['<option value="">— défaut —</option>'].concat(
+  ((POWER[m.id]||{}).psus||[]).map(p=>`<option value="${p.id}"${sel===p.id?' selected':''}>${p.name} · ${p.rated_w} W</option>`)
+).join('');
+const powerPanelHTML=(m)=>{
+  const p=POWER[m.id];
+  if(!p)return '';
+  const bars=(p.psus||[]).map(x=>`<div class="psu-row" data-psu-row="${x.id}" data-psu-status="${x.status}">
+    <div class="psu-head"><b>${x.name}</b><span>${x.load_dc_w} / ${x.available_dc_w} W · ${x.load_pct} % · rendement ${x.efficiency_pct} % · ${x.wall_w} W à la prise</span></div>
+    <div class="bar"><span class="${x.status}" style="width:${Math.min(100,x.load_pct)}%"></span></div>
+    <div class="mono">${(x.items||[]).map(i=>i.label+' '+i.watts+' W').join(' · ')||'aucun device affecté'}</div>
+  </div>`).join('');
+  const gpus=(DEVICES[m.id]||[]).filter(d=>d.kind==='gpu'&&d.present&&!d.integrated);
+  const assign=gpus.map(d=>`<div class="assign-row" data-gpu="${d.id}">
+    <span class="mono">GPU ${d.index} — ${d.model||''}</span>
+    <select data-assign-primary="${d.id}">${psuOpts(m,d.psu_id)}</select>
+    <select data-assign-second="${d.id}">${psuOpts(m,d.psu2_id)}</select>
+    <input type="number" data-assign-split="${d.id}" value="${d.split_w!=null?d.split_w:75}" min="0" max="600" style="width:72px"> W slot/riser
+    <button class="btn sm outline" onclick="assignPsu(${d.id},${m.id})">Affecter</button>
+  </div>`).join('');
+  const total=`<div style="font-size:12px;margin-bottom:6px">Conso totale : <b>${p.total_dc_w} W DC</b> · <b>${p.total_wall_w} W à la prise</b> — mesuré ${p.measured_w} W, estimé ${p.estimated_w} W${p.psus.length?' · pire charge '+p.worst_load_pct+' % ('+p.worst_psu+')':''}</div>`;
+  const alerts=(p.alerts||[]).filter(a=>a.level!=='info').map(a=>`<div class="miner-alert" data-psu-alert="${a.level}">${a.message}</div>`).join('');
+  return `<div style="margin-top:10px"><div class="dev-head"><b>⚡ Alimentations</b><button class="btn sm outline" onclick="detectInventory(${m.id})">🔎 Détecter l'inventaire</button></div>
+    ${total}${alerts}${bars||'<div class="empty" style="padding:6px">Aucune alimentation — la puissance à la prise vaut alors la charge DC.</div>'}
+    <div class="psu-form">
+      <input id="psuName-${m.id}" placeholder="PSU 1" style="width:90px">
+      <input id="psuW-${m.id}" type="number" placeholder="750" style="width:80px">
+      <select id="psuCert-${m.id}"><option value="gold">Gold</option><option value="platinum">Platinum</option><option value="bronze">Bronze</option><option value="silver">Silver</option><option value="titanium">Titanium</option><option value="white">White</option><option value="none">aucune</option></select>
+      <button class="btn sm" onclick="addPsu(${m.id})">+ Alimentation</button>
+    </div>
+    ${assign?`<div style="margin-top:8px;font-size:11.5px;color:var(--muted)">Affectation GPU → PSU (deux PSU = GPU réparti, part slot/riser sur la première)</div>${assign}`:''}
+    <div class="psu-form">
+      <input id="compLabel-${m.id}" placeholder="Ventilateur supplémentaire" style="width:190px">
+      <input id="compW-${m.id}" type="number" placeholder="2" style="width:64px">
+      <input id="compQty-${m.id}" type="number" placeholder="1" value="1" style="width:56px">
+      <select id="compKind-${m.id}"><option value="fan">Ventilateur</option><option value="riser">Riser</option><option value="pump">Pompe</option><option value="ram">RAM</option><option value="storage">Stockage</option><option value="pcie_card">Carte PCIe</option><option value="other">Autre</option></select>
+      <button class="btn sm outline" onclick="addComponent(${m.id})">+ Composant</button>
+    </div>
+  </div>`;
+};
+const refreshPower=async(id)=>{
+  try{const p=await api('/api/machines/'+id+'/power');if(p)POWER[id]=p;}catch(e){}
+  await loadMachines();
+};
+const addPsu=async(id)=>{
+  const name=($('#psuName-'+id).value||'').trim()||'PSU';
+  const rated=parseFloat($('#psuW-'+id).value);
+  if(!(rated>0)){toast('Puissance nominale requise','err');return;}
+  const r=await fetch('/api/machines/'+id+'/psus',{method:'POST',credentials:'include',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name,rated_w:rated,certification:$('#psuCert-'+id).value})});
+  if(!r.ok){const d=await r.json().catch(()=>({}));toast(d.detail||'Ajout impossible','err');return;}
+  toast('Alimentation ajoutée');await refreshPower(id);
+};
+const assignPsu=async(deviceId,machineId)=>{
+  const body={
+    psu_id:parseInt($('[data-assign-primary="'+deviceId+'"]').value,10)||null,
+    psu2_id:parseInt($('[data-assign-second="'+deviceId+'"]').value,10)||null,
+    split_w:parseFloat($('[data-assign-split="'+deviceId+'"]').value)||75
+  };
+  const r=await fetch('/api/devices/'+deviceId+'/psu',{method:'PUT',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!r.ok){const d=await r.json().catch(()=>({}));toast(d.detail||'Affectation impossible','err');return;}
+  toast('Affectation enregistrée');await refreshPower(machineId);
+};
+const addComponent=async(id)=>{
+  const label=($('#compLabel-'+id).value||'').trim();
+  const watts=parseFloat($('#compW-'+id).value)||0;
+  const quantity=parseInt($('#compQty-'+id).value,10)||1;
+  const r=await fetch('/api/machines/'+id+'/components',{method:'POST',credentials:'include',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({kind:$('#compKind-'+id).value,label,watts,quantity})});
+  if(!r.ok){const d=await r.json().catch(()=>({}));toast(d.detail||'Ajout impossible','err');return;}
+  toast('Composant ajouté');await refreshPower(id);
+};
+const detectInventory=async(id)=>{
+  const r=await fetch('/api/machines/'+id+'/inventory/detect',{method:'POST',credentials:'include'});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok||!d.ok){toast('Détection refusée : '+(d.error||d.detail||'erreur'),'err');return;}
+  toast('Inventaire détecté : '+(d.detected.counts.storage+d.detected.counts.cards+d.detected.counts.ram)+' composant(s)');
+  await refreshPower(id);
 };
 let LIVE={};
 // Même règle de seuils que le tableau de bord (H/s → PH/s).
@@ -295,6 +390,7 @@ const detailRow=(m)=>{
     ${cpuLineHTML(m)}
     ${extraHtml}
     ${deviceRows(m)}
+    ${powerPanelHTML(m)}
   </div></td></tr>`;
 };
 // ── Mineur (§4.5, §4.6) : profil, GPU cochés, démarrer/arrêter, statut ──
@@ -348,6 +444,8 @@ const loadMachines=async()=>{
   await Promise.all(data.map(async m=>{
     try{const d=await api('/api/machines/'+m.id+'/devices');DEVICES[m.id]=Array.isArray(d)?d:[];}
     catch(e){DEVICES[m.id]=DEVICES[m.id]||[];}
+    try{const p=await api('/api/machines/'+m.id+'/power');if(p&&!p.detail)POWER[m.id]=p;}
+    catch(e){POWER[m.id]=POWER[m.id]||null;}
   }));
   // 2026.11.003-c7 : état du CPU + hashrate par mineur CPU (API live).
   try{
@@ -355,12 +453,13 @@ const loadMachines=async()=>{
     LIVE={};
     (Array.isArray(live)?live:[]).forEach(x=>{if(x.uuid)LIVE[x.uuid]=x;});
   }catch(e){LIVE={};}
+  try{const s=await api('/api/power/settings');HIDE_IGPU=!!(s&&s.hide_integrated_gpus);}catch(e){HIDE_IGPU=true;}
   tbody.innerHTML=data.map(m=>{
     const usageChips={cpu:'cpu',gpu:'gpu',both:'both',none:'none'};
     const enabledChip=m.enabled?'on':'off';
     const authLabel={password:'Mdp',fossor_key:'Clé Fossor',provision:'Préparation',provision_pending:'À préparer'}[m.auth_type]||m.auth_type;
     return `<tr>
-      <td><b>${m.name}</b></td>
+      <td><b>${m.name}</b>${(LIVE[m.uuid]&&(LIVE[m.uuid].wall_power_w||LIVE[m.uuid].total_power_w))?`<div class="mono" style="font-size:10px">${Math.round(LIVE[m.uuid].wall_power_w||LIVE[m.uuid].total_power_w)} W à la prise${LIVE[m.uuid].worst_psu_load_pct?' · PSU '+LIVE[m.uuid].worst_psu_load_pct+' %':''}</div>`:''}</td>
       <td class="mono">${m.host}</td>
       <td>${m.ssh_port}</td>
       <td>${m.ssh_user}</td>

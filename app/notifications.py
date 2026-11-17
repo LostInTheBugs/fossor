@@ -43,6 +43,7 @@ EVENTS: dict[str, dict[str, str]] = {
     "machine_offline": {"label": "Machine hors ligne", "level": "alerte"},
     "machine_online": {"label": "Machine de retour en ligne", "level": "info"},
     "hashrate_low": {"label": "Hashrate sous 50 % de la moyenne 1 h", "level": "alerte"},
+    "psu_overloaded": {"label": "Alimentation surchargée", "level": "critique"},
     "pool_balance_threshold": {"label": "Solde de pool au-dessus du seuil de paiement", "level": "info"},
     "payment_received": {"label": "Paiement reçu", "level": "info"},
     "new_listing": {"label": "Nouveau prix / listing d'un token sans prix", "level": "info"},

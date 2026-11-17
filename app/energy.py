@@ -416,6 +416,14 @@ def build_report(
         status = statuses.get(machine.uuid or "")
         collected = bool(machine.enabled) and str(machine.usage) != "none"
         coin = (status.coin if status else "") or ""
+        # §4.2 / §4.2 bis : le coût se calcule sur la puissance *à la prise*,
+        # charge DC / rendement interpolé des alimentations configurées.
+        try:
+            from app.routers.psu import evaluate_machine_power
+
+            wall_factor = float(evaluate_machine_power(db, machine).get("wall_factor") or 1.0)
+        except Exception:
+            wall_factor = 1.0
 
         rows = (
             db.query(Metric)
@@ -432,7 +440,10 @@ def build_report(
             moment = _ts(row.ts)
             if moment is None:
                 continue
-            by_device.setdefault(row.device_uuid, []).append((moment, row.power_w))
+            watts = row.power_w
+            if watts is not None and wall_factor != 1.0:
+                watts = round(float(watts) * wall_factor, 2)
+            by_device.setdefault(row.device_uuid, []).append((moment, watts))
 
         all_moments = [moment for series in by_device.values() for moment, _ in series]
         window_start = min(all_moments) if all_moments else None
@@ -450,10 +461,11 @@ def build_report(
             if kind == "cpu" and machine.cpu_power_w and not any(w is not None for _, w in series):
                 window = (window_start, window_end)
                 result = constant_energy(
-                    machine.cpu_power_w, window[0], window[1], tariff
+                    machine.cpu_power_w * wall_factor, window[0], window[1], tariff
                 ) if window[0] and window[1] else _sum([])
                 day_result = constant_energy(
-                    machine.cpu_power_w, max(window_start or day_start, day_start), window_end or now, tariff
+                    machine.cpu_power_w * wall_factor,
+                    max(window_start or day_start, day_start), window_end or now, tariff
                 ) if window_start and window_end else _sum([])
                 source = "saisie"
             else:

@@ -143,6 +143,11 @@ class Device(Base):
     integrated: Mapped[bool] = mapped_column(Boolean, default=False)
     # GPU occupied by an external miner not managed by Fossor.
     occupied_external: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # §4.2 bis : alimentation qui porte le device, et seconde PSU quand un GPU
+    # est réparti (part slot/riser sur psu_id, le reste sur psu2_id).
+    psu_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    psu2_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    split_w: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -390,3 +395,47 @@ class AuditLog(Base):
     output: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     machine: Mapped[Machine | None] = relationship(back_populates="audit_logs")
+
+
+class Psu(Base):
+    """Alimentation d'une machine (§4.2 bis) — une ou plusieurs par machine."""
+
+    __tablename__ = "psus"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    uuid: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    machine_id: Mapped[int] = mapped_column(Integer, ForeignKey("machines.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(60), nullable=False)
+    rated_w: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    certification: Mapped[str] = mapped_column(String(12), default="none", server_default="none")
+    amps_12v: Mapped[float | None] = mapped_column(Float, nullable=True)
+    derate_pct: Mapped[float] = mapped_column(Float, default=100.0, server_default="100")
+    measured_efficiency: Mapped[float | None] = mapped_column(Float, nullable=True)
+    brand: Mapped[str] = mapped_column(String(60), default="", server_default="")
+    model: Mapped[str] = mapped_column(String(80), default="", server_default="")
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    created_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class MachineComponent(Base):
+    """Autre composant inventorié (§4.2 bis) : RAM, disque, carte, ventilateur…
+
+    ``watts`` est la puissance d'une unité, ``quantity`` le nombre ; la charge
+    d'une PSU somme ``watts × quantity`` des composants qui lui sont affectés.
+    """
+
+    __tablename__ = "machine_components"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    uuid: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    machine_id: Mapped[int] = mapped_column(Integer, ForeignKey("machines.id"), nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    label: Mapped[str] = mapped_column(String(120), default="")
+    watts: Mapped[float] = mapped_column(Float, default=0.0)
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    measured: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    source: Mapped[str] = mapped_column(String(10), default="manual", server_default="manual")
+    psu_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("psus.id"), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())

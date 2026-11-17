@@ -74,6 +74,7 @@ def init_db():
     _migrate_coin_pool_hosts_column()
     _migrate_machine_status_api_error_column()
     _migrate_machine_status_cpu_json_column()
+    _migrate_device_psu_columns()
 
 
 def _migrate_coin_pool_hosts_column():
@@ -289,3 +290,25 @@ def _ensure_admin():
                 db.commit()
     finally:
         db.close()
+
+
+def _migrate_device_psu_columns():
+    """Add devices.psu_id/psu2_id/split_w (§4.2 bis)."""
+    import os
+    import sqlite3
+
+    db_url = _get_db_url()
+    if not db_url.startswith("sqlite"):
+        return
+    db_path = db_url.replace("sqlite:///", "").replace("sqlite://", "")
+    if not os.path.exists(db_path):
+        return
+    conn = sqlite3.connect(db_path)
+    try:
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(devices)").fetchall()]
+        for name, ddl in (("psu_id", "INTEGER"), ("psu2_id", "INTEGER"), ("split_w", "FLOAT")):
+            if name not in cols:
+                conn.execute(f"ALTER TABLE devices ADD COLUMN {name} {ddl}")
+        conn.commit()
+    finally:
+        conn.close()

@@ -34,6 +34,14 @@ def update_device(
         raise HTTPException(status_code=404, detail="Device not found")
     if "enabled_for_mining" not in data:
         raise HTTPException(status_code=400, detail="enabled_for_mining is required")
+    if data["enabled_for_mining"] and device.integrated:
+        from app.devices import integrated_hidden
+
+        if integrated_hidden(db):
+            raise HTTPException(
+                status_code=400,
+                detail="GPU intégré masqué — réglez « Masquer les GPU intégrés du minage » dans Configuration",
+            )
 
     device.enabled_for_mining = bool(data["enabled_for_mining"])
     device.updated_at = datetime.now(timezone.utc).isoformat()
