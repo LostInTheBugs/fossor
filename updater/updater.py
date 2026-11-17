@@ -635,12 +635,31 @@ class Updater:
             log("auto-maj", "désactivée (FOSSOR_UPDATER_SELF_UPDATE=0)")
             return
         reference = f"{self.config.updater_image}:{target}"
-        present = getattr(self.runner, "image_present", None)
-        if not callable(present) or not present(reference):
-            message = f"image {reference} absente : compagnon laissé en place"
+        # 2026.11.003-c8 : le compagnon **tire** son image cible.  L'ancien code
+        # ne vérifiait que sa présence locale, donc une image publiée par le CI
+        # n'était jamais récupérée : le compagnon restait en arrière.
+        puller = getattr(self.runner, "pull", None)
+        pulled = False
+        detail = "runner sans pull"
+        if self.config.local_images:
+            pulled, detail = True, "image locale (FOSSOR_UPDATER_LOCAL_IMAGES=1)"
+        elif callable(puller):
+            log("auto-maj", f"récupération du compagnon {reference}")
+            result = puller(reference)
+            if isinstance(result, tuple) and len(result) == 2:
+                pulled, detail = bool(result[0]), str(result[1])
+        if not pulled:
+            message = (
+                f"pull de {reference} en échec ({detail}) : "
+                "compagnon laissé en place"
+            )
             log("auto-maj", message)
             self._history("self_update_skipped", reference=reference, reason=message)
             return
+        log("auto-maj", f"image {reference} récupérée ({detail})")
+        # Trace durable : le rapport de mise à jour doit prouver que le
+        # compagnon a bien tiré son image, pas seulement qu'il l'a vue.
+        self._history("self_pull", reference=reference, detail=detail)
         try:
             text = self.config.env_path.read_text(encoding="utf-8")
         except OSError as exc:

@@ -197,7 +197,10 @@ class TestCollectC7:
         machine = next(m for m in response.json() if m["name"] == "ryzen-test")
         miner = machine["external_miners"][0]
         assert miner["hashrate_hs"] is None
-        assert "figé" in miner["hashrate_note"]
+        # 2026.11.003-c8 : un mineur à 0 % CPU dont le log est figé est
+        # « inactif », avec la date de dernière écriture du log.
+        assert "mineur inactif" in miner["hashrate_note"]
+        assert "log modifié le" in miner["hashrate_note"]
 
     async def test_probe_plan_never_sends_a_hostile_path(self, seeded_machine, monkeypatch):
         from app import collector

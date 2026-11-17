@@ -252,7 +252,7 @@ async def _ensure_devices(db, machine) -> bool:
     return True
 
 
-async def _enrich_cpu_state(db, machine, raw_stdout: str, stats: dict[str, Any]) -> None:
+async def _enrich_cpu_state(db, machine, raw_stdout: str, stats: dict[str, Any]) -> str:
     """Hashrate CPU et état du CPU (2026.11.003-c7).
 
     One extra read-only probe per round: the miner APIs and logs found in the
@@ -273,14 +273,18 @@ async def _enrich_cpu_state(db, machine, raw_stdout: str, stats: dict[str, Any])
     sections = split_sections(raw_stdout)
     probes = plan_cpu_probes(sections["PS_MINERS"])
     report: dict[str, Any] = {"state": {}, "logs": {}, "apis": {}, "nodes": {}}
-    if probes["logs"] or probes["apis"] or probes["nodes"]:
-        try:
-            raw = await ssh_collect_cpu(machine, probes)
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.info("sonde CPU de %s en échec: %s", machine.name, exc)
-            raw = {"ok": False, "error": str(exc)}
-        if raw.get("ok"):
-            report = parse_cpu_report(raw.get("stdout") or "")
+    probe_stdout = ""
+    # 2026.11.003-c8 : la sonde tourne **toujours**, même sans mineur détecté.
+    # La fréquence, la charge et la puissance du CPU ne dépendent d'aucun mineur,
+    # et c'est leur absence qui laissait `cpu MHz` vide sur les trois machines.
+    try:
+        raw = await ssh_collect_cpu(machine, probes)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.info("sonde CPU de %s en échec: %s", machine.name, exc)
+        raw = {"ok": False, "error": str(exc)}
+    if raw.get("ok"):
+        probe_stdout = raw.get("stdout") or ""
+        report = parse_cpu_report(probe_stdout)
 
     miners = stats.get("miners") or []
     attach_cpu_hashrates(miners, probes, report)
@@ -297,6 +301,7 @@ async def _enrich_cpu_state(db, machine, raw_stdout: str, stats: dict[str, Any])
         item["temp_c"] = _first_number(item.get("temp_c"), cpu.get("temp_c"))
         item["power_w"] = _first_number(item.get("power_w"), cpu.get("power_w"))
         item["hashrate_hs"] = cpu.get("hashrate_hs")
+    return probe_stdout
 
 
 def _first_number(*values: Any) -> float | None:
@@ -520,7 +525,6 @@ async def collect_machine(machine_id: int) -> dict[str, Any]:
 
         miners = stats.get("miners") or []
         set_external_miners(machine, miners)
-        _store_raw_collection(db, machine, raw.get("stdout", ""))
         db.commit()
         # §4.2: first collection of a machine without devices → detect once,
         # so this round's GPU metrics attach by PCI bus instead of NULL.
@@ -560,8 +564,14 @@ async def collect_machine(machine_id: int) -> dict[str, Any]:
                 stats["api_error"] = None
 
         # Miners as displayed (coin + per-miner hashrate included).
-        await _enrich_cpu_state(db, machine, raw.get("stdout", ""), stats)
+        cpu_probe_raw = await _enrich_cpu_state(db, machine, raw.get("stdout", ""), stats)
         set_external_miners(machine, stats.get("miners") or [])
+        # Diagnostic 2026.11.003-c8 : la collecte brute porte aussi la sonde CPU
+        # (masquée), en tête pour survivre à la troncature de mask_raw_collect.
+        combined = raw.get("stdout", "")
+        if cpu_probe_raw:
+            combined = "### CPU_PROBE\n" + cpu_probe_raw + "\n" + combined
+        _store_raw_collection(db, machine, combined)
         rows = _store_metrics(db, machine, stats, ts)
         return {
             "machine_id": machine_id,

@@ -626,6 +626,8 @@ async def ssh_collect_stats(machine: Any, actor: str = "system") -> dict[str, An
 
 
 CPU_PROBE_PATH_RE = re.compile(r"^/[A-Za-z0-9_.\-/]{1,300}$")
+#: Relative form accepted for a ``*-cli`` / ``-datadir`` resolved from cwd.
+CPU_PROBE_REL_RE = re.compile(r"^[A-Za-z0-9_.\-/]{1,300}$")
 CPU_PROBE_BIN_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,80}$")
 
 
@@ -645,12 +647,14 @@ def cpu_probe_command(probes: dict[str, Any]) -> str:
         "echo '### PROC_STAT'",
         "head -n 8 /proc/stat 2>/dev/null",
         "echo '### POWER'",
-        "for f in /sys/class/powercap/*/energy_uj; do [ -r \"$f\" ] && "
-        "printf '%s|%s\\n' \"$f\" \"$(cat \"$f\" 2>/dev/null)\"; done 2>/dev/null",
+        # RAPL est souvent réservé à root : lecture directe puis `sudo -n`.
+        "for f in /sys/class/powercap/*/energy_uj; do [ -e \"$f\" ] && "
+        "printf '%s|%s\\n' \"$f\" \"$(RD cat \"$f\" 2>/dev/null)\"; done 2>/dev/null",
         "echo '### CPUINFO'",
-        "grep -E '^(processor|cpu MHz|model name)' /proc/cpuinfo 2>/dev/null",
+        "grep -iE '^(processor|cpu mhz|model name)' /proc/cpuinfo 2>/dev/null",
         "echo '### FREQ'",
-        "cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq 2>/dev/null",
+        "for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq; do [ -e \"$f\" ] && "
+        "RD cat \"$f\" 2>/dev/null; done 2>/dev/null",
         "echo '### HWMON'",
         "for d in /sys/class/hwmon/hwmon*/; do "
         "n=$(cat \"${d}name\" 2>/dev/null); "
@@ -658,6 +662,15 @@ def cpu_probe_command(probes: dict[str, Any]) -> str:
         "l=$(cat \"${f%_input}_label\" 2>/dev/null); "
         "printf '%s|%s|%s\\n' \"$n\" \"$l\" \"$(cat \"$f\" 2>/dev/null)\"; done; "
         "done 2>/dev/null",
+        "echo '### POWERH'",
+        # AMD amd_energy / zenpower exposent power1_input (microwatts) là où
+        # RAPL manque : même lecture, avec la source dans la ligne.
+        "for d in /sys/class/hwmon/hwmon*/; do "
+        "n=$(cat \"${d}name\" 2>/dev/null); "
+        "case \"$n\" in amd_energy|zenpower) "
+        "for f in \"${d}\"power*_input; do [ -e \"$f\" ] || continue; "
+        "printf '%s|%s|%s\\n' \"$n\" \"${f##*/}\" \"$(RD cat \"$f\" 2>/dev/null)\"; "
+        "done;; esac; done 2>/dev/null",
         "sleep 1",
         "echo '### PROC_STAT2'",
         "head -n 8 /proc/stat 2>/dev/null",
@@ -686,13 +699,22 @@ def cpu_probe_command(probes: dict[str, Any]) -> str:
     if pids:
         targets = " ".join(str(pid) for pid in pids)
         lines += [
+            # 2026.11.003-c8 : `readlink` sur /proc/<pid>/fd exige les droits du
+            # propriétaire (mineur lancé par root) → RD (direct puis sudo -n).
+            # Un mineur dont la sortie est un socket/pty (screen, unité systemd)
+            # n'a pas de fichier de log : journald le porte, lu par _PID.
             f"for p in {targets}; do "
-            "f=$(readlink -f /proc/$p/fd/1 2>/dev/null); "
-            "g=$(readlink -f /proc/$p/fd/2 2>/dev/null); "
-            "for c in \"$f\" \"$g\"; do "
-            "case \"$c\" in /var/log/*|/root/*|/home/*|/tmp/*) "
-            "[ -f \"$c\" ] && echo \"### LOGI $p $c\" && stat -c %Y \"$c\" 2>/dev/null && "
-            "RD tail -n 80 \"$c\" 2>/dev/null;; esac; done; done 2>/dev/null",
+            "f=$(RD readlink -f /proc/$p/fd/1 2>/dev/null); "
+            "g=$(RD readlink -f /proc/$p/fd/2 2>/dev/null); "
+            "k=0; for c in \"$f\" \"$g\"; do "
+            "case \"$c\" in "
+            "/var/log/*|/var/lib/*|/root/*|/home/*|/opt/*|/srv/*|/tmp/*) "
+            "[ -f \"$c\" ] && k=1 && echo \"### LOGI $p $c\" && "
+            "RD stat -c %Y \"$c\" 2>/dev/null && "
+            "RD tail -n 80 \"$c\" 2>/dev/null;; esac; done; "
+            "[ $k = 0 ] && { echo \"### JLOG $p\"; "
+            "RD journalctl _PID=$p -n 80 --no-pager 2>/dev/null; }; "
+            "done 2>/dev/null",
         ]
 
     for probe in probes.get("apis") or []:
@@ -713,22 +735,30 @@ def cpu_probe_command(probes: dict[str, Any]) -> str:
         if not CPU_PROBE_BIN_RE.match(key):
             continue
         cli = str(probe.get("cli") or "")
+        token = str(probe.get("token") or "")
         datadir = str(probe.get("datadir") or "")
         pid = probe.get("pid")
         cli = cli if CPU_PROBE_PATH_RE.match(cli) else ""
-        datadir = datadir if CPU_PROBE_PATH_RE.match(datadir) else ""
+        token = token if CPU_PROBE_REL_RE.match(token) else ""
+        datadir = datadir if CPU_PROBE_REL_RE.match(datadir) else ""
         directory = f"/proc/{int(pid)}/cwd" if isinstance(pid, int) and pid > 0 else ""
-        # The client is often started relatively (« ./bigcoin-cli »): resolve it
-        # from the process working directory, then from PATH.  Getters only.
+        # 2026.11.003-c8 : le client est souvent lancé en relatif
+        # (« ./bigcoin-cli ») depuis le dossier du script.  Le dossier de
+        # travail vient de /proc/<pid>/cwd (RD : le démon peut être root), le
+        # datadir relatif s'y résout aussi.  Getters seulement.
         lines += [
             f"echo '### NODE {key}'",
             "P=" + (cli or ""),
+            "D=" + datadir,
         ]
         if directory:
-            lines.append(f"C=$(readlink -f {directory} 2>/dev/null)")
-            lines.append(f"[ -x \"$P\" ] || P=\"$C/{key}-cli\"")
-        lines.append(f"[ -x \"$P\" ] || P=$(command -v {key}-cli 2>/dev/null)")
-        datadir_arg = f" -datadir={datadir}" if datadir else ""
+            lines.append(f"C=$(RD readlink -f {directory} 2>/dev/null)")
+            if token:
+                lines.append(f"[ -n \"$P\" ] || P=\"$C/{token}\"")
+            lines.append(f"[ -n \"$P\" ] || P=\"$C/{key}-cli\"")
+            lines.append("[ \"${D#/}\" != \"$D\" ] || D=\"$C/$D\"")
+        lines.append(f"[ -n \"$P\" ] || P=$(command -v {key}-cli 2>/dev/null)")
+        datadir_arg = ' -datadir="$D"' if datadir else ""
         lines += [
             f"[ -n \"$P\" ] && RD \"$P\"{datadir_arg} getmininginfo",
             f"echo '### CHAIN {key}'",

@@ -62,12 +62,46 @@ def _gpu_devices(body: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _package_power(body: dict[str, Any]) -> float | None:
-    """CPU package power reported by SRBMiner (``package_power``, e.g. 88.96 W)."""
-    value = body.get("package_power")
+    """CPU package power reported by SRBMiner (``package_power``, e.g. 88.96 W).
+
+    2026.11.003-c8 : la forme réelle de SRBMiner 3.8.x est
+    ``cpu_devices[0].package_power`` (88.96 W sur le Ryzen) — la clé racine
+    ``package_power`` n'existe pas, d'où une puissance vide en production.
+    """
+    for key in ("package_power", "cpu_package_power"):
+        value = body.get(key)
+        if value is not None:
+            return _to_float(value)
     cpu_block = body.get("cpu")
-    if value is None and isinstance(cpu_block, dict):
-        value = cpu_block.get("package_power")
-    return _to_float(value)
+    if isinstance(cpu_block, dict):
+        value = cpu_block.get("package_power") or cpu_block.get("cpu_package_power")
+        if value is not None:
+            return _to_float(value)
+        devices = cpu_block.get("devices")
+        if isinstance(devices, list):
+            total = _sum_package_power(devices)
+            if total is not None:
+                return total
+    devices = body.get("cpu_devices")
+    if isinstance(devices, list):
+        return _sum_package_power(devices)
+    return None
+
+
+def _sum_package_power(devices: list[Any]) -> float | None:
+    """Sum ``package_power`` of every CPU device (one per socket/CCD)."""
+    total = 0.0
+    seen = False
+    for entry in devices:
+        if not isinstance(entry, dict):
+            continue
+        value = _to_float(entry.get("package_power"))
+        if value is None:
+            value = _to_float(entry.get("power"))
+        if value is not None:
+            total += value
+            seen = True
+    return round(total, 2) if seen else None
 
 
 def _parse_algorithms(body: dict[str, Any]) -> dict[str, Any] | None:
