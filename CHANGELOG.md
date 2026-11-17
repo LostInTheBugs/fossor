@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026.11.004-c2 — 2026-11-18
+
+### Correctif — le log du solo BIG, seconde voie
+
+- En production le compte `fossor` ne peut pas lire `/proc/<pid>/fd/1` d'un script
+  lancé par `administrator` (réservé au propriétaire et à root) : la c1 retombait donc
+  sur le journal du démon et le hashrate restait inconnu.
+- La sonde lit maintenant aussi la **redirection du lanceur** lue dans `ps`
+  (`> ~/bigcoin-mine/bigcoin/mine.log`) et développe `~/…` avec le home du compte du
+  processus (`getent passwd`), puis `stat`/`tail` (avec `sudo -n` en repli).
+- Le chemin est suivi jusqu'à `node.log` ; s'il reste vide, la note dit « illisible ou
+  vide » au lieu d'un « inconnu » muet. Les pids de script suivis passent à trois.
+
 ## 2026.11.004-c1 — 2026-11-18
 
 ### Correctif — hashrate du solo BigCoin en production
