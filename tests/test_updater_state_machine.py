@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -31,7 +34,7 @@ OLD = "2026.11.990"
 
 
 class FakeRunner:
-    """Les quatre opérations autorisées, sans Docker."""
+    """Les opérations autorisées, sans Docker."""
 
     def __init__(self, healthy=(), images=(), running=True):
         self.healthy = set(healthy)
@@ -40,6 +43,7 @@ class FakeRunner:
         self.pulled: list[str] = []
         self.compose_calls: list[str | None] = []
         self.health_calls: list[str] = []
+        self.helpers: list[list[str]] = []
 
     def pull(self, reference):
         self.pulled.append(reference)
@@ -54,6 +58,10 @@ class FakeRunner:
 
     def container_running(self):
         return self.running
+
+    def start_helper(self, argv):
+        self.helpers.append(argv)
+        return True, "amorce"
 
     def health_once(self, expected):
         self.health_calls.append(expected)
@@ -165,7 +173,10 @@ def test_nominal_update_reaches_done(tmp_path):
     assert status["state"] == "done"
     assert status["from"] == OLD and status["to"] == TARGET
     events = [json.loads(line)["event"] for line in config.history_path.read_text().splitlines()]
-    assert events == ["request", "pulling", "backing_up", "switching", "health_check", "done"]
+    assert events[:6] == ["request", "pulling", "backing_up", "switching", "health_check", "done"]
+    # puis la fin explicite ; l'image du compagnon n'existe pas dans ce faux
+    assert events[-2:] == ["self_update_skipped", "finished"]
+    assert status["handled_nonce"] == "abc123456789"
 
 
 def test_health_failure_rolls_back_and_restores_migrated_schema(tmp_path):
@@ -352,3 +363,222 @@ def test_host_project_dir_comes_from_compose_label(tmp_path, monkeypatch):
 
     monkeypatch.setattr("subprocess.run", fake)
     assert runner.host_project_dir() == "/home/cpl/fossor"
+
+
+# ── Correctif 003-c5 : nonce persistant, battement, délais, auto-mise à jour ──
+def test_nonce_is_on_disk_and_never_replayed_after_a_restart(tmp_path):
+    """Le nonce traité vit dans status.json : un redémarrage ne rejoue rien."""
+    config = make_config(tmp_path)
+    make_backup(config)
+    first = FakeRunner(healthy={TARGET})
+    updater = Updater(config, first)
+    config.request_path.write_text(json.dumps(request()), encoding="utf-8")
+    assert updater.step_once() == "done"
+    status = json.loads(config.status_path.read_text())
+    assert status["handled_nonce"] == "abc123456789"
+    assert status["request_nonce"] == "abc123456789"
+
+    # Redémarrage : même demande toujours sur le disque, nouveau processus.
+    restarted_runner = FakeRunner(healthy={TARGET})
+    restarted = Updater(config, restarted_runner)
+    assert restarted.is_handled("abc123456789")
+    assert restarted.step_once() == "ignored"
+    assert restarted_runner.pulled == [] and restarted_runner.compose_calls == []
+
+
+def test_heartbeat_advances_after_done_instead_of_freezing(tmp_path):
+    """Régression 003-c1 : après « done », le nonce revenait par handle() sans battement."""
+    config = make_config(tmp_path)
+    make_backup(config)
+    runner = FakeRunner(healthy={TARGET})
+    updater = Updater(config, runner)
+    config.request_path.write_text(json.dumps(request()), encoding="utf-8")
+    assert updater.step_once() == "done"
+
+    beats = []
+    for _ in range(3):
+        time.sleep(0.01)
+        assert updater.step_once() == "ignored"
+        beats.append(json.loads(config.status_path.read_text())["heartbeat_at"])
+    assert len(set(beats)) == 3, beats
+    assert runner.pulled == [f"{IMAGE}:{TARGET}"]  # une seule fois
+
+
+def test_heartbeat_thread_beats_during_a_long_docker_call(tmp_path):
+    """Un fil dédié écrit le battement pendant un pull qui bloque."""
+    config = make_config(tmp_path, heartbeat_interval=0.05)
+    make_backup(config)
+    release = threading.Event()
+    inside: list[str] = []
+
+    class SlowRunner(FakeRunner):
+        def pull(self, reference):
+            inside.append(json.loads(config.status_path.read_text())["heartbeat_at"])
+            release.wait(3.0)  # simule un docker pull long
+            inside.append(json.loads(config.status_path.read_text())["heartbeat_at"])
+            return True, "pulled"
+
+    runner = SlowRunner(healthy={TARGET})
+    updater = Updater(config, runner)
+    updater.start_heartbeat()
+    worker = threading.Thread(target=updater.handle, args=(request(),))
+    try:
+        worker.start()
+        time.sleep(0.3)
+        assert runner.pulled == []  # le pull n'est pas terminé
+        during = json.loads(config.status_path.read_text())
+        assert during["state"] == "pulling" and during["step"] == "pull"
+        first = during["heartbeat_at"]
+        time.sleep(0.3)
+        second = json.loads(config.status_path.read_text())["heartbeat_at"]
+        assert second > first  # le battement avance pendant l'opération
+        release.set()
+        worker.join(5)
+    finally:
+        updater.stop_heartbeat()
+    assert inside[0] != inside[1]
+
+
+def test_every_docker_call_has_a_bounded_timeout(tmp_path, monkeypatch):
+    config = make_config(tmp_path, project_dir="/srv/fossor")
+    runner = DockerRunner(config)
+    seen: list[tuple[list[str], int | None]] = []
+
+    class Done:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda argv, **kwargs: (seen.append((argv[1:3], kwargs.get("timeout"))), Done())[1],
+    )
+    runner.pull(f"{IMAGE}:{TARGET}")
+    runner.compose_up()
+    runner.container_running()
+    runner.image_present(f"{IMAGE}:{TARGET}")
+
+    assert seen[0] == (["pull", f"{IMAGE}:{TARGET}"], 300)
+    assert seen[1][1] == 120  # docker compose up
+    assert [timeout for _, timeout in seen[2:]] == [30, 30, 30, 30][: len(seen) - 2]
+    assert all(timeout is not None for _, timeout in seen)
+
+
+def test_docker_timeout_fails_instead_of_hanging(tmp_path, monkeypatch):
+    config = make_config(tmp_path)
+    runner = DockerRunner(config)
+
+    def boom(argv, **kwargs):
+        raise subprocess.TimeoutExpired(argv, kwargs.get("timeout") or 1)
+
+    monkeypatch.setattr("subprocess.run", boom)
+    ok, detail = runner.pull(f"{IMAGE}:{TARGET}")
+    assert ok is False and "délai dépassé" in detail
+
+    make_backup(config)
+
+    class TimeoutRunner(FakeRunner):
+        def pull(self, reference):
+            return False, "délai dépassé (300 s)"
+
+    updater = Updater(config, TimeoutRunner(healthy={TARGET}))
+    assert updater.handle(request()) == "failed"
+    status = json.loads(config.status_path.read_text())
+    assert status["state"] == "failed" and "délai dépassé" in status["message"]
+
+
+def test_self_update_recreates_the_companion_after_a_success(tmp_path):
+    config = make_config(tmp_path)
+    (config.env_path).write_text(
+        config.env_path.read_text(encoding="utf-8") + f"FOSSOR_UPDATER_TAG={OLD}\n",
+        encoding="utf-8",
+    )
+    make_backup(config)
+    reference = f"{config.updater_image}:{TARGET}"
+    runner = FakeRunner(healthy={TARGET}, images={reference})
+    updater = Updater(config, runner)
+
+    assert updater.handle(request()) == "done"
+    env = config.env_path.read_text(encoding="utf-8")
+    assert read_env_tag(env, "FOSSOR_IMAGE_TAG") == TARGET
+    assert read_env_tag(env, "FOSSOR_UPDATER_TAG") == TARGET
+
+    assert len(runner.helpers) == 1
+    argv = runner.helpers[0]
+    assert argv[:3] == ["docker", "run", "-d"]
+    assert argv[argv.index("--entrypoint") + 1] == "docker"
+    assert reference in argv
+    assert argv[-4:] == ["up", "-d", "--no-deps", "fossor-updater"]
+    assert "--project-directory" in argv
+    events = [json.loads(line)["event"] for line in config.history_path.read_text().splitlines()]
+    assert "self_update" in events
+    assert json.loads(config.status_path.read_text())["updater_to"] == TARGET
+
+
+def test_self_update_failure_keeps_the_current_companion_usable(tmp_path):
+    config = make_config(tmp_path)
+    (config.env_path).write_text(
+        config.env_path.read_text(encoding="utf-8") + "FOSSOR_UPDATER_TAG=2026.11.003-c1\n",
+        encoding="utf-8",
+    )
+    make_backup(config)
+
+    class FailingHelper(FakeRunner):
+        def start_helper(self, argv):
+            self.helpers.append(argv)
+            return False, "amorçage refusé"
+
+    runner = FailingHelper(healthy={TARGET}, images={f"{config.updater_image}:{TARGET}"})
+    updater = Updater(config, runner)
+
+    assert updater.handle(request()) == "done"
+    # le .env est remis dans l'état d'avant : l'ancien compagnon reste en place
+    assert read_env_tag(config.env_path.read_text(encoding="utf-8"), "FOSSOR_UPDATER_TAG") == "2026.11.003-c1"
+    events = [json.loads(line)["event"] for line in config.history_path.read_text().splitlines()]
+    assert "self_update_failed" in events
+
+
+def test_self_update_skipped_when_the_target_image_is_missing(tmp_path):
+    config = make_config(tmp_path)
+    make_backup(config)
+    runner = FakeRunner(healthy={TARGET}, images=set())
+    updater = Updater(config, runner)
+    assert updater.handle(request()) == "done"
+    assert runner.helpers == []
+    assert read_env_tag(config.env_path.read_text(encoding="utf-8"), "FOSSOR_UPDATER_TAG") is None
+    events = [json.loads(line)["event"] for line in config.history_path.read_text().splitlines()]
+    assert "self_update_skipped" in events
+
+
+def test_interrupted_update_is_reported_and_never_replayed(tmp_path):
+    """État actif au démarrage = arrêt pendant l'opération : on le dit, on ne rejoue pas."""
+    config = make_config(tmp_path)
+    make_backup(config)
+    config.status_path.write_text(
+        json.dumps({"state": "switching", "step": "switch", "from": OLD, "to": TARGET,
+                    "request_nonce": "abc123456789", "handled_nonce": "abc123456789"}),
+        encoding="utf-8",
+    )
+    config.request_path.write_text(json.dumps(request()), encoding="utf-8")
+    runner = FakeRunner(healthy={TARGET})
+    updater = Updater(config, runner)
+
+    updater.recover()
+    status = json.loads(config.status_path.read_text())
+    assert status["state"] == "failed" and status["step"] == "recover"
+    assert "interrompue" in status["message"]
+
+    assert updater.step_once() == "ignored"
+    assert runner.pulled == [] and runner.compose_calls == []
+
+
+def test_logs_go_to_stdout(tmp_path, capsys):
+    """Chaque étape écrit sur stdout : ``docker logs`` doit être utile."""
+    config = make_config(tmp_path)
+    make_backup(config)
+    updater = Updater(config, FakeRunner(healthy={TARGET}))
+    assert updater.handle(request()) == "done"
+    out = capsys.readouterr().out
+    for marker in ("demande", "pull", "bascule", "done", "fin"):
+        assert marker in out, marker
+
