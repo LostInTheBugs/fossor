@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026.11.003-c8 — 2026-11-17
+
+### Correctif : auto-mise à jour, hashrate CPU, fréquence et puissance
+- Compagnon : `_self_update` **tire** désormais son image cible (`docker pull`,
+  délai 300 s) au lieu de vérifier sa seule présence locale ; en cas d'échec du
+  pull seulement, il reste en place avec la raison. Trace `self_pull` dans
+  `history.jsonl`.
+- Journaux des mineurs : `/proc/<pid>/fd/1|2` lu avec `sudo -n readlink`, donc
+  le log d'un lanceur (`/var/log/athlon-korsh-miner.log`) et plus seulement
+  celui écrit dans la ligne de commande ; socket/pty → `journalctl _PID`.
+- Nœuds solo : client relatif (`./bigcoin-cli`) résolu par
+  `/proc/<pid>/cwd` + `-datadir` relatif ; `getmininginfo` appelé avec `sudo -n`.
+- Solo stable : démon `*d -daemon` qui consomme du CPU, ou script
+  `*-miner.sh`/`mine-*.sh` ; le client `generatetoaddress` ne compte que les
+  workers (le solo KORSH du rig ne disparaît plus entre deux collectes).
+- Mineur à 0 % CPU : « mineur inactif (0 % CPU, log sans hashrate récent) » avec
+  la date de dernière modification du log, au lieu de « inconnu ».
+- CPU : sonde exécutée à chaque collecte (fréquence `cpu MHz` normalisée même
+  sans mineur), puissance SRBMiner `cpu_devices[0].package_power`, RAPL via
+  `sudo -n`, puis `amd_energy`/`zenpower` ; la source de la valeur est exposée.
+- Diagnostic : `raw_collections` porte la sortie de la sonde CPU, toujours masquée.
+- Tests : fixtures fd fichier/socket, `TTF @ 237.8 Mh/s`, cwd + `getmininginfo`,
+  korshd sans client, `cpu MHz`, RAPL root, `package_power` ; bout en bout
+  athlon/Ryzen/rig ; intégration Docker du compagnon (pull absent → c8, puis
+  c7 → c8 image pré-tirée).
+
 ## 2026.11.003-c7 — 2026-11-17
 
 ### Minage CPU : hashrate et état du CPU

@@ -590,77 +590,113 @@ def _resolve_key(key: str, names: dict[str, str], hints: dict[str, str]) -> str:
     return ""
 
 
+SOLO_SCRIPT_RE = re.compile(
+    r"(?:^|[\s/])([A-Za-z0-9_.\-]*(?:-miner|mine-)[A-Za-z0-9_.\-]*)\.sh\b"
+)
+
+
+def _solo_script_key(args: str) -> str:
+    """Key of a solo mining script (``korsh-miner.sh``, ``mine-bigcoin.sh``)."""
+    match = SOLO_SCRIPT_RE.search(args or "")
+    if not match:
+        return ""
+    name = match.group(1)  # « .sh » n'est pas dans le groupe
+    if name.startswith("mine-"):
+        name = name[5:]
+    for suffix in ("-miner", "-mining", "-mine"):
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+    return name
+
+
 def detect_solo_miners(
     rows: Sequence[dict[str, Any]],
     coin_names: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Node-driven solo mining (``bitcoind``/``korshd`` + ``*-cli generatetoaddress``).
+    """Node-driven solo mining, detected **stably** (2026.11.003-c8).
 
-    One entry per coin: the daemon's charge, the number of worker processes
-    (one ``generatetoaddress`` client per worker) and the coin read from the
-    client name / datadir, never from the machine name.
+    A ``*-cli … generatetoaddress`` client is transient: collecting at the wrong
+    second made the whole KORSH entry disappear from the rig.  The durable
+    witnesses are the daemon (``*d -datadir=… -daemon`` consuming CPU) and the
+    mining script (``*-miner.sh`` / ``mine-*.sh``, usually under ``screen``).
+    Clients only count the workers; one entry per coin either way.
     """
     names = {str(k).lower(): str(v).upper() for k, v in (coin_names or {}).items()}
     hints = dict(DEFAULT_COIN_HINTS)
     clients: list[tuple[dict[str, Any], str]] = []
     daemons: list[tuple[dict[str, Any], str]] = []
+    scripts: list[tuple[dict[str, Any], str]] = []
     for row in rows:
         tokens = (row.get("args") or "").split()
         if not tokens:
             continue
         base = basename(tokens[0])
         # Un client lancé par un script (`sh /usr/local/bin/x-cli …`) reste un
-        # client : le shell n'est qu'un interpréteur, pas le programme.  Cela
-        # couvre aussi un `*-cli` livré sous forme de script (003-c7).
+        # client : le shell n'est qu'un interpréteur, pas le programme.
         if base in ("sh", "bash", "dash") and len(tokens) > 1 and basename(tokens[1]).endswith("-cli"):
             tokens = tokens[1:]
             base = basename(tokens[0])
         if base.endswith("-cli") and "generatetoaddress" in row["args"]:
             clients.append((row, base[:-4]))
-        elif base in DAEMON_BINARIES:
+        elif base in DAEMON_BINARIES and (
+            "-daemon" in tokens or (row.get("cpu_pct") or 0) > 0
+        ):
             daemons.append((row, base))
-    if not clients:
+        else:
+            # Un script n'est un témoin solo que lancé dans `screen` : un
+            # `bash mine-x.sh` quelconque reste un « Script de minage ».
+            key = _solo_script_key(row["args"]) if "screen" in row["args"].lower() else ""
+            if key:
+                scripts.append((row, key))
+    if not clients and not daemons and not scripts:
         return []
 
     groups: dict[str, dict[str, Any]] = {}
-    for row, key in clients:
+
+    def group_for(key: str) -> dict[str, Any]:
         ticker = _resolve_key(key, names, hints)
-        group = groups.setdefault(
-            ticker or key.upper(),
+        return groups.setdefault(
+            ticker or (key or "?").upper(),
             {
-                "coin": ticker, "key": key, "workers": 0, "pids": set(),
-                "daemon": "", "cpu_pct": None, "user": "", "pid": None,
-                "elapsed_s": None,
+                "coin": ticker, "key": key, "clients": 0, "scripts": set(),
+                "pids": set(), "daemon": "", "cpu_pct": None, "user": "",
+                "pid": None, "elapsed_s": None,
             },
         )
-        group["workers"] += 1
+
+    def remember_pid(group: dict[str, Any], row: dict[str, Any]) -> None:
         group["pids"].add(row.get("pid"))
         if not group["user"]:
             group["user"] = row.get("user", "")
             group["pid"] = row.get("pid")
             group["elapsed_s"] = row.get("elapsed_s")
 
+    for row, key in clients:
+        group = group_for(key)
+        group["clients"] += 1
+        remember_pid(group, row)
+
     for row, base in daemons:
         datadir = _datadir(row["args"])
-        key = _coin_key(datadir, names) or _coin_key(row["args"], names)
-        ticker = _resolve_key(key, names, hints)
-        target = groups.get(ticker) if ticker else None
-        if target is None and len(groups) == 1:
-            target = next(iter(groups.values()))
-        if target is None:
-            continue
-        target["daemon"] = base
-        target["pids"].add(row.get("pid"))
+        key = _coin_key(datadir, names) or _coin_key(row["args"], names) or base[:-1]
+        group = group_for(key)
+        group["daemon"] = base
+        group["pids"].add(row.get("pid"))
         cpu = row.get("cpu_pct")
-        if cpu is not None and (target["cpu_pct"] is None or cpu > target["cpu_pct"]):
-            target["cpu_pct"] = cpu
-            target["user"] = row.get("user", "") or target["user"]
-            target["pid"] = row.get("pid")
-            target["elapsed_s"] = row.get("elapsed_s")
+        if cpu is not None and (group["cpu_pct"] is None or cpu > group["cpu_pct"]):
+            group["cpu_pct"] = cpu
+            group["user"] = row.get("user", "") or group["user"]
+            group["pid"] = row.get("pid")
+            group["elapsed_s"] = row.get("elapsed_s")
+
+    for row, key in scripts:
+        group = group_for(key)
+        group["scripts"].add(row.get("pid"))
+        remember_pid(group, row)
 
     entries: list[dict[str, Any]] = []
     for group in groups.values():
-        workers = group["workers"]
+        workers = group["clients"] or (1 if group["scripts"] else 0)
         daemon = group["daemon"] or ""
         entries.append({
             "name": SOLO_LABEL,

@@ -64,6 +64,7 @@ FAMILIES = (
 DEFAULT_API_PORTS = {"cpuminer": 4048, "oms": 4068}
 
 _SAFE_PATH_RE = re.compile(r"^/[A-Za-z0-9_.\-/]{1,300}$")
+_SAFE_REL_RE = re.compile(r"^[A-Za-z0-9_.\-/]{1,300}$")
 _SAFE_BIN_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,80}$")
 _LOG_FLAGS = ("--log-file", "--log", "-l", "--logfile")
 _API_FLAGS = ("--api-bind", "--api-port", "--http-port")
@@ -134,13 +135,18 @@ def parse_load(sample_a: str, sample_b: str) -> float | None:
 
 
 def parse_cpuinfo(text: str) -> dict[str, Any]:
-    """Cores, model and average ``cpu MHz`` from ``/proc/cpuinfo``."""
+    """Cores, model and average ``cpu MHz`` from ``/proc/cpuinfo``.
+
+    The key is normalised (spaces/tabs collapsed, lower case): ``cpu MHz``,
+    ``CPU MHz`` and ``cpu  MHz`` all land on the same branch, which is what the
+    real file contains on every x86 machine (2026.11.003-c8).
+    """
     cores = 0
     frequencies: list[float] = []
     model = ""
     for line in (text or "").splitlines():
         key, _, value = line.partition(":")
-        key = key.strip().lower()
+        key = " ".join(key.strip().lower().split())
         value = value.strip()
         if key == "processor":
             cores += 1
@@ -216,7 +222,7 @@ def parse_rapl(sample_a: str, sample_b: str, interval_s: float = 1.0) -> float |
                 continue
             leaf = path.rstrip("/").rsplit("/", 2)
             name = leaf[-2] if len(leaf) >= 2 else path
-            if not re.search(r"^intel-rapl(:0)?$", name):
+            if not re.search(r"^(?:intel|amd)-rapl(:0)?$", name):
                 continue
             values[name] = value
         return values
@@ -236,6 +242,29 @@ def parse_rapl(sample_a: str, sample_b: str, interval_s: float = 1.0) -> float |
     if not seen:
         return None
     return round(total, 2)
+
+
+def parse_hwmon_power(text: str) -> tuple[float | None, str]:
+    """Package power (W) from ``amd_energy`` / ``zenpower`` ``powerN_input``.
+
+    2026.11.003-c8 : troisième source de puissance.  Les valeurs sont en
+    microwatts ; ``power1_input`` (paquet) est préféré, un pilote qui n'expose
+    que ``power2_input`` (cœurs) reste une mesure utilisable.
+    """
+    entries: list[tuple[str, str, float]] = []
+    for line in (text or "").splitlines():
+        parts = [part.strip() for part in line.split("|")]
+        if len(parts) != 3:
+            continue
+        name, label, raw = parts
+        value = _to_float(raw)
+        if value is None or value <= 0:
+            continue
+        entries.append((name.lower(), label.lower(), value / 1_000_000.0))
+    for name, label, value in entries:
+        if name in ("amd_energy", "zenpower") and label.startswith("power1"):
+            return round(value, 2), f"hwmon {name} {label}"
+    return None, ""
 
 
 # ── Hashrate from a log ───────────────────────────────────────────────
@@ -459,22 +488,80 @@ def _api_port(tokens: Sequence[str], family: str) -> int | None:
     return DEFAULT_API_PORTS.get(family)
 
 
+def _datadir_coin(datadir: str) -> str:
+    """Coin name read from a datadir (``…/bigcoin-mine/bigcoin/data`` → bigcoin)."""
+    parts = [part for part in (datadir or "").rstrip("/").split("/") if part]
+    if not parts:
+        return ""
+    name = parts[-1].lstrip(".").lower()
+    if name in ("data", "chain", "blocks", "db") and len(parts) > 1:
+        name = parts[-2].lstrip(".").lower()
+    match = re.match(r"[a-z0-9]+", name)
+    return match.group(0) if match else ""
+
+
+_SCRIPT_MINER_RE = re.compile(
+    r"(?:^|[\s/])([A-Za-z0-9_.\-]*(?:-miner|mine-)[A-Za-z0-9_.\-]*)\.sh\b"
+)
+
+
+def _script_miner_key(args: str) -> str:
+    """Key of a solo script (``korsh-miner.sh``, ``mine-bigcoin.sh``)."""
+    match = _SCRIPT_MINER_RE.search(args or "")
+    if not match:
+        return ""
+    name = match.group(1)  # « .sh » n'est pas dans le groupe
+    if name.startswith("mine-"):
+        name = name[5:]
+    for suffix in ("-miner", "-mining", "-mine"):
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+    return name if _SAFE_BIN_RE.match(name) else ""
+
+
 def plan_cpu_probes(ps_section: str) -> dict[str, list[dict[str, Any]]]:
     """Read-only probes to run for the miners found in ``ps``.
 
-    Returns ``{"logs": [...], "apis": [...], "nodes": [...]}``.  Every path is
-    validated here (absolute, no space, no shell metacharacter): the SSH command
-    interpolates it, so an unvalidated path would be a command injection.
+    Returns ``{"logs": [...], "apis": [...], "nodes": [...], "fds": [...]}``.
+    Every path is validated here (absolute, no space, no shell metacharacter):
+    the SSH command interpolates it, so an unvalidated path would be a command
+    injection.
+
+    2026.11.003-c8 : un nœud solo est détecté de façon **stable** (démon
+    ``*d -daemon`` qui consomme du CPU, script ``*-miner.sh`` / ``mine-*.sh``
+    lancé dans ``screen``) ; le client ``*-cli … generatetoaddress``, transitoire,
+    ne sert plus qu'à compter les workers et à donner un dossier de travail.
     """
-    from app.external_miners import _is_real_row, basename, parse_ps_rows, split_launcher
+    from app.external_miners import (
+        DAEMON_BINARIES,
+        _is_real_row,
+        basename,
+        parse_ps_rows,
+        split_launcher,
+    )
 
     logs: list[dict[str, Any]] = []
     apis: list[dict[str, Any]] = []
     nodes: list[dict[str, Any]] = []
     fds: list[dict[str, Any]] = []
+    node_rows: dict[str, dict[str, Any]] = {}
+    node_pids: dict[str, list[int]] = {}
     seen_logs: set[str] = set()
     seen_apis: set[int] = set()
-    seen_nodes: set[str] = set()
+
+    def add_node(key: str, force: bool = False, **values: Any) -> None:
+        if not key or not _SAFE_BIN_RE.match(key):
+            return
+        entry = node_rows.setdefault(
+            key,
+            {"key": key, "cli": "", "token": "", "datadir": "", "pid": None, "coin": ""},
+        )
+        for field, value in values.items():
+            if value and (force or not entry.get(field)):
+                entry[field] = value
+        pid = values.get("pid")
+        if isinstance(pid, int) and pid > 0:
+            node_pids.setdefault(key, []).append(pid)
 
     for row in parse_ps_rows(ps_section):
         if not _is_real_row(row):
@@ -488,23 +575,33 @@ def plan_cpu_probes(ps_section: str) -> dict[str, list[dict[str, Any]]]:
             tokens = tokens[1:]
             base = basename(tokens[0])
 
-        # Node solo: ``*-cli … generatetoaddress`` — getters only, never a mine call.
+        # Node solo: the transient client only counts workers; the daemon and
+        # the mining script are what stay visible between two collections.
         if base.endswith("-cli") and "generatetoaddress" in args:
-            key = base[:-4]
-            if key and key not in seen_nodes and _SAFE_BIN_RE.match(key):
-                seen_nodes.add(key)
-                nodes.append({
-                    "key": key,
-                    "cli": _valid_path(tokens[0]) or "",
-                    "token": tokens[0] if _SAFE_BIN_RE.match(tokens[0]) else "",
-                    "datadir": _valid_path(_flag(tokens, ("-datadir",))),
-                    "pid": row.get("pid"),
-                    "coin": "",
-                })
+            add_node(
+                base[:-4],
+                force=True,
+                cli=_valid_path(tokens[0]),
+                token=tokens[0] if _SAFE_REL_RE.match(tokens[0]) else "",
+                datadir=_flag(tokens, ("-datadir",)),
+                pid=row.get("pid"),
+            )
+            continue
+        if base in DAEMON_BINARIES and (
+            "-daemon" in tokens or (row.get("cpu_pct") or 0) > 0
+        ):
+            datadir = _flag(tokens, ("-datadir",))
+            add_node(_datadir_coin(datadir) or base[:-1], datadir=datadir, pid=row.get("pid"))
             continue
 
         family = miner_family(args)
         if not family:
+            # ``screen … korsh-miner.sh`` : le script reste présent même quand
+            # aucun client ne tourne.  Hors screen, un `mine-x.sh` générique
+            # reste un mineur script, pas un nœud solo.
+            script_key = _script_miner_key(args) if "screen" in args.lower() else ""
+            if script_key:
+                add_node(script_key, datadir=_flag(tokens, ("-datadir",)), pid=row.get("pid"))
             continue
         # SRBMiner is a GPU miner unless it was explicitly told to use the CPU:
         # probing its API here would duplicate the SRBMiner collector.
@@ -529,20 +626,24 @@ def plan_cpu_probes(ps_section: str) -> dict[str, list[dict[str, Any]]]:
         if isinstance(row.get("pid"), int) and row["pid"] > 0:
             fds.append({"pid": row["pid"], "family": family})
 
-    for node in nodes:
+    for key, node in node_rows.items():
         from app.external_miners import coin_for_client
 
-        node["coin"] = coin_for_client(node["key"])
+        node["coin"] = coin_for_client(key)
         # The solo script's own log is not in the ps line: probe the two names
-        # every such script uses next to its datadir.  Missing files simply
-        # return an empty section, never an error.
+        # every such script uses next to its datadir, then /proc/<pid>/fd.
         base = node["datadir"].rsplit("/", 1)[0] if node.get("datadir") else ""
         for candidate in (f"{base}/mining.log", f"{base}/miner.log") if base else ():
             if _valid_path(candidate) and candidate not in seen_logs:
                 seen_logs.add(candidate)
-                logs.append({"path": candidate, "family": f"node:{node['key']}",
+                logs.append({"path": candidate, "family": f"node:{key}",
                              "pid": node.get("pid")})
                 node.setdefault("log_candidates", []).append(candidate)
+        pids = sorted({pid for pid in node_pids.get(key, []) if pid > 0})
+        node["pids"] = pids
+        for pid in pids:
+            fds.append({"pid": pid, "family": f"node:{key}"})
+        nodes.append(node)
     return {"logs": logs, "apis": apis, "nodes": nodes, "fds": fds}
 
 
@@ -552,15 +653,25 @@ def parse_cpu_report(stdout: str) -> dict[str, Any]:
     info = parse_cpuinfo(blocks.get("CPUINFO", ""))
     temp_c, sensor = parse_hwmon(blocks.get("HWMON", ""))
     power = parse_rapl(blocks.get("POWER", ""), blocks.get("POWER2", ""))
+    power_source = "rapl" if power is not None else ""
+    if power is None:
+        # 2026.11.003-c8 : AMD amd_energy/zenpower quand RAPL est absent.
+        power, power_source = parse_hwmon_power(blocks.get("POWERH", ""))
+    freq = info["freq_mhz"]
+    freq_source = "cpuinfo" if freq is not None else ""
+    if freq is None:
+        freq = parse_scaling_freq(blocks.get("FREQ", ""))
+        freq_source = "cpufreq scaling_cur_freq" if freq is not None else ""
     state = {
         "load_pct": parse_load(blocks.get("PROC_STAT", ""), blocks.get("PROC_STAT2", "")),
         "temp_c": temp_c,
         "temp_sensor": sensor,
-        "freq_mhz": info["freq_mhz"] or parse_scaling_freq(blocks.get("FREQ", "")),
+        "freq_mhz": freq,
+        "freq_source": freq_source,
         "cores": info["cores"],
         "model": info["model"],
         "power_w": power,
-        "power_source": "rapl" if power is not None else "",
+        "power_source": power_source,
     }
     logs: dict[str, dict[str, Any]] = {}
     log_pids: dict[str, int] = {}
@@ -578,6 +689,13 @@ def parse_cpu_report(stdout: str) -> dict[str, Any]:
                     "text": "\n".join(lines[1:]) if len(lines) > 1 else "",
                 }
                 log_pids[path] = int(parts[0])
+        elif name.startswith("JLOG "):
+            # ``JLOG <pid>`` : sortie d'un mineur journalisée (socket/pty).
+            pid_text = name[5:].strip()
+            if pid_text.isdigit():
+                path = f"journal:{pid_text}"
+                logs[path] = {"mtime": None, "text": body}
+                log_pids[path] = int(pid_text)
         elif name.startswith("LOG "):
             path = name[4:].strip()
             lines = body.splitlines()
@@ -686,11 +804,14 @@ def attach_cpu_hashrates(
         elif port:
             tried.append(f"API :{port} injoignable")
 
+        newest_mtime: int | None = None
         for path in logs_by_family.get(family, []):
             entry = report["logs"].get(path)
             if entry is None:
                 tried.append(f"log {path} illisible")
                 continue
+            if entry.get("mtime"):
+                newest_mtime = max(newest_mtime or 0, int(entry["mtime"]))
             result = log_hashrate(entry.get("text", ""), entry.get("mtime"), now)
             if result["hashrate_hs"]:
                 miner["hashrate_hs"] = result["hashrate_hs"]
@@ -698,12 +819,45 @@ def attach_cpu_hashrates(
                 miner["hashrate_note"] = result["line"]
                 break
             tried.append(f"log {path} : {result['note']}")
+        if newest_mtime:
+            miner["log_mtime"] = _mtime_text(newest_mtime)
         if miner.get("hashrate_hs"):
+            continue
+        cpu_pct = miner.get("cpu_pct")
+        cpu_value = _float(cpu_pct) if cpu_pct is not None else None
+        if cpu_value is not None and cpu_value <= 0:
+            # 2026.11.003-c8 : un mineur vivant à 0 % CPU n'est pas « inconnu »,
+            # c'est un mineur arrêté — le dire, avec la date de son log.
+            note = (
+                "mineur inactif (0 % CPU, log sans hashrate récent)"
+                if tried and any(item.startswith("log ") for item in tried)
+                else "mineur inactif (0 % CPU, aucun log exploitable)"
+            )
+            if miner.get("log_mtime"):
+                note += f" — log modifié le {miner['log_mtime']}"
+            miner["hashrate_note"] = note
             continue
         miner["hashrate_note"] = "hashrate CPU inconnu (source : " + (
             " ; ".join(tried) if tried else "aucune API, aucun log exploitable"
         ) + ")"
     return list(miners)
+
+
+def _float(value: Any) -> float | None:
+    try:
+        return float(str(value).replace(",", ".").strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _mtime_text(mtime: int) -> str:
+    """Local date of a log's last write, for the diagnostic text."""
+    from datetime import datetime
+
+    try:
+        return datetime.fromtimestamp(int(mtime)).strftime("%Y-%m-%d %H:%M:%S")
+    except (OverflowError, OSError, ValueError):
+        return ""
 
 
 def _attach_solo(miner: dict[str, Any], probes: dict[str, Any], report: dict[str, Any]) -> None:
@@ -726,14 +880,24 @@ def _attach_solo(miner: dict[str, Any], probes: dict[str, Any], report: dict[str
         miner["hashrate_note"] = "hashrate CPU inconnu (source : nœud non identifié)"
         return
     log_entry: dict[str, Any] = {}
-    candidates = probe.get("log_candidates") or node.get("log_candidates") or []
+    candidates = list(probe.get("log_candidates") or node.get("log_candidates") or [])
     if not candidates and node.get("log"):
         candidates = [node["log"]["path"]]
+    # 2026.11.003-c8 : le log du script est souvent découvert par
+    # /proc/<pid>/fd/1 ou journald (_PID), pas par son nom.
+    pids = {pid for pid in (probe.get("pids") or []) + (node.get("pids") or []) if pid}
+    for path, pid in (report.get("log_pids") or {}).items():
+        if pid in pids and path not in candidates:
+            candidates.append(path)
     for candidate in candidates:
         entry = report["logs"].get(candidate)
         if entry and entry.get("text"):
             log_entry = dict(entry, path=candidate)
             break
+    if log_entry.get("mtime"):
+        miner["log_mtime"] = _mtime_text(int(log_entry["mtime"]))
+    elif log_entry.get("path") is None and node.get("log", {}).get("mtime"):
+        miner["log_mtime"] = _mtime_text(int(node["log"]["mtime"]))
     estimate = None
     if log_entry:
         estimate = scan_hashrate(log_entry.get("text", ""))
@@ -773,6 +937,7 @@ def cpu_state_with(
     for key, empty in (("load_pct", None), ("temp_c", None), ("freq_mhz", None),
                        ("power_w", None), ("cores", None), ("model", "")):
         state.setdefault(key, empty)
+    state.setdefault("power_source", "")
     if state.get("temp_c") is None and hive_cputemp is not None:
         state["temp_c"] = hive_cputemp
         state["temp_sensor"] = "HiveOS last_stat cputemp"
@@ -780,6 +945,7 @@ def cpu_state_with(
         state["power_w"] = api_power_w
         state["power_source"] = "API SRBMiner package_power"
     state["power_source"] = state.get("power_source") or "non mesurée"
+    state["freq_source"] = state.get("freq_source") or ""
     hashrates = [
         float(miner["hashrate_hs"])
         for miner in cpu_miners

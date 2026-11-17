@@ -167,15 +167,17 @@ def test_nominal_update_reaches_done(tmp_path):
 
     assert updater.handle(request()) == "done"
     assert env_tag(config) == TARGET
-    assert runner.pulled == [f"{IMAGE}:{TARGET}"]
+    # 2026.11.003-c8 : l'application **puis** le compagnon sont tirés.
+    assert runner.pulled[0] == f"{IMAGE}:{TARGET}"
+    assert f"{updater.config.updater_image}:{TARGET}" in runner.pulled
     assert runner.compose_calls == [None]
     status = json.loads(config.status_path.read_text())
     assert status["state"] == "done"
     assert status["from"] == OLD and status["to"] == TARGET
     events = [json.loads(line)["event"] for line in config.history_path.read_text().splitlines()]
     assert events[:6] == ["request", "pulling", "backing_up", "switching", "health_check", "done"]
-    # puis la fin explicite ; l'image du compagnon n'existe pas dans ce faux
-    assert events[-2:] == ["self_update_skipped", "finished"]
+    # puis le compagnon tire son image et se remplace, puis la fin explicite.
+    assert events[-3:] == ["self_pull", "self_update", "finished"]
     assert status["handled_nonce"] == "abc123456789"
 
 
@@ -401,7 +403,10 @@ def test_heartbeat_advances_after_done_instead_of_freezing(tmp_path):
         assert updater.step_once() == "ignored"
         beats.append(json.loads(config.status_path.read_text())["heartbeat_at"])
     assert len(set(beats)) == 3, beats
-    assert runner.pulled == [f"{IMAGE}:{TARGET}"]  # une seule fois
+    assert runner.pulled == [
+        f"{IMAGE}:{TARGET}",
+        f"{updater.config.updater_image}:{TARGET}",
+    ]  # l'app puis le compagnon, une seule fois chacun
 
 
 def test_heartbeat_thread_beats_during_a_long_docker_call(tmp_path):
@@ -538,10 +543,18 @@ def test_self_update_failure_keeps_the_current_companion_usable(tmp_path):
     assert "self_update_failed" in events
 
 
-def test_self_update_skipped_when_the_target_image_is_missing(tmp_path):
+def test_self_update_is_skipped_only_when_the_pull_fails(tmp_path):
     config = make_config(tmp_path)
     make_backup(config)
-    runner = FakeRunner(healthy={TARGET}, images=set())
+
+    class FailingUpdaterPull(FakeRunner):
+        def pull(self, reference):
+            self.pulled.append(reference)
+            if "fossor-updater" in reference:
+                return False, "registry injoignable"
+            return True, "pulled"
+
+    runner = FailingUpdaterPull(healthy={TARGET}, images=set())
     updater = Updater(config, runner)
     assert updater.handle(request()) == "done"
     assert runner.helpers == []
