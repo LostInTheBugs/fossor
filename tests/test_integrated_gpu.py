@@ -100,10 +100,17 @@ def test_apply_detection_creates_integrated_disabled(db, machine):
 
 
 def test_integrated_choice_survives_redetection(db, machine):
-    """An iGPU the user explicitly enabled stays enabled after a new detection."""
+    """An iGPU the user explicitly enabled stays enabled after a new detection.
+
+    §4.2 (2026.11.004) : le masquage global est actif par défaut, donc on le
+    désactive d'abord — c'est le choix explicite de l'utilisateur qui survit.
+    """
+    from app.ai_config import set_setting
     from app.devices import apply_detection
     from app.models import Device
 
+    set_setting(db, "hide_integrated_gpus", False)
+    db.commit()
     detected = detect("detect_hw_amd_lspci.txt")
     apply_detection(db, machine, detected)
     uhd = (
