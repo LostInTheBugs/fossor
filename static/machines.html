@@ -131,16 +131,23 @@ tr.absent td{opacity:.5}
     <div class="field"><label>Nom</label><input id="fName" placeholder="rig7095FA"></div>
     <div class="row">
       <div class="field"><label>Hôte (IP)</label><input id="fHost" placeholder="192.0.2.10"></div>
-      <div class="field"><label>Port SSH</label><input id="fPort" type="number" value="22" min="1" max="65535"></div>
-    </div>
-    <div class="row">
-      <div class="field" id="userField"><label>Login</label><input id="fUser" value="root" oninput="updateKeyCommand()"></div>
-      <div class="field"><label>Mode d'authentification</label><select id="fAuthType" onchange="updateAuthUi()">
-        <option value="password">Mot de passe (stocké chiffré)</option>
-        <option value="fossor_key">Clé publique de Fossor (posée à la main)</option>
-        <option value="provision">Préparation automatique (accès temporaire)</option>
+      <div class="field"><label>Type d'OS</label><select id="fOs" onchange="applyOsPreset()">
+        <option value="other">Autre</option>
+        <option value="hiveos">HiveOS</option>
+        <option value="ubuntu">Ubuntu/Debian</option>
+        <option value="proxmox">Proxmox</option>
       </select></div>
     </div>
+    <div class="field" id="osHint" style="display:none;font-size:11.5px;color:var(--muted);margin-top:-4px"></div>
+    <div class="row">
+      <div class="field"><label>Port SSH</label><input id="fPort" type="number" value="22" min="1" max="65535"></div>
+      <div class="field" id="userField"><label>Login</label><input id="fUser" value="root" oninput="updateKeyCommand()"></div>
+    </div>
+    <div class="field"><label>Mode d'authentification</label><select id="fAuthType" onchange="updateAuthUi()">
+      <option value="password">Mot de passe (stocké chiffré)</option>
+      <option value="fossor_key">Clé publique de Fossor (posée à la main)</option>
+      <option value="provision">Préparation automatique (accès temporaire)</option>
+    </select></div>
     <div class="field" id="secretPanel"><label id="secretLabel">Mot de passe</label><input id="fSecret" type="password" placeholder="••• modifier" autocomplete="new-password"></div>
 
     <div class="field" id="fossorKeyPanel" style="display:none">
@@ -164,10 +171,7 @@ tr.absent td{opacity:.5}
       <div class="field"><label>Sudo</label><select id="fSudo"><option value="none">Aucun</option><option value="sudo without password">Sudo sans mot de passe</option><option value="sudo with password">Sudo avec mot de passe</option></select></div>
       <div class="field"><label>Usage</label><select id="fUsage"><option value="both">CPU+GPU</option><option value="cpu">CPU seul</option><option value="gpu">GPU seul</option><option value="none">Aucun</option></select></div>
     </div>
-    <div class="row">
-      <div class="field"><label>OS</label><select id="fOs"><option value="other">Autre</option><option value="hiveos">HiveOS</option><option value="ubuntu">Ubuntu</option><option value="proxmox">Proxmox</option></select></div>
-      <div class="field"><label>VM host</label><select id="fVmHost"><option value="false">Non</option><option value="true">Oui</option></select></div>
-    </div>
+    <div class="field"><label>VM host</label><select id="fVmHost"><option value="false">Non</option><option value="true">Oui</option></select></div>
     <div class="field"><label>Host key (empreinte épinglée)</label><input id="fHostKey" placeholder="SHA256:..."></div>
     <div class="row">
       <div class="field"><label>Enabled</label><select id="fEnabled"><option value="true">Oui</option><option value="false">Non</option></select></div>
@@ -376,6 +380,10 @@ const detailRow=(m)=>{
     extraHtml+=`<div class="pending-warning">⚠️ Machine <b>non préparée</b> — test et détection indisponibles.<br>
       <button class="btn sm" onclick="retryProvision(${m.id})" style="margin-top:6px">🔄 Réessayer la préparation</button></div>`;
   }
+  if(m.os_mismatch&&m.os_banner){
+    extraHtml+=`<div class="pending-warning" id="osBanner">${m.os_banner}
+      <button class="btn sm" onclick="applyOsPresetFor(${m.id},'${m.os_kind_detected}')" style="margin-top:6px">Appliquer le préréglage ${m.os_preset_label}</button></div>`;
+  }
   return `<tr class="detail"><td colspan="10"><div class="dev-panel">
     <div class="dev-head">
       <span><b>Matériel détecté</b> <span class="masked">· ${label}${m.vm_host?' · hôte de VM':''}</span></span>
@@ -547,6 +555,43 @@ const updateKeyCommand=()=>{
 const copyText=async(text,label)=>{
   try{await navigator.clipboard.writeText(text);toast(label+' copiée');}
   catch(e){toast('Copie impossible','err');}
+};
+// ── Type d'OS (§4.1 ter) : le choix pré-remplit le reste du formulaire ──
+let OS_PRESETS=null;
+const loadOsPresets=async()=>{
+  if(OS_PRESETS)return OS_PRESETS;
+  try{
+    const r=await fetch('/api/machines/os-presets',{credentials:'include'});
+    if(r.ok)OS_PRESETS=await r.json();
+  }catch(e){OS_PRESETS=null;}
+  return OS_PRESETS||{presets:{}};
+};
+const applyOsPreset=async()=>{
+  const kind=$('#fOs').value;
+  const data=await loadOsPresets();
+  const p=(data.presets||{})[kind]||{};
+  if(p.ssh_port)$('#fPort').value=p.ssh_port;
+  if(p.auth_type)$('#fAuthType').value=(p.auth_type==='provision_pending')?'provision':p.auth_type;
+  if(p.temp_user!==undefined&&p.temp_user!==null)$('#fTempUser').value=p.temp_user;
+  if(p.ssh_user)$('#fAccount').value=p.ssh_user;
+  if(p.sudo)$('#fSudo').value=p.sudo;
+  if(p.usage)$('#fUsage').value=p.usage;
+  if(p.vm_host!==null&&p.vm_host!==undefined)$('#fVmHost').value=String(p.vm_host);
+  const hint=$('#osHint');
+  const text=p.secret_hint||p.note||'';
+  hint.textContent=text;
+  hint.style.display=text?'':'none';
+  // HiveOS : le mot de passe reste VIDE, seul le texte d'aide l'évoque.
+  if(kind==='hiveos')$('#fSecret').value='';
+  updateAuthUi();
+};
+const applyOsPresetFor=async(id,kind)=>{
+  const r=await fetch('/api/machines/'+id+'/os-preset',{method:'POST',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({os_kind:kind})});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){toast(d.detail||'Préréglage refusé','err');return;}
+  toast('Préréglage '+kind+' appliqué');
+  await loadMachines();
 };
 const updateAuthUi=()=>{
   const mode=$('#fAuthType').value;

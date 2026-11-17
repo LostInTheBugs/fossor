@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db, SessionLocal
 from app.dependencies import require_login
 from app.models import Machine, Device, AuditLog
+from app.os_presets import apply_preset, compare_os, os_label, preset_fields, public_presets
 from app.validation import validate_machine_payload
 
 router = APIRouter(prefix="/api/machines", tags=["machines"])
@@ -23,6 +24,8 @@ def _mask_secret(machine: Machine) -> dict:
         "has_secret": machine.secret_ref is not None,
         "sudo": machine.sudo,
         "os_kind": machine.os_kind,
+        # §4.1 ter : type choisi vs OS réellement détecté + bannière d'écart.
+        "os_kind_detected": machine.os_kind_detected,
         "host_key": machine.host_key,
         "usage": machine.usage,
         "vm_host": machine.vm_host,
@@ -34,6 +37,12 @@ def _mask_secret(machine: Machine) -> dict:
         "updated_at": machine.updated_at,
         "external_miners": _external_miners(machine),
     }
+    comparison = compare_os(machine.os_kind, machine.os_kind_detected)
+    d["os_label"] = os_label(machine.os_kind)
+    d["os_detected_label"] = comparison["detected_label"]
+    d["os_mismatch"] = comparison["mismatch"]
+    d["os_banner"] = comparison["banner"]
+    d["os_preset_label"] = comparison["preset_label"]
     return d
 
 
@@ -115,6 +124,42 @@ def create_machine(
     db.refresh(machine)
     _audit(db, machine, "create", actor=current_user if current_user else "system")
     return _mask_secret(machine)
+
+
+@router.get("/os-presets")
+def get_os_presets(_user=Depends(require_login)):
+    """§4.1 ter : préréglages du formulaire d'ajout (aucun secret)."""
+    return public_presets()
+
+
+@router.post("/{machine_id}/os-preset")
+def post_os_preset(
+    machine_id: int,
+    data: dict,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_login),
+):
+    """Applique le préréglage du type d'OS (bouton de la bannière d'écart)."""
+    from datetime import datetime, timezone
+
+    from app.os_presets import OS_KINDS
+
+    machine = db.query(Machine).filter(Machine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=404, detail="Machine not found")
+    kind = str((data or {}).get("os_kind") or "").strip().lower()
+    if kind not in OS_KINDS:
+        raise HTTPException(status_code=400, detail="Type d'OS inconnu.")
+    changed = apply_preset(machine, kind)
+    machine.updated_at = datetime.now(timezone.utc).isoformat()
+    db.commit()
+    db.refresh(machine)
+    _audit(db, machine, "os_preset", actor=current_user if current_user else "system")
+    result = _mask_secret(machine)
+    result["changed"] = changed
+    result["preset"] = preset_fields(kind)
+    return result
 
 
 @router.get("/{machine_id}")

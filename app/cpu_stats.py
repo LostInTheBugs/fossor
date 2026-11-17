@@ -208,37 +208,51 @@ def parse_hwmon(text: str) -> tuple[float | None, str]:
 
 
 def parse_rapl(sample_a: str, sample_b: str, interval_s: float = 1.0) -> float | None:
-    """Package power (W) from two RAPL readings ``chemin|microjoules``.
+    """Package power (W) from two RAPL readings.
+
+    Chaque ligne est ``chemin|microjoules`` (``energy_uj`` seul) ou
+    ``chemin|microjoules|max_energy_range_uj`` quand la sonde lit aussi le
+    plafond : le compteur peut repartir à zéro entre les deux lectures, et
+    ``max - précédent + courant`` donne alors le delta réel au lieu d'une
+    puissance négative écartée.
 
     Only the package domain (``intel-rapl:0`` / ``intel-rapl`` root) is summed:
     the ``core`` / ``uncore`` / ``dram`` children are parts of the same package
-    and adding them doubles the result.
+    and adding them doubles the result; ``psys`` (``intel-rapl:1``), qui couvre
+    la plateforme entière, et le miroir ``intel-rapl-mmio:*`` sont exclus par le
+    même motif.
     """
-    def read(text: str) -> dict[str, float]:
-        values: dict[str, float] = {}
+    def read(text: str) -> dict[str, tuple[float, float | None]]:
+        values: dict[str, tuple[float, float | None]] = {}
         for line in (text or "").splitlines():
-            path, _, raw = line.partition("|")
-            path = path.strip()
-            value = _to_float(raw)
+            parts = line.split("|")
+            if len(parts) < 2:
+                continue
+            path = parts[0].strip()
+            value = _to_float(parts[1])
             if not path or value is None:
                 continue
+            maximum = _to_float(parts[2]) if len(parts) > 2 else None
             leaf = path.rstrip("/").rsplit("/", 2)
             name = leaf[-2] if len(leaf) >= 2 else path
             if not re.search(r"^(?:intel|amd)-rapl(:0)?$", name):
                 continue
-            values[name] = value
+            values[name] = (value, maximum)
         return values
 
     first, second = read(sample_a), read(sample_b)
     total = 0.0
     seen = 0
-    for name, value in second.items():
+    for name, (value, maximum) in second.items():
         previous = first.get(name)
         if previous is None:
             continue
-        delta = value - previous
-        if delta < 0:  # counter wrapped
-            continue
+        delta = value - previous[0]
+        if delta < 0:  # compteur reparti à zéro
+            limit = maximum or previous[1]
+            if not limit or limit <= previous[0]:
+                continue
+            delta = limit - previous[0] + value
         total += delta / 1_000_000.0 / max(0.1, interval_s)
         seen += 1
     if not seen:
@@ -1128,11 +1142,15 @@ def cpu_state_with(
     hive_cputemp: float | None = None,
     api_power_w: float | None = None,
     cpu_miners: Sequence[dict[str, Any]] = (),
+    typed_power_w: float | None = None,
 ) -> dict[str, Any]:
     """Final ``cpu`` object stored per machine and shown by the API.
 
-    *api_power_w* is SRBMiner's ``package_power`` (the Ryzen reports 88.96 W);
-    RAPL comes next, and « non mesurée » is a stated absence, not a zero.
+    Ordre des sources de puissance (§4.2), chacune nommée dans ``power_source`` :
+    ``package_power`` de l'API du mineur (le Ryzen annonce 88,96 W), puis RAPL
+    (``energy_uj``) ou hwmon (``power1_input``) déjà lus par la sonde, puis la
+    valeur saisie sur la machine (``machines.cpu_power_w``) ; « non mesurée »
+    est une absence déclarée, jamais un zéro.
     """
     state = dict(report.get("state") or {})
     for key, empty in (("load_pct", None), ("temp_c", None), ("freq_mhz", None),
@@ -1154,6 +1172,12 @@ def cpu_state_with(
     if api_power_w is not None and float(api_power_w) > 0:
         state["power_w"] = api_power_w
         state["power_source"] = "API SRBMiner package_power"
+    # 4e source (§4.2) : la valeur saisie sur la machine, seulement quand rien
+    # n'a été mesuré — RAPL/hwmon sont déjà dans ``state`` et priment.
+    if (state.get("power_w") is None or float(state["power_w"]) <= 0) and typed_power_w:
+        if float(typed_power_w) > 0:
+            state["power_w"] = float(typed_power_w)
+            state["power_source"] = "saisie (machines.cpu_power_w)"
     if state.get("power_w") is not None and float(state["power_w"]) <= 0:
         state["power_w"] = None
         state["power_source"] = "non mesurée"

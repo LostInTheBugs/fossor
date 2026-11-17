@@ -195,7 +195,12 @@ def apply_detection(db: Session, machine: Machine, detected: dict[str, Any], gpu
     machine.vm_host = bool(virt.get("kvm") or virt.get("pveversion"))
     os_kind = detected.get("os_kind")
     if os_kind:
-        machine.os_kind = os_kind
+        # §4.1 ter : le type choisi fait foi, l'OS réel est conservé à part et
+        # l'écart est affiché. Une machine créée sans type (« autre ») prend le
+        # type détecté, comme avant.
+        machine.os_kind_detected = os_kind
+        if not machine.os_kind or str(machine.os_kind) == "other":
+            machine.os_kind = os_kind
     machine.updated_at = _now()
     machine.usage = compute_usage(db, machine)
 

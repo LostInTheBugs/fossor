@@ -75,6 +75,24 @@ def init_db():
     _migrate_machine_status_api_error_column()
     _migrate_machine_status_cpu_json_column()
     _migrate_device_psu_columns()
+    _migrate_machine_os_detected_column()
+
+
+def _migrate_machine_os_detected_column():
+    """§4.1 ter : ``os_kind`` (choisi) vs ``os_kind_detected`` (OS réel).
+
+    Les machines créées avant le champ n'ont pas de type choisi distinct :
+    leur ``os_kind`` a toujours été écrit par la détection, il devient donc la
+    valeur détectée — aucune bannière rétroactive, et le type choisi reste
+    modifiable par « Appliquer le préréglage ».
+    """
+    with engine.begin() as conn:
+        columns = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(machines)")}
+        if "os_kind_detected" not in columns:
+            conn.exec_driver_sql("ALTER TABLE machines ADD COLUMN os_kind_detected VARCHAR(20)")
+        conn.exec_driver_sql(
+            "UPDATE machines SET os_kind_detected = os_kind WHERE os_kind_detected IS NULL"
+        )
 
 
 def _migrate_coin_pool_hosts_column():

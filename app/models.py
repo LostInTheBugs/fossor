@@ -67,6 +67,8 @@ class Machine(Base):
     secret_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
     sudo: Mapped[SudoTypeEnum] = mapped_column(String(30), default=SudoTypeEnum.none)
     os_kind: Mapped[OsKindEnum] = mapped_column(String(20), default=OsKindEnum.other)
+    # §4.1 ter : type choisi à l'ajout (os_kind) vs OS réellement détecté.
+    os_kind_detected: Mapped[str | None] = mapped_column(String(20), nullable=True)
     host_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     host_key_public: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Last external miners seen (JSON list, masked) — dashboard + machine card.

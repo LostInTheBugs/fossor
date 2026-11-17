@@ -291,7 +291,10 @@ async def _enrich_cpu_state(db, machine, raw_stdout: str, stats: dict[str, Any])
     cpu_miners = [m for m in miners if str(m.get("kind") or "") in ("cpu", "solo")]
 
     cputemp = _hive_cputemp(sections["HIVE_STAT"])
-    cpu = cpu_state_with(report, cputemp, stats.get("cpu_package_power_w"), cpu_miners)
+    cpu = cpu_state_with(
+        report, cputemp, stats.get("cpu_package_power_w"), cpu_miners,
+        typed_power_w=machine.cpu_power_w,
+    )
     stats["cpu"] = cpu
 
     for item in stats.get("devices") or []:

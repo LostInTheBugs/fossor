@@ -525,6 +525,11 @@ def build_report(
 
         total = _sum(device_results)
         day_total = _sum(day_device_results)
+        # Puissance moyenne de la machine, tous postes confondus : elle sert au
+        # prorata de l'électricité entre les mineurs d'un même coin (§4.15).
+        avg_power_w = round(
+            sum(float(d["power_w"]) for d in device_reports if d.get("power_w")), 2
+        ) or None
         entry = {
             "uuid": machine.uuid,
             "name": machine.name,
@@ -537,6 +542,9 @@ def build_report(
             "kwh": total["kwh"],
             "cost_eur": total["cost_eur"],
             "cost_eur_day": day_total["cost_eur"],
+            # €/mois affiché à côté du €/jour (jour × 30), même base à la prise.
+            "cost_eur_month": round(day_total["cost_eur"] * 30, 9),
+            "avg_power_w": avg_power_w,
             "covered_s": total["covered_s"],
             "revenue_eur_day": None,
             "net_eur_day": None,
@@ -546,20 +554,43 @@ def build_report(
         if coin and collected:
             coin_machines.setdefault(coin, []).append(entry)
 
-    # Revenue per coin, split by latest hashrate share.
+    # Revenue per coin, split by latest hashrate share; l'électricité du coin est
+    # répartie au prorata de la puissance de chaque machine, et le coût net par
+    # coin = revenu estimé − cette part (§4.15).
+    coin_report: list[dict[str, Any]] = []
     for ticker, entries in coin_machines.items():
+        electricity = round(sum(float(e["cost_eur_day"] or 0.0) for e in entries), 9)
+        power_total = sum(float(e.get("avg_power_w") or 0.0) for e in entries)
+        for entry in entries:
+            share_power = (
+                float(entry.get("avg_power_w") or 0.0) / power_total
+                if power_total > 0 else 1.0 / len(entries)
+            )
+            entry["electricity_share_eur_day"] = round(electricity * share_power, 9)
+        coin_entry = {
+            "ticker": ticker,
+            "machines": len(entries),
+            "electricity_eur_day": electricity,
+            "revenue_eur_day": None,
+            "net_eur_day": None,
+            "note": "",
+        }
         quote = quotes.get(ticker) or {}
         price = quote.get("eur")
         if price is None:
             coin = coins.get(ticker)
             price = coin.manual_price_eur if coin and coin.manual_price_eur is not None else None
         if price is None:
+            coin_entry["note"] = "prix du coin inconnu"
+            coin_report.append(coin_entry)
             for entry in entries:
                 entry["revenue_note"] = "prix du coin inconnu"
             continue
 
         delta = _pool_delta(db, ticker, now)
         if delta["delta"] is None:
+            coin_entry["note"] = delta["note"]
+            coin_report.append(coin_entry)
             for entry in entries:
                 entry["revenue_note"] = delta["note"]
             continue
@@ -581,6 +612,10 @@ def build_report(
             entry["balance_delta_24h"] = round(delta["delta"] * share, 12)
             entry["price_eur"] = float(price)
             entry["revenue_note"] = ""
+        coin_entry["revenue_eur_day"] = round(revenue, 9)
+        coin_entry["net_eur_day"] = round(revenue - electricity, 9)
+        coin_entry["price_eur"] = float(price)
+        coin_report.append(coin_entry)
 
     for entry in report_machines:
         if entry["revenue_eur_day"] is None and not entry.get("revenue_note"):
@@ -602,11 +637,13 @@ def build_report(
             "kwh": total_kwh,
             "cost_eur": total_cost,
             "cost_eur_day": total_cost_day,
+            "cost_eur_month": round(total_cost_day * 30, 9),
             "revenue_eur_day": total_revenue,
             "net_eur_day": round(total_revenue - total_cost_day, 9) if total_revenue is not None else None,
             "machines": len(report_machines),
             "priced_machines": len(priced),
         },
+        "coins": coin_report,
         "machines": report_machines,
         "warnings": warnings,
     }

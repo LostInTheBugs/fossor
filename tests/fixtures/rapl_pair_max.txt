@@ -1,0 +1,16 @@
+### POWER
+/sys/class/powercap/intel-rapl:0:0/energy_uj|205740490270|262143328850
+/sys/class/powercap/intel-rapl:0:1/energy_uj|76782|262143328850
+/sys/class/powercap/intel-rapl:0:2/energy_uj|153832948410|262143328850
+/sys/class/powercap/intel-rapl:0/energy_uj|261337865702|262143328850
+/sys/class/powercap/intel-rapl:1/energy_uj|87934867903|262143328850
+/sys/class/powercap/intel-rapl-mmio:0:0/energy_uj|153832959763|262143328850
+/sys/class/powercap/intel-rapl-mmio:0/energy_uj|261338221414|262143328850
+### POWER2
+/sys/class/powercap/intel-rapl:0:0/energy_uj|205799052864|262143328850
+/sys/class/powercap/intel-rapl:0:1/energy_uj|76782|262143328850
+/sys/class/powercap/intel-rapl:0:2/energy_uj|153834534344|262143328850
+/sys/class/powercap/intel-rapl:0/energy_uj|261398385689|262143328850
+/sys/class/powercap/intel-rapl:1/energy_uj|88015420187|262143328850
+/sys/class/powercap/intel-rapl-mmio:0:0/energy_uj|153834543438|262143328850
+/sys/class/powercap/intel-rapl-mmio:0/energy_uj|261398733100|262143328850

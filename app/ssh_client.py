@@ -665,7 +665,8 @@ def cpu_probe_command(probes: dict[str, Any]) -> str:
         "echo '### POWER'",
         # RAPL est souvent réservé à root : lecture directe puis `sudo -n`.
         "for f in /sys/class/powercap/*/energy_uj; do [ -e \"$f\" ] && "
-        "printf '%s|%s\\n' \"$f\" \"$(RD cat \"$f\" 2>/dev/null)\"; done 2>/dev/null",
+        "printf '%s|%s|%s\\n' \"$f\" \"$(RD cat \"$f\" 2>/dev/null)\" "
+        "\"$(RD cat \"${f%energy_uj}max_energy_range_uj\" 2>/dev/null)\"; done 2>/dev/null",
         "echo '### CPUINFO'",
         "grep -iE '^(processor|cpu mhz|model name)' /proc/cpuinfo 2>/dev/null",
         "echo '### FREQ'",
@@ -692,7 +693,8 @@ def cpu_probe_command(probes: dict[str, Any]) -> str:
         "head -n 8 /proc/stat 2>/dev/null",
         "echo '### POWER2'",
         "for f in /sys/class/powercap/*/energy_uj; do [ -r \"$f\" ] && "
-        "printf '%s|%s\\n' \"$f\" \"$(cat \"$f\" 2>/dev/null)\"; done 2>/dev/null",
+        "printf '%s|%s|%s\\n' \"$f\" \"$(cat \"$f\" 2>/dev/null)\" "
+        "\"$(cat \"${f%energy_uj}max_energy_range_uj\" 2>/dev/null)\"; done 2>/dev/null",
     ]
 
     for probe in probes.get("logs") or []:

@@ -291,6 +291,7 @@ function card(m, e) {
       '<div><span class="k">Conso</span><span class="v">' + fmtW(m.wall_power_w || m.total_power_w) + "</span></div>" +
       '<div><span class="k">Uptime</span><span class="v">' + fmtUptime(m.uptime_s) + "</span></div>" +
       '<div><span class="k">Coût 24 h</span><span class="v">' + fmtEur(e.cost_eur_day) + "</span></div>" +
+      '<div><span class="k">Coût / mois</span><span class="v">' + fmtEur(e.cost_eur_month) + "</span></div>" +
       '<div><span class="k">Net 24 h</span><span class="v">' + fmtEur(e.net_eur_day) + "</span></div>" +
       '<div><span class="k">Collecte</span><span class="v">' + fmtAge(m.age_s) + "</span></div>" +
     "</div>" +
@@ -318,7 +319,7 @@ function render(machines, energy) {
   $("#sPower").textContent = fmtW(watts || null);
 
   const totals = (energy && energy.total) || {};
-  $("#sCost").textContent = fmtEur(totals.cost_eur_day);
+  $("#sCost").textContent = fmtEur(totals.cost_eur_day) + " · " + fmtEur(totals.cost_eur_month) + " /mois";
   $("#sNet").textContent = fmtEur(totals.net_eur_day);
 
   const ages = machines.map((m) => m.age_s).filter((a) => a !== null && a !== undefined);
