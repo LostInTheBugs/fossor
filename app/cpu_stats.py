@@ -687,6 +687,12 @@ def _script_miner_key(args: str) -> str:
 
 #: Lanceur shell d'un script solo : ``bash -c 'cd … && nohup ./mine-x.sh > log &'``
 _SOLO_LAUNCHER_RE = re.compile(r"(?:^|\s)-[A-Za-z]*c(?:\s|$)|&&|>>?\s")
+#: Redirection du lanceur, absolue ou ``~/…`` (le home vient de ``getent passwd``).
+_SOLO_REDIRECT_RE = re.compile(r"(?:^|\s)\d?>>?\s*(~?/[^\s;|&<>]+)")
+#: Chemin de log accepté pour (b), absolu ou ``~/…`` (jamais d'espace).
+_SOLO_LOG_RE = re.compile(r"^~?/[A-Za-z0-9_.\-/]{1,300}$")
+#: Compte dont on lit le home pour développer ``~/…``.
+_SOLO_USER_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 
 
 def _solo_launcher(args: str) -> bool:
@@ -812,10 +818,10 @@ def plan_cpu_probes(ps_section: str) -> dict[str, list[dict[str, Any]]]:
                 entry = {
                     "pid": row.get("pid"),
                     "elapsed_s": row.get("elapsed_s"),
-                    # (b) redirection absolue de la ligne du lanceur ; « ~/… »
-                    # n'est résolu que par /proc/<pid>/fd/1 du script.
+                    "user": row.get("user") or "",
+                    # (b) redirection de la ligne du lanceur, absolue ou « ~/… ».
                     "redirect": (
-                        match.group(1) if (match := _REDIRECT_RE.search(args)) else ""
+                        match.group(1) if (match := _SOLO_REDIRECT_RE.search(args)) else ""
                     ),
                 }
                 if _solo_launcher(args):
@@ -856,7 +862,7 @@ def plan_cpu_probes(ps_section: str) -> dict[str, list[dict[str, Any]]]:
         # son lanceur, le démon en dernier (son fd est /dev/null ou le
         # journal).  ``mine.log`` est trouvé par (a) ``readlink fd/1`` et
         # (b) la redirection du lanceur, qui est la même ouverture.
-        scripts = _ordered_solo_pids(node_scripts.get(key, []), limit=1)
+        scripts = _ordered_solo_pids(node_scripts.get(key, []), limit=3)
         launchers = _ordered_solo_pids(node_launchers.get(key, []))
         daemons = sorted({pid for pid in node_pids.get(key, []) if pid > 0})
         pids = list(dict.fromkeys(scripts + launchers + daemons))
@@ -864,15 +870,16 @@ def plan_cpu_probes(ps_section: str) -> dict[str, list[dict[str, Any]]]:
         node["solo_pids"] = {"script": scripts, "parent": launchers, "daemon": daemons}
         for pid in pids:
             fds.append({"pid": pid, "family": f"node:{key}"})
-        # (b) redirection absolue écrite dans la ligne du lanceur : une seule
-        # chaîne, sans « ~ » (le home n'est pas connu côté application).
+        # (b) la redirection du lanceur, lue en clair dans ``ps`` : elle ne
+        # dépend pas de /proc/<pid>/fd (root seul quand le script appartient à
+        # un autre compte).  « ~/… » est développé sur la machine avec le home
+        # de l'utilisateur du processus.
         for entry in node_launchers.get(key, []):
-            raw = _valid_path(str(entry.get("redirect") or ""))
-            if raw and raw not in seen_logs:
-                seen_logs.add(raw)
-                node.setdefault("log_candidates", []).append(raw)
-                logs.append({"path": raw, "family": f"node:{key}",
-                             "pid": entry.get("pid")})
+            raw = str(entry.get("redirect") or "")
+            if _SOLO_LOG_RE.match(raw):
+                node["redirect"] = raw
+                node["redirect_user"] = str(entry.get("user") or "")
+                break
         nodes.append(node)
     return {"logs": logs, "apis": apis, "nodes": nodes, "fds": fds}
 
@@ -1129,10 +1136,19 @@ def _attach_solo(
         if entry and entry.get("text"):
             log_entry = dict(entry, path=candidate)
             break
+    if not log_entry and (node.get("log") or {}).get("text"):
+        # ``### LOGS`` : la redirection du lanceur, hors ``report["logs"]``.
+        entry = node["log"]
+        log_entry = {"path": entry.get("path", ""), "mtime": entry.get("mtime"),
+                     "text": entry.get("text", "")}
     if log_entry.get("mtime"):
         miner["log_mtime"] = _mtime_text(int(log_entry["mtime"]))
     elif log_entry.get("path") is None and node.get("log", {}).get("mtime"):
         miner["log_mtime"] = _mtime_text(int(node["log"]["mtime"]))
+    if not log_entry and (node.get("log") or {}).get("path"):
+        # Le chemin est connu (redirection du lanceur) mais rien n'en sort :
+        # droits insuffisants ou fichier vide.  Le dire, sans inventer.
+        miner["hashrate_note"] = f"log {(node['log'])['path']} illisible ou vide"
     estimate = None
     script: dict[str, Any] = {}
     if log_entry:
