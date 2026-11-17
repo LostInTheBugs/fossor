@@ -295,8 +295,16 @@ def payload() -> dict:
     status = read_status()
     present = updater_present()
     age = heartbeat_age()
+    installed = status is not None
+    stale = installed and age is not None and age > STALE_HEARTBEAT_SECONDS and not present
     return {
         "present": present,
+        # 2026.11.003-c5: un conteneur présent dont le battement est figé n'est
+        # pas « absent » — c'est un compagnon sans réponse, et l'écran doit le
+        # dire autrement (marche à suivre différente).
+        "installed": installed,
+        "stale": stale,
+        "stale_minutes": None if age is None else round(age / 60, 1),
         "state": (status or {}).get("state") or ("idle" if present else "absent"),
         # 2026.11.003-c4: the companion is a *separate* image and can lag
         # behind the app (prod kept a -c1 updater after a -c3 app update).
@@ -309,6 +317,7 @@ def payload() -> dict:
         "message": (status or {}).get("message"),
         "started_at": (status or {}).get("started_at"),
         "updated_at": (status or {}).get("updated_at"),
+        "heartbeat_at": (status or {}).get("heartbeat_at"),
         "heartbeat_age_seconds": None if age is None else round(age, 1),
         "image": expected_image(),
         "directory": str(update_dir()),

@@ -328,11 +328,23 @@ const renderUpdater=(d)=>{
   const banner=$('#updBanner');
   if(!u.present){
     banner.style.display='block';
-    banner.innerHTML='<b>Service <span class="mono">fossor-updater</span> absent.</b> Cette installation '
-      +'n\'a pas le conteneur compagnon : la mise à jour pilotée depuis l\'interface est indisponible '
-      +'(bouton grisé). Installez les deux services de <span class="mono">docker-compose.yml</span>, ou '
-      +'mettez à jour à la main avec <span class="mono">docker compose pull &amp;&amp; docker compose up -d</span>. '
-      +'Les sauvegardes et la vérification de version restent actives.';
+    if(u.installed||u.heartbeat_age_seconds!=null){
+      // Le conteneur existe (status.json est là) mais le battement est figé.
+      const mins=u.stale_minutes==null?'?':Math.round(u.stale_minutes);
+      banner.innerHTML='<b>Updater sans réponse depuis '+mins+' min.</b> Le service '
+        +'<span class="mono">fossor-updater</span> existe mais son battement de cœur est figé '
+        +'(dernier : '+esc(fmtDate(u.heartbeat_at||u.updated_at))+', état <span class="mono">'+esc(u.state||'')+'</span>). '
+        +'La mise à jour pilotée est suspendue tant qu\'il ne répond pas.<br>'
+        +'Marche à suivre : <span class="mono">docker compose restart fossor-updater</span> dans le '
+        +'dossier du projet, puis rechargez cette page ; le battement doit repartir en moins d\'une minute. '
+        +'Si le battement ne repart pas : <span class="mono">docker compose logs --tail 50 fossor-updater</span>.';
+    }else{
+      banner.innerHTML='<b>Service <span class="mono">fossor-updater</span> absent.</b> Cette installation '
+        +'n\'a pas le conteneur compagnon : la mise à jour pilotée depuis l\'interface est indisponible '
+        +'(bouton grisé). Installez les deux services de <span class="mono">docker-compose.yml</span>, ou '
+        +'mettez à jour à la main avec <span class="mono">docker compose pull &amp;&amp; docker compose up -d</span>. '
+        +'Les sauvegardes et la vérification de version restent actives.';
+    }
     btn.disabled=true; btn.textContent='Mettre à jour';
     $('#updLive').innerHTML='';
   }else{
@@ -343,10 +355,11 @@ const renderUpdater=(d)=>{
     btn.textContent=busy?'Mise à jour en cours…':(d.update_available?`Mettre à jour vers ${target}`:'À jour');
     $('#updLive').innerHTML=`<dl class="kv">
       <dt>Compagnon</dt><dd><span class="chip ${u.present?'on':'off'}">${u.present?'joignable':'absent'}</span></dd>
+      <dt>Version de l'application</dt><dd class="mono">${esc(d.installed_version||'—')}</dd>
+      <dt>Version du compagnon</dt><dd class="mono">${esc(u.version||'inconnue')}${u.version&&d.installed_version&&u.version!==d.installed_version?' <span class="chip off">différente de l\'application</span>':''}${!u.version?' <span class="chip idle">non rapportée par un updater antérieur</span>':''}</dd>
       <dt>État</dt><dd>${esc(STATE_LABELS[u.state]||u.state)}</dd>
       <dt>Étape</dt><dd class="mono">${esc(u.step||'—')}</dd>
-      <dt>Version</dt><dd class="mono">${esc(u.from||'—')} → ${esc(u.to||'—')}</dd>
-      <dt>Version du compagnon</dt><dd class="mono">${esc(u.version||'inconnue')}${u.version&&d.installed_version&&u.version!==d.installed_version?' <span class="chip off">différente de l\'application</span>':''}${!u.version?' <span class="chip idle">non rapportée par un updater antérieur</span>':''}</dd>
+      <dt>Dernière bascule</dt><dd class="mono">${esc(u.from||'—')} → ${esc(u.to||'—')}</dd>
       <dt>Message</dt><dd>${esc(u.message||'—')}</dd>
       <dt>Dernier battement</dt><dd>${u.heartbeat_age_seconds==null?'—':u.heartbeat_age_seconds+' s'}</dd>
       <dt>Sauvegarde avant mise à jour</dt><dd class="mono">${esc(u.directory||'')}</dd></dl>`;
