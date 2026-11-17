@@ -84,6 +84,9 @@ async def test_collection_reads_hashrate_through_ssh_relay():
     machine_id = seed_machine(target, "athlon-3000g-c4")
     from app import collector
 
+    # Le test d'échec gèle le mineur : on le réveille pour rester idempotent.
+    await _ssh(target, "pkill -CONT -f srbminer_compute")
+
     result = await collector.collect_machine(machine_id)
     assert result["online"] is True, result
     assert result["api_port"] == 21550, result
