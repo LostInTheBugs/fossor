@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app import auto_update, updater_client
+from app import auto_update, update_checker, updater_client
 
 PARIS = ZoneInfo("Europe/Paris")
 
@@ -224,7 +224,20 @@ def test_window_validation():
 
 
 # ── Déclencheur automatique ────────────────────────────────────────────
-def update_available(target="2026.11.004", installed="2026.11.003-dev"):
+def next_release(installed: str) -> str:
+    """Version suivante (``NNN + 1``) de la version installée.
+
+    2026.11.004-c1 : la cible ne doit jamais être une valeur fixe — sur le clone
+    du tag elle valait la version installée, donc « déjà à jour » et le test
+    échouait.  Le correctif se vérifie sur ``main`` **et** sur un tag.
+    """
+    year, month, build = (int(part) for part in installed.split("-")[0].split("."))
+    return f"{year}.{month}.{build + 1:03d}"
+
+
+def update_available(target=None, installed=None):
+    installed = installed or update_checker.installed_version()
+    target = target or next_release(installed)
     return {"update_available": True, "latest_version": target, "installed_version": installed}
 
 
@@ -258,12 +271,13 @@ def test_auto_update_tick_deposits_request_once(client, tmp_path):
         original = auto_update.should_trigger
 
         monkeypatch_status = update_available()
+        target = monkeypatch_status["latest_version"]
         import app.update_checker as checker
 
         saved_state = dict(checker.STATE)
         checker.STATE.update({
-            "latest_version": monkeypatch_status["latest_version"],
-            "releases": [{"version": "2026.11.004", "name": "2026.11.004", "body": "",
+            "latest_version": target,
+            "releases": [{"version": target, "name": target, "body": "",
                           "published_at": None, "url": None}],
         })
         try:
