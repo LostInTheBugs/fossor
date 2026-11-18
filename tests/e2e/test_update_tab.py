@@ -36,6 +36,9 @@ async def test_update_screen_without_updater(e2e_server):
         await page.wait_for_url("**/dashboard", timeout=15000)
 
         await page.goto(E2E_URL + "/settings", wait_until="domcontentloaded")
+        # §4.19 : la carte de mise à jour vit dans le sous-onglet « Mise à jour ».
+        await page.locator("#tabUpdate").click()
+        await page.wait_for_selector("#panel-update", state="visible", timeout=10000)
         await page.wait_for_selector("#updBanner", state="visible", timeout=10000)
 
         # 1. Sans compagnon : bandeau explicite et bouton désactivé.

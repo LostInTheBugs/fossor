@@ -776,12 +776,13 @@ $('#enSaveMachines').addEventListener('click',async()=>{
 document.querySelectorAll('.subtab').forEach(button=>{
   button.addEventListener('click',()=>{
     document.querySelectorAll('.subtab').forEach(b=>b.classList.toggle('active',b===button));
-    ['panel-general','panel-ai','panel-energy','panel-notifications'].forEach(id=>{
+    ['panel-general','panel-ai','panel-energy','panel-notifications','panel-update'].forEach(id=>{
       $('#'+id).style.display=(id===button.dataset.panel)?'block':'none';
     });
     if(button.dataset.panel==='panel-ai')loadAI();
     if(button.dataset.panel==='panel-energy')loadEnergy();
     if(button.dataset.panel==='panel-notifications')loadNotifications();
+    if(button.dataset.panel==='panel-update')loadUpdate();
   });
 });
 

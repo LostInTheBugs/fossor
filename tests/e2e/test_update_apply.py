@@ -157,6 +157,10 @@ async def test_update_button_really_posts_and_writes_request(update_server):
 
         await _login(page, update_server)
 
+        # §4.19 : la carte de mise à jour vit dans le sous-onglet « Mise à jour ».
+        await page.locator("#tabUpdate").click()
+        await page.wait_for_selector("#panel-update", state="visible", timeout=10000)
+
         # Le bouton de mise à jour est un élément distinct de celui de l'import.
         assert await page.locator("#updateApplyBtn").count() == 1
         assert await page.locator("#importApplyBtn").count() == 1

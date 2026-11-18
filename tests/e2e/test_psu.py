@@ -1,16 +1,14 @@
 """E2E — fiche « Alimentations » (§4.2 bis) : deux PSU, GPU réparti, alerte orange."""
 
-import sqlite3
-import uuid
-from datetime import datetime, timezone
+import json
 
 import pytest
 from playwright.async_api import async_playwright
 
-from tests.e2e.conftest import E2E_DATA_DIR, E2E_URL
+from tests.e2e.conftest import E2E_URL
+from tests.e2e.factory import create_machine, insert_device
 
 ADMIN_PASSWORD = "adminpass"
-DB_PATH = f"{E2E_DATA_DIR}/fossor.db"
 
 
 @pytest.mark.e2e
@@ -36,32 +34,11 @@ async def test_psu_section_two_psus_split_gpu_and_orange_alert(e2e_server):
         await page.goto(E2E_URL + "/machines", wait_until="domcontentloaded")
         await page.wait_for_load_state("networkidle")
 
-        machine_id = await page.evaluate(
-            """async () => {
-                const res = await fetch('/api/machines', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({name: 'e2e-psu', host: '127.0.0.1', ssh_port: 22,
-                        ssh_user: 'tester', auth_type: 'password', usage: 'both', enabled: true})
-                });
-                if (!res.ok) throw new Error('machine create failed ' + res.status);
-                return (await res.json()).id;
-            }"""
-        )
+        machine = await create_machine(page, "e2e-psu", host="127.0.0.1")
+        machine_id = machine["id"]
         # No SSH: the GPU is seeded in the e2e database, like the collector would.
-        conn = sqlite3.connect(DB_PATH, timeout=15)
-        try:
-            now = datetime.now(timezone.utc).isoformat()
-            cursor = conn.execute(
-                "INSERT INTO devices (uuid, machine_id, kind, \"index\", vendor, model, "
-                "present, enabled_for_mining, integrated, occupied_external, created_at, updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                (str(uuid.uuid4()), machine_id, "gpu", 0, "NVIDIA",
-                 "NVIDIA GeForce RTX 3070", 1, 1, 0, 0, now, now),
-            )
-            device_id = int(cursor.lastrowid)
-            conn.commit()
-        finally:
-            conn.close()
+        device_id = insert_device(machine_id, kind="gpu", vendor="NVIDIA",
+                                  model="NVIDIA GeForce RTX 3070")
 
         await page.reload(wait_until="domcontentloaded")
         await page.wait_for_selector(f"#psuName-{machine_id}", timeout=15000)
@@ -98,6 +75,17 @@ async def test_psu_section_two_psus_split_gpu_and_orange_alert(e2e_server):
         await page.select_option(f'[data-assign-second="{device_id}"]', str(psus[1]))
         await page.fill(f'[data-assign-split="{device_id}"]', "75")
         await page.locator("button:has-text('Affecter')").first.click()
+        # Attente explicite du retour d'écran : la requête est partie.
+        await page.wait_for_function(
+            "() => /Affectation/.test((document.querySelector('#toast') || {}).textContent || '')",
+            timeout=15000,
+        )
+        power = await page.evaluate(
+            "async (id) => (await (await fetch('/api/machines/' + id + '/power')).json())",
+            machine_id,
+        )
+        print("PSU_TOAST:", await page.inner_text("#toast"))
+        print("PSU_POWER:", json.dumps(power, ensure_ascii=False))
         await page.wait_for_selector('[data-psu-status="orange"]', timeout=15000)
 
         # 3. Les barres existent, l'alerte orange est visible.

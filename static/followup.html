@@ -16,6 +16,13 @@ header h1{font-size:26px}
 .nav-tabs a:hover{color:var(--txt)}
 .nav-tabs a.active{background:var(--card);border-color:var(--border);color:var(--txt)}
 select{background:var(--card);color:var(--txt);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-family:inherit;font-size:13px}
+.tokens{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
+.token{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+.token .head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.token .ticker{font-size:15px;font-weight:700}
+.token .algo{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.3px}
+.token .hs{font-size:19px;font-weight:700;margin-top:4px}
+.token .meta{color:var(--muted);font-size:11px;margin-top:3px}
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px}
 .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:10px}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
@@ -42,6 +49,8 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
     <select id="machineSelect" aria-label="Machine"></select>
   </header>
   <nav id="nav"></nav>
+
+  <div class="card"><h2>Hashrate par token</h2><div class="tokens" id="tokenCards"></div></div>
 
   <div class="card">
     <div id="machineTitle" style="font-size:18px;font-weight:700">—</div>
@@ -162,11 +171,54 @@ async function loadPower(m) {
   } catch (err) { /* pas de panneau PSU : on garde le texte */ }
 }
 
+function tokenGroups(machines) {
+  const groups = {};
+  machines.forEach((m) => {
+    let list = m.coin_groups || [];
+    if (!list.length && (m.coin || m.algo || m.total_hashrate_hs)) {
+      list = [{ coin: m.coin, algo: m.algo, hashrate_hs: m.total_hashrate_hs,
+                miners: Math.max(1, (m.external_miners || []).length), workers: 0 }];
+    }
+    list.forEach((g) => {
+      const coin = (g.coin || "").trim();
+      const key = (coin || "?").toUpperCase();
+      const entry = groups[key] || (groups[key] = {
+        coin: coin, algo: (g.algo || "").trim(), hs: 0, machines: 0, miners: 0, workers: 0
+      });
+      entry.machines += 1;
+      entry.miners += Number(g.miners || 0);
+      entry.workers += Number(g.workers || 0);
+      entry.hs += Number(g.hashrate_hs || 0);
+      if (!entry.algo && g.algo) entry.algo = g.algo;
+    });
+  });
+  return Object.values(groups).sort((a, b) => (b.hs - a.hs) || a.coin.localeCompare(b.coin));
+}
+
+function renderTokens(machines) {
+  const box = $("#tokenCards");
+  const groups = tokenGroups(machines);
+  if (!groups.length) {
+    box.innerHTML = '<div class="empty">Aucun token miné pour le moment.</div>';
+    return;
+  }
+  box.innerHTML = groups.map((g) => {
+    const net = g.machines + (g.machines > 1 ? " machines" : " machine") + " · " +
+      g.miners + (g.miners > 1 ? " mineurs" : " mineur") +
+      (g.workers ? " · " + g.workers + " workers" : "") + " · gain inconnu";
+    return '<div class="token"><div class="head"><span class="ticker">' +
+      esc(g.coin ? g.coin.toUpperCase() : "Coin inconnu") + '</span><span class="algo">' +
+      esc(g.algo || "") + '</span></div><div class="hs">' + fmtHs(g.hs) +
+      '</div><div class="meta">' + net + "</div></div>";
+  }).join("");
+}
+
 async function load() {
   const res = await fetch("/api/metrics/live", { credentials: "include" });
   if (res.status === 401) { window.location.href = "/"; return; }
   const live = await res.json();
   MACHINES = Array.isArray(live) ? live : (live.machines || []);
+  renderTokens(MACHINES);
   const wanted = new URLSearchParams(window.location.search).get("machine");
   const select = $("#machineSelect");
   select.innerHTML = MACHINES.map((m) => '<option value="' + esc(m.uuid) + '">' + esc(m.name) + "</option>").join("");

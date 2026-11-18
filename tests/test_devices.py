@@ -268,13 +268,41 @@ class TestDeviceApi:
         assert ("detect", "ok") in actions
         assert ("device-update", "ok") in actions
 
-    async def test_patch_device_requires_enabled_field(self, client, monkeypatch):
+    async def _device(self, client, monkeypatch):
         machine_id = await self._create_machine(client)
         monkeypatch.setattr("app.ssh_client.ssh_detect_hw", self._fake_detect("detect_hw_no_gpu.txt"))
         devices = (await client.post(f"/api/machines/{machine_id}/detect")).json()["devices"]
-        r = await client.patch(f"/api/devices/{devices[0]['id']}", json={"model": "x"})
+        return devices[0]
+
+    async def test_patch_device_requires_known_field(self, client, monkeypatch):
+        device = await self._device(client, monkeypatch)
+        r = await client.patch(f"/api/devices/{device['id']}", json={"model": "x"})
         assert r.status_code == 400
-        assert r.json()["detail"] == "enabled_for_mining is required"
+        assert r.json()["detail"] == "enabled_for_mining, role, boost_pool ou default_token_id attendu"
+
+    async def test_patch_device_enabled_for_mining_only(self, client, monkeypatch):
+        device = await self._device(client, monkeypatch)
+        r = await client.patch(f"/api/devices/{device['id']}", json={"enabled_for_mining": False})
+        assert r.status_code == 200
+        assert r.json()["enabled_for_mining"] is False
+
+    async def test_patch_device_role_only(self, client, monkeypatch):
+        device = await self._device(client, monkeypatch)
+        r = await client.patch(f"/api/devices/{device['id']}", json={"role": "default_only"})
+        assert r.status_code == 200
+        assert r.json()["role"] == "default_only"
+
+    async def test_patch_device_boost_pool_only(self, client, monkeypatch):
+        device = await self._device(client, monkeypatch)
+        r = await client.patch(f"/api/devices/{device['id']}", json={"boost_pool": True})
+        assert r.status_code == 200
+        assert r.json()["boost_pool"] is True
+
+    async def test_patch_device_default_token_only(self, client, monkeypatch):
+        device = await self._device(client, monkeypatch)
+        r = await client.patch(f"/api/devices/{device['id']}", json={"default_token_id": None})
+        assert r.status_code == 200
+        assert r.json()["default_token_id"] is None
 
     async def test_patch_unknown_device(self, client):
         r = await client.patch("/api/devices/9999", json={"enabled_for_mining": True})
