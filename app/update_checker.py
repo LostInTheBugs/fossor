@@ -215,6 +215,16 @@ def status() -> dict:
     }
 
 
+def known_versions() -> list[str]:
+    """Tags publiés connus du dernier ``check`` (2026.11.004-c5).
+
+    ``status()`` ne liste que les versions plus récentes que celle installée
+    (``notes``) ; une cible explicitement demandée doit pouvoir être validée
+    même si elle est plus ancienne (retour arrière).
+    """
+    return [str(release.get("version")) for release in STATE["releases"]]
+
+
 async def _loop() -> None:
     await asyncio.sleep(random.uniform(JITTER_MIN, JITTER_MAX))
     while True:

@@ -57,9 +57,12 @@ def test_power_source_order_is_api_then_rapl_then_typed_then_none():
     assert typed["power_source"] == "saisie (machines.cpu_power_w)"
     assert typed["power_w"] == 65.0
 
+    # 2026.11.004-c5 : sans mesure ni saisie, le TDP du modèle — 65 W générique
+    # quand le modèle est inconnu — et la valeur se déclare estimée.
     none = cpu_state_with({"state": {}})
-    assert none["power_source"] == "non mesurée"
-    assert none["power_w"] is None
+    assert none["power_source"] == "estimation générique 65 W"
+    assert none["power_w"] == 65.0
+    assert none["power_estimated"] is True
 
 
 async def test_cost_per_day_month_and_per_coin(client):
