@@ -18,6 +18,26 @@
   au tableau de bord ; notifications de démarrage, fin, échec et retour au défaut.
 - La simulation reste le défaut : le cycle se déroule, journalise les commandes
   qui seraient lancées et marque le retour vérifié comme simulé.
+- UX-1 (§4.19) : tableau de bord d'état de santé (une pastille par machine avec la
+  raison en une ligne, totaux en tête), page « Suivi » détaillée, rôles des devices
+  (token par défaut uniquement / + spec mining, pool de boost), onglet « Log ».
+- Configuration → Mise à jour refondu (§4.19) : versions de l'application **et** de
+  l'updater, dernière version, notes manquantes ; fréquence de vérification en base
+  (Jamais / 1 h / 6 h / 12 h / 24 h, 1 h par défaut — la variable d'environnement ne
+  sert plus que de défaut au premier démarrage) ; application automatique on/off
+  (désactivée par défaut) avec plage horaire optionnelle ; version ignorée après un
+  retour arrière et bouton « Ne plus l'ignorer » ; boutons « Revenir à la version
+  précédente » (laquelle est indiquée), « Oublier la version précédente », « Annuler
+  la demande en attente » et « Mettre à jour vers… » (liste des versions publiées,
+  plus la dernière) ; état du compagnon (présent, battement, version) ; l'historique
+  des bascules vit désormais dans Log → Historique des mises à jour.
+- Algorithmes des coins de base corrigés : PRL pearlhash, KSH yespower, WAM RandomX,
+  BIG yespower. L'écran Suivi affiche l'algorithme de la commande du mineur s'il y
+  est, sinon celui du catalogue, et « inconnu » au lieu d'une valeur devinée.
+- Tableau de bord : la carte « Campagne en cours » ne reste plus sur « Chargement… »
+  (elle dit « Aucune campagne en cours », ou l'erreur) et « Coût / jour » /
+  « Revenu / jour » portent leur raison (« aucune machine suivie », « aucune mesure
+  de puissance », « prix inconnu ») au lieu d'un tiret muet.
 
 ## 2026.11.004-c6 — 2026-11-18
 - `GET /api/machines/<id>/power` : la puissance CPU vient de l'état CPU écrit par
