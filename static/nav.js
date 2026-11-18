@@ -10,6 +10,7 @@
     ["/dashboard", "📊 Tableau de bord"],
     ["/machines", "🖥️ Machines"],
     ["/profiles", "⛏️ Profils"],
+    ["/campaigns", "🎯 Campagnes"],
     ["/mined", "🪙 Tokens minés"],
     ["/settings", "⚙️ Configuration"],
     ["/audit", "📋 Audit Log"]

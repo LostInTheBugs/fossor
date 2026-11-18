@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026.11.005 — 2026-11-18
+- Campagnes de minage (§4.7) : modèle `campaigns`, `campaign_devices` et journal
+  `campaign_events` ; machine à états proposée → approuvée → en cours → arrêt →
+  terminée | échec | annulée, transitions interdites refusées (409).
+- Planificateur en boucle unique : démarrage au `start_at` (arrêt du token par
+  défaut lancé par Fossor, puis profil de campagne), arrêt au `end_at` ou sur
+  demande, retour au token par défaut **vérifié** (hashrate > 0, délai
+  configurable 5 min, 2 essais) puis `done` avec le gain (solde de fin − début) et
+  le coût électrique à la prise. Reprise après redémarrage par le journal : une
+  étape franchie n'est jamais rejouée.
+- Contrôles avant démarrage : device déjà engagé, device tenu par un mineur
+  externe (refus explicite, cohabitation HiveOS en 3e), charge PSU > 80 % sans
+  confirmation, profil invalide, machine injoignable.
+- API `/api/campaigns` (CRUD, `approve`/`start`/`stop`/`cancel`, `options`) auditée ;
+  page « Campagnes » (création, actions, journal) et carte « campagne en cours »
+  au tableau de bord ; notifications de démarrage, fin, échec et retour au défaut.
+- La simulation reste le défaut : le cycle se déroule, journalise les commandes
+  qui seraient lancées et marque le retour vérifié comme simulé.
+
 ## 2026.11.004-c6 — 2026-11-18
 - `GET /api/machines/<id>/power` : la puissance CPU vient de l'état CPU écrit par
   le collecteur (`machine_status.cpu_json`), qui porte sa source. Une valeur

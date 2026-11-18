@@ -441,3 +441,81 @@ class MachineComponent(Base):
     psu_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("psus.id"), nullable=True)
     created_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class Campaign(Base):
+    """Campagne de minage (§4.7) : un profil, des devices, une fenêtre horaire.
+
+    Le statut suit la machine à états de :mod:`app.campaigns` — aucune écriture
+    ne le change sans passer par elle.  Les colonnes ``restore_*`` et
+    ``attempts`` sont la mémoire du planificateur : après un redémarrage du
+    conteneur, il relit l'état et reprend l'étape en cours au lieu de la rejouer.
+    """
+
+    __tablename__ = "campaigns"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    uuid: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    coin: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey("miner_profiles.id"), nullable=False)
+    start_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    # NULL = sans limite (valeur par défaut pour une campagne CPU, §4.7).
+    end_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="proposed", server_default="proposed", index=True)
+    origin: Mapped[str] = mapped_column(String(10), default="manual", server_default="manual")
+    # Arrêt demandé à la main avant l'heure de fin.
+    stop_requested: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # §4.2 bis : démarrage au-delà de 80 % de charge PSU accepté explicitement.
+    confirm_overload: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    start_balance: Mapped[float | None] = mapped_column(Float, nullable=True)
+    end_balance: Mapped[float | None] = mapped_column(Float, nullable=True)
+    balance_unit: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    balance_source: Mapped[str] = mapped_column(String(60), default="", server_default="")
+    gain: Mapped[float | None] = mapped_column(Float, nullable=True)
+    power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    tariff_eur_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cost_eur: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Retour au token par défaut : délai, échéance de la tentative en cours.
+    restore_timeout_s: Mapped[int] = mapped_column(Integer, default=300, server_default="300")
+    restore_deadline: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # None = pas encore vérifié ; 0/1 = vérifié (1 = hashrate revenu).
+    verified: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    ended_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class CampaignDevice(Base):
+    """Device engagé par une campagne : une machine, et le device précis."""
+
+    __tablename__ = "campaign_devices"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    campaign_id: Mapped[int] = mapped_column(Integer, ForeignKey("campaigns.id"), nullable=False, index=True)
+    machine_id: Mapped[int] = mapped_column(Integer, ForeignKey("machines.id"), nullable=False)
+    device_uuid: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    kind: Mapped[str] = mapped_column(String(10), default="gpu", server_default="gpu")
+    label: Mapped[str] = mapped_column(String(120), default="", server_default="")
+
+
+class CampaignEvent(Base):
+    """Journal d'événements d'une campagne : horodaté, acteur, simulé ou non.
+
+    Sert aussi d'**idempotence** au planificateur : une étape déjà écrite en
+    ``result="ok"`` n'est jamais rejouée, y compris après un redémarrage.
+    """
+
+    __tablename__ = "campaign_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    campaign_id: Mapped[int] = mapped_column(Integer, ForeignKey("campaigns.id"), nullable=False, index=True)
+    ts: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+    actor: Mapped[str] = mapped_column(String(20), default="system", server_default="system")
+    kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    message: Mapped[str] = mapped_column(Text, default="", server_default="")
+    result: Mapped[str] = mapped_column(String(10), default="ok", server_default="ok")
+    simulated: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)

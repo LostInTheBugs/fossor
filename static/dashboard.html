@@ -80,6 +80,9 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
     <div class="box"><span class="k">Dernière collecte</span><span class="v" id="sAge">—</span></div>
   </div>
 
+  <h2 class="tokens-title">Campagne en cours</h2>
+  <div class="token" id="campaignCard" style="margin-bottom:20px"><span class="muted">Chargement…</span></div>
+
   <h2 class="tokens-title">Hashrate par token</h2>
   <div class="tokens" id="tokenCards"></div>
 
@@ -330,6 +333,38 @@ function render(machines, energy) {
   $("#stamp").textContent = "Mis à jour à " + new Date().toLocaleTimeString("fr-FR");
 }
 
+function campaignHs(value) {
+  if (value === null || value === undefined) { return "—"; }
+  const units = ["H/s", "kH/s", "MH/s", "GH/s", "TH/s", "PH/s"];
+  let i = 0, v = Number(value);
+  while (v >= 1000 && i < units.length - 1) { v /= 1000; i += 1; }
+  return v.toFixed(i === 0 ? 0 : 2) + " " + units[i];
+}
+
+async function loadCampaign() {
+  const box = $("#campaignCard");
+  if (!box) { return; }
+  try {
+    const res = await fetch("/api/campaigns", { headers: { "Accept": "application/json" } });
+    if (!res.ok) { return; }
+    const data = await res.json();
+    const c = data.current;
+    if (!c) {
+      box.innerHTML = '<span class="muted">Aucune campagne en cours.</span>';
+      return;
+    }
+    const devs = (c.devices || []).map((d) => d.machine_name + " · " + d.label).join(", ");
+    const cost = c.cost_running_eur != null ? c.cost_running_eur.toFixed(2) + " €" : "—";
+    box.innerHTML =
+      '<div class="head"><span class="ticker">' + esc(c.coin) + '</span>' +
+      '<span class="algo">' + esc(c.profile_name || "") + '</span></div>' +
+      '<div class="hs">' + campaignHs(c.hashrate_hs) + '</div>' +
+      '<div class="meta">' + esc(devs) + '</div>' +
+      '<div class="meta">' + esc(c.status_label) + ' · coût ' + cost +
+      ' · fin ' + (c.end_at ? new Date(c.end_at).toLocaleString("fr-FR") : "sans limite") + '</div>';
+  } catch (err) { /* pas de campagnes : carte discrète */ }
+}
+
 async function load() {
   try {
     const [res, energyRes] = await Promise.all([
@@ -354,7 +389,8 @@ $("#logoutBtn").addEventListener("click", async () => {
 });
 
 load();
-setInterval(load, 30000);
+loadCampaign();
+setInterval(function () { load(); loadCampaign(); }, 30000);
 </script>
 </body>
 </html>

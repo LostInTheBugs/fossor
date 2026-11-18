@@ -43,6 +43,15 @@ def audit_page(request: Request):
     return HTMLResponse(html)
 
 
+@router.get("/campaigns", response_class=HTMLResponse)
+def campaigns_page(request: Request):
+    """Écran « Campagnes » (§4.7)."""
+    if not get_current_user(request):
+        return RedirectResponse(url="/", status_code=303)
+    require_login(request)
+    return HTMLResponse((STATIC_DIR / "campaigns.html").read_text())
+
+
 @router.get("/profiles", response_class=HTMLResponse)
 def profiles_page(request: Request):
     """Écran « Profils de minage » (§4.5)."""
