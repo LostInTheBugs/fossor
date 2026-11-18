@@ -1,0 +1,71 @@
+{
+ "model": "NVIDIA GeForce RTX 3070",
+ "url": "https://whattomine.com/gpus/48-nvidia-geforce-rtx-3070",
+ "fetched_at": "2026-11-18",
+ "rows": [
+  {
+   "coin_id": 469,
+   "coin": "Pearl",
+   "tag": "PRL",
+   "algo": "Pearl",
+   "hashrate": "69.00 Th/s",
+   "power_w": 120.0
+  },
+  {
+   "coin_id": 473,
+   "coin": "Quantus",
+   "tag": "QUANTUS",
+   "algo": "QPoW",
+   "hashrate": "300.00 Mh/s",
+   "power_w": 120.0
+  },
+  {
+   "coin_id": 438,
+   "coin": "EPIC-ProgPow",
+   "tag": "EPIC",
+   "algo": "ProgPow",
+   "hashrate": "27.40 Mh/s",
+   "power_w": 180.0
+  },
+  {
+   "coin_id": 167,
+   "coin": "Zclassic",
+   "tag": "ZCL",
+   "algo": "EquihashZero",
+   "hashrate": "55.00 h/s",
+   "power_w": 180.0
+  },
+  {
+   "coin_id": 451,
+   "coin": "Tari-Cuckaroo29",
+   "tag": "XTM",
+   "algo": "Cuckaroo29",
+   "hashrate": "6.00 h/s",
+   "power_w": 120.0
+  },
+  {
+   "coin_id": 330,
+   "coin": "Zano",
+   "tag": "ZANO",
+   "algo": "ProgPowZ",
+   "hashrate": "27.40 Mh/s",
+   "power_w": 180.0
+  },
+  {
+   "coin_id": 459,
+   "coin": "Xelis",
+   "tag": "XEL",
+   "algo": "Xelishashv3",
+   "hashrate": "8.00 kh/s",
+   "power_w": 100.0
+  },
+  {
+   "coin_id": 175,
+   "coin": "Firo",
+   "tag": "FIRO",
+   "algo": "FiroPow",
+   "hashrate": "25.00 Mh/s",
+   "power_w": 150.0
+  }
+ ]
+}

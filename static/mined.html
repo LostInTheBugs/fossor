@@ -106,6 +106,7 @@ pre.out{background:#0e1218;border:1px solid var(--border);border-radius:8px;padd
   </section>
 
   <!-- ── Catalogue ────────────────────────────────────────────── -->
+  <!-- ── Token par défaut (§4.19) ─────────────────────────────── -->
   <section class="panel" id="panel-default">
     <div class="card">
       <h2>Token par défaut</h2>
@@ -113,7 +114,27 @@ pre.out{background:#0e1218;border:1px solid var(--border);border-radius:8px;padd
       <div class="field"><label>Profil par défaut global</label><select id="defProfile"><option value="">— aucun —</option></select></div>
       <div class="actions"><button class="btn outline" id="defSave">Enregistrer le profil par défaut</button><span id="defState" class="chip off">—</span></div>
     </div>
+
+    <div class="card">
+      <h2>Aide au choix — rentabilité par device</h2>
+      <div class="sub" id="rentSources">Chargement des sources…</div>
+      <div class="sub" id="rentHint">Classement net/jour : revenu WhatToMine − électricité au tarif §4.15. Choisir un token ici ne lance rien : il sera pris en compte au prochain retour au défaut.</div>
+      <div id="rentDevices"></div>
+      <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:14px">
+        <label style="flex-direction:column;align-items:flex-start">Autre coin du catalogue
+          <select id="rentOther" style="min-width:220px"><option value="">— choisir —</option></select>
+        </label>
+        <label style="flex-direction:column;align-items:flex-start">Type
+          <select id="rentOtherKind"><option value="gpu">GPU</option><option value="cpu">CPU</option></select>
+        </label>
+        <label style="flex-direction:column;align-items:flex-start">Modèle
+          <input id="rentOtherModel" placeholder="NVIDIA GeForce RTX 3070" style="min-width:240px">
+        </label>
+        <button class="btn" id="rentOtherSave">Appliquer ce coin</button>
+      </div>
+    </div>
   </section>
+
 
   <section class="panel" id="panel-coins">
     <form class="inline" id="coinForm">
@@ -430,5 +451,119 @@ $('#importForm').addEventListener('submit', async event => {
   }
 })();
 </script>
+
+<script>
+// ── Aide au choix du token par défaut (§4.19) ────────────────────
+let rentData = null;
+
+function rentRows(dev) {
+  if (!dev.rows || !dev.rows.length) {
+    return `<div class="sub">${esc(dev.error || 'Aucune donnée pour ce modèle.')}</div>`;
+  }
+  const rows = dev.rows.map(r => `
+    <tr class="${r.current ? 'rent-current' : ''}">
+      <td class="num">${r.rank}</td>
+      <td>${esc(r.coin)} <span class="mono">${esc(r.tag || '')}</span>${r.current ? ' <span class="chip on">actuel</span>' : ''}</td>
+      <td>${esc(r.algo || '—')}</td>
+      <td class="num">${esc(r.hashrate_label || nf(r.hashrate_hs, 0))}</td>
+      <td class="num">${nf(r.power_w, 0)} W</td>
+      <td class="num">${fmtEur(r.revenue_eur_day)}</td>
+      <td class="num">${fmtEur(r.cost_eur_day)}</td>
+      <td class="num" style="font-weight:600;color:${(r.net_eur_day || 0) > 0 ? 'var(--green,#2e7d32)' : 'var(--red,#c62828)'}">${fmtEur(r.net_eur_day)}</td>
+      <td><button class="btn sm" onclick="chooseToken('${esc(dev.kind)}','${esc(dev.model)}','${esc(r.tag || '')}')">Définir</button></td>
+    </tr>`).join('');
+  return `<div class="card pad0" style="margin-top:10px">
+    <table>
+      <thead><tr><th class="num">#</th><th>Coin</th><th>Algo</th><th class="num">Hashrate attendu</th><th class="num">Conso</th><th class="num">Revenu/j</th><th class="num">Élec/j</th><th class="num">Net/j</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+}
+
+async function loadRentability() {
+  const box = $('#rentDevices');
+  if (!box) return;
+  box.innerHTML = '<div class="sub">Lecture de WhatToMine…</div>';
+  let data;
+  try {
+    const r = await fetch('/api/tokens/rentability');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    data = await r.json();
+  } catch (e) {
+    $('#rentSources').textContent = 'Sources indisponibles : ' + e.message;
+    box.innerHTML = '<div class="sub">Le classement ne peut pas être calculé pour le moment ; la page reste utilisable.</div>';
+    return;
+  }
+  rentData = data;
+  const src = (data.sources || []).map(s =>
+    `<span class="chip ${s.ok ? 'on' : 'off'}" title="${esc(s.detail || '')}">${esc(s.name)}${s.fetched_at ? ' · ' + esc(s.fetched_at) : ''}</span>`
+  ).join(' ');
+  $('#rentSources').innerHTML = src + ` <span class="mono">· BTC ${fmtEur(data.btc_eur)} · ${esc(data.tariff_label || '')}</span>`;
+  if (!data.devices || !data.devices.length) {
+    box.innerHTML = '<div class="sub">Aucun device GPU/CPU détecté. Ajoutez une machine et lancez « Détecter le matériel ».</div>';
+    return;
+  }
+  box.innerHTML = data.devices.map(dev => `
+    <div class="card" data-rent-model="${esc(dev.model)}">
+      <div class="card-head"><div>
+        <div class="name">${esc(dev.model)} <span class="chip">${esc(dev.kind.toUpperCase())}</span>
+          ${dev.method === 'mesure' ? '<span class="chip">hashrate mesuré</span>' : ''}</div>
+        <div class="sub">Coin actuel : ${esc(dev.current_coin || '—')} · source ${esc(dev.source_date || '—')}${dev.proposal ? ' · proposition : ' + esc(dev.proposal.tag || '') : ''}</div>
+      </div></div>
+      ${rentRows(dev)}
+      <div class="actions">
+        ${dev.proposal ? `<button class="btn" onclick="chooseToken('${esc(dev.kind)}','${esc(dev.model)}','${esc(dev.proposal.tag || '')}')">Valider ${esc(dev.proposal.tag || '')} pour ce type</button>` : ''}
+        ${(rentData.devices.find(d => d.model === dev.model) || {}).error ? `<span class="sub">${esc(dev.error)}</span>` : ''}
+      </div>
+    </div>`).join('');
+  const other = $('#rentOther');
+  try {
+    const r = await fetch('/api/coins');
+    if (r.ok) {
+      const coins = await r.json();
+      const list = Array.isArray(coins) ? coins : (coins.coins || []);
+      other.innerHTML = '<option value="">— choisir —</option>' + list
+        .filter(c => c.ticker)
+        .map(c => `<option value="${esc(c.ticker)}">${esc(c.ticker)} — ${esc(c.name || '')}</option>`).join('');
+    }
+  } catch (e) { /* la liste hors ligne reste vide, sans casser la page */ }
+}
+
+async function chooseToken(kind, model, ticker) {
+  const body = {kind, model, ticker, scope: 'type'};
+  const dev = (rentData && rentData.devices || []).find(d => d.model === model) || {};
+  const sel = $('#rentScope_' + (dev.kind || kind));
+  if (sel && sel.value && sel.value !== 'type') body.scope = 'device';
+  if (body.scope === 'device' && dev.devices && dev.devices.length) {
+    // Un seul device visé : le premier du modèle choisi par l'opérateur.
+    if (dev.device_uuid) body.device_uuid = dev.device_uuid;
+  }
+  if (!ticker) { toast('Choisissez un coin', true); return; }
+  try {
+    const r = await fetch('/api/tokens/default', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.detail || ('HTTP ' + r.status));
+    toast('Token par défaut enregistré : ' + ticker + ' (rien n’a été lancé)');
+    loadRentability();
+  } catch (e) { toast('Refus : ' + e.message, true); }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const tab = document.querySelector('button[data-panel="default"]');
+  if (tab) tab.addEventListener('click', () => loadRentability());
+  const btn = $('#rentOtherSave');
+  if (btn) btn.addEventListener('click', () => {
+    const ticker = $('#rentOther').value;
+    const model = $('#rentOtherModel').value.trim();
+    const kind = $('#rentOtherKind').value;
+    if (!ticker || !model) { toast('Coin et modèle requis', true); return; }
+    chooseToken(kind, model, ticker);
+  });
+  const save = $('#defSave');
+  if (save) { /* le comportement existant est conservé */ }
+});
+</script>
+
 </body>
 </html>

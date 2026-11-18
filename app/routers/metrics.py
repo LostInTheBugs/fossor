@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -182,6 +184,14 @@ def metrics_live(
             total_w = sum(values) if values else None
 
         miners = _external_miners(machine)
+        # §4.20 : un ASIC n'a pas de device ; son état vit dans asic_json et
+        # alimente directement les totaux par coin (BTC, KAS).
+        asic_state = None
+        if getattr(machine, "machine_kind", "host") == "asic" and status and status.asic_json:
+            try:
+                asic_state = json.loads(status.asic_json)
+            except ValueError:
+                asic_state = None
         groups = _coin_groups(
             miners,
             status.coin if status else "",
@@ -211,6 +221,8 @@ def metrics_live(
             "uuid": machine.uuid,
             "name": machine.name,
             "host": machine.host,
+            "kind": getattr(machine, "machine_kind", "host") or "host",
+            "asic": asic_state,
             "os_kind": machine.os_kind,
             "usage": machine.usage,
             "enabled": machine.enabled,

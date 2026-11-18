@@ -21,6 +21,8 @@ from app.routers.psu import router as psu_router
 from app.routers.campaigns import router as campaigns_router
 from app.routers.ui import router as ui_router
 from app.routers.health import router as health_router
+from app.routers.asic import router as asic_router
+from app.routers.rentability import router as rentability_router
 from pathlib import Path
 
 app = FastAPI(title="Fossor")
@@ -53,6 +55,8 @@ app.include_router(psu_router)
 app.include_router(campaigns_router)
 app.include_router(ui_router)
 app.include_router(health_router)
+app.include_router(asic_router)
+app.include_router(rentability_router)
 
 
 @app.get("/mined", response_class=HTMLResponse)

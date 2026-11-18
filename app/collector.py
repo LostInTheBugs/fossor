@@ -610,6 +610,28 @@ async def _guarded(machine_id: int, semaphore: asyncio.Semaphore) -> dict[str, A
             return {"machine_id": machine_id, "online": False, "error": str(exc)}
 
 
+async def _collect_asic(machine_id: int) -> dict[str, Any]:
+    """§4.20 : un ASIC se lit par HTTP/TCP, jamais en SSH."""
+    from app.database import SessionLocal
+    from app.models import Machine
+    from app.routers.asic import probe_machine
+
+    db = SessionLocal()
+    try:
+        machine = db.get(Machine, machine_id)
+        if machine is None:
+            return {"machine_id": machine_id, "online": False, "error": "machine absente"}
+        state = await probe_machine(machine, db)
+        db.commit()
+        return {"machine_id": machine_id, "online": bool(state.get("online")), "asic": True}
+    except Exception as exc:  # pragma: no cover - défensif
+        db.rollback()
+        _mark_offline(machine_id, f"ASIC : {exc}")
+        return {"machine_id": machine_id, "online": False, "error": str(exc)}
+    finally:
+        db.close()
+
+
 async def collect_all() -> list[dict[str, Any]]:
     """One round over every enabled machine whose usage is not ``none``."""
     from app.database import SessionLocal
@@ -623,6 +645,15 @@ async def collect_all() -> list[dict[str, Any]]:
             .filter(Machine.enabled == True, Machine.usage != "none")  # noqa: E712
             .all()
         ]
+        asic_ids = [
+            row.id
+            for row in db.query(Machine)
+            .filter(
+                Machine.enabled == True,  # noqa: E712
+                Machine.machine_kind == "asic",
+            )
+            .all()
+        ]
     finally:
         db.close()
 
@@ -630,10 +661,12 @@ async def collect_all() -> list[dict[str, Any]]:
     semaphore = asyncio.Semaphore(MAX_PARALLEL)
     results = await asyncio.gather(
         *(_guarded(machine_id, semaphore) for machine_id in machine_ids),
+        *(_collect_asic(machine_id) for machine_id in asic_ids),
         return_exceptions=True,
     )
+    order = machine_ids + asic_ids
     out: list[dict[str, Any]] = []
-    for machine_id, result in zip(machine_ids, results):
+    for machine_id, result in zip(order, results):
         if isinstance(result, BaseException):
             out.append({"machine_id": machine_id, "online": False, "error": str(result)})
         else:

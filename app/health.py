@@ -124,9 +124,17 @@ def evaluate(
     """
     limits = normalize(limits)
     averages = averages or {}
+    # §4.20 : un ASIC a son propre calcul (domaines de hachage, % du nominal).
+    if machine.get("kind") == "asic" or machine.get("machine_kind") == "asic":
+        from app.asic import health as asic_health
+
+        return asic_health(machine.get("asic"))
+
     devices = [d for d in (machine.get("devices") or []) if d.get("present", True)]
     # §4.19 : un GPU intégré non sélectionné n'existe pas pour l'état de santé.
     devices = [d for d in devices if not (d.get("integrated") and not d.get("enabled_for_mining"))]
+    # Mineurs CPU du relevé : `cpu.miners[]` porte le hashrate de chacun.
+    cpu_miners = ((machine.get("cpu") or {}).get("miners") or [])
 
     if not machine.get("collected"):
         return _with_reason("orange", "jamais collectée")
@@ -147,8 +155,23 @@ def evaluate(
     for device in devices:
         if not device.get("enabled_for_mining"):
             continue
+        # §0.3 : un CPU peut faire tourner plusieurs mineurs (un par algo).  On
+        # ne juge plus `device.hashrate_hs` (None dès que deux algos tournent,
+        # c'est voulu) mais les mineurs CPU eux-mêmes, juste après.
+        if device.get("kind") == "cpu" and cpu_miners:
+            continue
         if not device.get("hashrate_hs"):
             return _with_reason("orange", f"{_device_label(device)} sans hashrate")
+
+    if cpu_miners:
+        fresh = [m for m in cpu_miners if m.get("hashrate_hs")]
+        if not fresh:
+            return _with_reason("orange", "CPU sans hashrate")
+        for miner in cpu_miners:
+            if miner.get("hashrate_hs"):
+                continue
+            label = (miner.get("coin") or miner.get("name") or "mineur CPU")
+            return _with_reason("orange", f"CPU : {label} sans hashrate", miner=label)
 
     total = machine.get("total_hashrate_hs")
     reference = averages.get("__machine__")

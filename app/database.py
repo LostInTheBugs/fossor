@@ -78,6 +78,27 @@ def init_db():
     _migrate_device_psu_split_meaning()
     _migrate_machine_os_detected_column()
     _migrate_device_role_columns()
+    _migrate_asic_columns()
+
+
+def _migrate_asic_columns():
+    """§4.20 : type de machine ASIC et état lu par les pilotes (JSON)."""
+    wanted = {
+        "machines": {
+            "machine_kind": "VARCHAR(10) NOT NULL DEFAULT 'host'",
+            "asic_driver": "VARCHAR(20)",
+            "asic_model": "VARCHAR(80)",
+            "asic_expected_hashrate_hs": "FLOAT",
+            "asic_power_w": "FLOAT",
+        },
+        "machine_status": {"asic_json": "TEXT"},
+    }
+    with engine.begin() as conn:
+        for table, columns in wanted.items():
+            existing = {row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
+            for name, ddl in columns.items():
+                if name not in existing:
+                    conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
 
 def _migrate_machine_os_detected_column():

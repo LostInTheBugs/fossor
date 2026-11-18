@@ -67,6 +67,13 @@ class Machine(Base):
     secret_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
     sudo: Mapped[SudoTypeEnum] = mapped_column(String(30), default=SudoTypeEnum.none)
     os_kind: Mapped[OsKindEnum] = mapped_column(String(20), default=OsKindEnum.other)
+    # §4.20 : « host » = machine jointe en SSH, « asic » = ASIC joint par IP,
+    # sans SSH et en lecture seule.
+    machine_kind: Mapped[str] = mapped_column(String(10), default="host", server_default="host")
+    asic_driver: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    asic_model: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    asic_expected_hashrate_hs: Mapped[float | None] = mapped_column(Float, nullable=True)
+    asic_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
     # §4.1 ter : type choisi à l'ajout (os_kind) vs OS réellement détecté.
     os_kind_detected: Mapped[str | None] = mapped_column(String(20), nullable=True)
     host_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -219,6 +226,8 @@ class MachineStatus(Base):
     # 2026.11.003-c7: CPU state + per-CPU-miner hashrate JSON (charge,
     # température, fréquence, puissance, source de chaque hashrate).
     cpu_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # §4.20 : état normalisé d'un ASIC (hashrate, domaine inactif, pool…).
+    asic_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class RawCollection(Base):
