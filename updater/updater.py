@@ -337,6 +337,15 @@ class DockerRunner:
         tag = (done.stdout or "").strip()
         return tag or None
 
+    def remove_image(self, reference: str) -> tuple[bool, str]:
+        """Supprime une image locale (« oublier la version précédente »)."""
+        done = self._run(["docker", "rmi", reference], timeout=PULL_TIMEOUT)
+        detail = (done.stdout or done.stderr or "").strip().splitlines()
+        text = detail[-1] if detail else ""
+        if done.returncode == 0 or "No such image" in text:
+            return True, text or "image absente"
+        return False, text or "docker rmi a échoué"
+
     def compose_up(self, restore: str | None = None) -> tuple[bool, str]:
         argv = self._compose("up", "-d")
         if restore:
@@ -537,6 +546,14 @@ class Updater:
             log("ignoré", f"demande {nonce[:8]}… déjà traitée")
             return "ignored"
 
+        action = str(request.get("action") or "update")
+        if action in ("rollback", "forget_previous"):
+            self._remember_nonce(request["nonce"])
+            self._history("request", request=request)
+            if action == "rollback":
+                return self._manual_rollback(request)
+            return self._forget_previous(request)
+
         target = request["target"].strip()
         image = self.config.image
         reference = f"{image}:{target}"
@@ -590,6 +607,7 @@ class Updater:
         self._transition("health_check", "health", f"attente de {target} sur /api/version")
         healthy, detail = self.wait_healthy(target)
         if healthy:
+            self._record_previous(previous, image)
             self._transition("done", "health", f"{target} répond ({detail})")
             self._self_update(target)
             self._history("finished", target=target)
@@ -699,6 +717,88 @@ class Updater:
         self._write_status()
         self._history("self_update", reference=reference, **{"from": previous, "to": target})
         log("auto-maj", f"compagnon en cours de bascule {previous} → {target} ({detail})")
+
+    def _record_previous(self, previous: str, image: str) -> None:
+        """Garde la version qu'on vient de quitter (retour arrière manuel possible)."""
+        if not previous or previous in ("latest", "") or previous == self.status.get("to"):
+            return
+        self.status["precedente"] = {
+            "version": previous,
+            "image": self.runner.image_present(f"{image}:{previous}"),
+        }
+
+    def _manual_rollback(self, request: dict) -> str:
+        """Retour manuel vers l'image conservée, avec la sauvegarde de base d'alors.
+
+        La sauvegarde restaurée est celle prise **avant** l'installation de la
+        version qu'on quitte (``pre-<installée>-*``) : c'est l'état d'alors.
+        """
+        previous = self.status.get("precedente") or {}
+        target = str(request.get("target") or "").strip()
+        if not previous or previous.get("version") != target:
+            return self._reject(request, "aucune version précédente conservée ne correspond à la cible")
+        reference = f"{self.config.image}:{target}"
+        if not self.runner.image_present(reference):
+            return self._reject(request, f"image conservée absente : {reference}")
+
+        old_text = ""
+        try:
+            old_text = self.config.env_path.read_text(encoding="utf-8")
+        except OSError:
+            old_text = ""
+        current = read_env_tag(old_text, self.config.tag_key) or "latest"
+        backup = find_backup(self.config.backup_dir, current)
+        if backup is None:
+            self._transition("failed", "rollback",
+                             f"aucune sauvegarde pre-{current}-* : retour refusé")
+            return "failed"
+
+        self.status.update({"from": current, "to": target, "started_at": now(), "refused": False})
+        self._transition("switching", "rollback", f"retour manuel de {current} vers {target}")
+        try:
+            new_text = set_env_tag(old_text, target, self.config.tag_key)
+            tmp = self.config.env_path.with_suffix(".env.tmp")
+            tmp.write_text(new_text, encoding="utf-8")
+            os.replace(tmp, self.config.env_path)
+        except OSError as exc:
+            self._transition("failed", "rollback", f"écriture du .env impossible : {exc}")
+            return "failed"
+
+        up, detail = self.runner.compose_up(restore=str(backup))
+        if not up:
+            self._transition("failed", "rollback", f"recréation impossible : {detail}")
+            return "failed"
+        self._transition("health_check", "rollback", f"attente de {target} sur /api/version")
+        healthy, detail = self.wait_healthy(target)
+        if not healthy:
+            self._transition("failed", "rollback", f"{target} ne répond pas ({detail})")
+            return "failed"
+        self.status["precedente"] = {
+            "version": current,
+            "image": self.runner.image_present(f"{self.config.image}:{current}"),
+        }
+        self._transition("rolled_back", "rollback",
+                         f"retour manuel à {target} vérifié ({detail}), base restaurée", restore=True)
+        self._history("finished", target=target, action="rollback")
+        log("retour", f"{current} → {target} terminé")
+        return "rolled_back"
+
+    def _forget_previous(self, request: dict) -> str:
+        """Supprime l'image conservée de la version précédente."""
+        previous = self.status.get("precedente") or {}
+        target = str(request.get("target") or "").strip()
+        if not previous or previous.get("version") != target:
+            return self._reject(request, "aucune version précédente conservée")
+        reference = f"{self.config.image}:{target}"
+        ok, detail = self.runner.remove_image(reference)
+        if not ok:
+            self._transition("failed", "forget", f"suppression de {reference} impossible : {detail}")
+            return "failed"
+        self.status["precedente"] = None
+        self._transition("done", "forget", f"image {reference} supprimée")
+        self._history("forgotten", target=target, reference=reference)
+        log("oubli", f"image {reference} supprimée")
+        return "done"
 
     def wait_healthy(self, expected: str) -> tuple[bool, str]:
         deadline = time.monotonic() + max(1, self.config.health_timeout)

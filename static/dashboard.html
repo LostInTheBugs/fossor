@@ -11,52 +11,41 @@ body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,-app
 .wrap{max-width:1100px;margin:0 auto;padding:28px 18px 40px}
 header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
 header h1{font-size:26px}
-.nav-tabs{display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--border)}
+.nav-tabs{display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--border);flex-wrap:wrap}
 .nav-tabs a{color:var(--muted);padding:8px 16px;font-size:13.5px;font-weight:600;text-decoration:none;border:1px solid transparent;border-bottom:none;border-radius:10px 10px 0 0;cursor:pointer}
 .nav-tabs a:hover{color:var(--txt)}
 .nav-tabs a.active{background:var(--card);border-color:var(--border);color:var(--txt)}
 .chip{display:inline-block;font-size:10px;font-weight:700;padding:2px 9px;border-radius:999px;text-transform:uppercase;letter-spacing:.3px}
 .chip.on{background:#1a3a2a;color:var(--green);border:1px solid var(--green)}
 .chip.off{background:#3a1a1a;color:var(--red);border:1px solid var(--red)}
-.chip.idle{background:#24292f;color:var(--muted);border:1px solid var(--border)}
 .btn{background:var(--accent);color:#fff;border:none;padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
-.btn:hover{opacity:.85}
 .btn.sm{padding:4px 10px;font-size:11px}
 .btn.outline{background:transparent;color:var(--accent);border:1px solid var(--accent)}
-.summary{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px}
-.summary .box{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 16px;min-width:170px;flex:1}
+.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:22px}
+.summary .box{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 16px}
 .summary .k{display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.4px;font-weight:600;margin-bottom:3px}
 .summary .v{font-size:20px;font-weight:700}
-.tokens-title{font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700;margin:0 0 8px 2px}
 .section-title{font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700;margin:0 0 8px 2px}
-.campaign-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin-bottom:20px}
-.tokens{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-bottom:20px}
-.token{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 16px}
-.token .head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
-.token .ticker{font-size:16px;font-weight:700}
-.token .algo{color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.3px}
-.token .hs{font-size:21px;font-weight:700;margin-top:6px}
-.token .meta{color:var(--muted);font-size:11.5px;margin-top:4px}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(480px,1fr));gap:16px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 18px}
-.card.offline{border-color:#5a2a2a}
-.card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px}
-.card-head .name{font-size:16px;font-weight:700}
-.card-head .sub{color:var(--muted);font-size:12px;margin-top:2px}
-.card-head .host{color:var(--muted);font-size:11px;margin-top:2px}
-.totals{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
-.totals .k{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.4px;font-weight:600}
-.totals .v{font-size:15px;font-weight:700}
-table{width:100%;border-collapse:collapse;font-size:12px}
-th{background:transparent;text-align:left;color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;padding:5px 6px;border-bottom:1px solid var(--border)}
-td{padding:5px 6px;border-bottom:1px solid #232b37}
-tr:last-child td{border-bottom:none}
-td.num{text-align:right;font-variant-numeric:tabular-nums}
-.dev-name{display:flex;flex-direction:column}
-.dev-name .mono{font-family:ui-monospace,Consolas,monospace;font-size:10.5px;color:var(--muted)}
-.err{margin-top:10px;padding:8px 10px;border:1px solid #5a2a2a;border-radius:8px;background:#241618;color:#f0a1a1;font-size:11.5px;word-break:break-word}
+.pills{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px}
+.pill{display:flex;gap:12px;align-items:flex-start;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;text-decoration:none;color:inherit;border-left-width:5px}
+.pill:hover{border-color:var(--accent)}
+.pill[data-status="green"]{border-left-color:var(--green)}
+.pill[data-status="orange"]{border-left-color:var(--yellow)}
+.pill[data-status="red"]{border-left-color:var(--red)}
+.dot{width:12px;height:12px;border-radius:50%;margin-top:5px;flex:0 0 12px}
+.pill[data-status="green"] .dot{background:var(--green);box-shadow:0 0 8px var(--green)}
+.pill[data-status="orange"] .dot{background:var(--yellow);box-shadow:0 0 8px var(--yellow)}
+.pill[data-status="red"] .dot{background:var(--red);box-shadow:0 0 8px var(--red)}
+.pill .name{font-size:16px;font-weight:700}
+.pill .meta{color:var(--muted);font-size:12px;margin-top:2px}
+.pill .reason{font-size:12.5px;margin-top:5px}
+.pill[data-status="orange"] .reason{color:var(--yellow)}
+.pill[data-status="red"] .reason{color:var(--red)}
+.pill .go{margin-left:auto;color:var(--muted);font-size:11px;white-space:nowrap}
+.campaign-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin-bottom:22px}
+.campaign-card .ticker{font-size:16px;font-weight:700}
+.campaign-card .meta{color:var(--muted);font-size:11.5px;margin-top:3px}
 .empty{color:var(--muted);font-size:13px;padding:26px;text-align:center;border:1px dashed var(--border);border-radius:12px}
-.toast{position:fixed;bottom:20px;right:20px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 18px;font-size:13px;z-index:200;display:none}
 .foot{color:var(--muted);font-size:11px;margin-top:16px;text-align:right}
 </style>
   <script src="/static/nav.js" defer></script>
@@ -64,7 +53,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 <body>
 <div class="wrap">
   <header>
-    <div><h1>⛏️ Fossor</h1><span style="color:var(--muted);font-size:13px">Tableau de bord</span></div>
+    <div><h1>⛏️ Fossor</h1><span style="color:var(--muted);font-size:13px">État de santé</span></div>
     <div style="display:flex;gap:10px;align-items:center">
       <span id="userBadge" class="chip on">admin</span>
       <button class="btn sm outline" id="logoutBtn">Déconnexion</button>
@@ -75,20 +64,19 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 
   <div class="summary">
     <div class="box"><span class="k">Machines en ligne</span><span class="v" id="sOnline">—</span></div>
-    <div class="box"><span class="k">Consommation</span><span class="v" id="sPower">—</span></div>
-    <div class="box"><span class="k">Coût 24 h</span><span class="v" id="sCost">—</span></div>
+    <div class="box"><span class="k">Puissance à la prise</span><span class="v" id="sPower">—</span></div>
+    <div class="box"><span class="k">Coût / jour</span><span class="v" id="sCost">—</span></div>
     <div class="box"><span class="k">Coût / mois</span><span class="v" id="sCostMonth">—</span></div>
-    <div class="box"><span class="k">Net 24 h</span><span class="v" id="sNet">—</span></div>
+    <div class="box"><span class="k">Revenu estimé / jour</span><span class="v" id="sRevenue">—</span></div>
+    <div class="box"><span class="k">Campagne en cours</span><span class="v" id="sCampaign">—</span></div>
     <div class="box"><span class="k">Dernière collecte</span><span class="v" id="sAge">—</span></div>
   </div>
 
   <h2 class="section-title">Campagne en cours</h2>
-  <div class="campaign-card" id="campaignCard"><span class="muted">Chargement…</span></div>
+  <div class="campaign-card" id="campaignCard"><span style="color:var(--muted)">Chargement…</span></div>
 
-  <h2 class="tokens-title">Hashrate par token</h2>
-  <div class="tokens" id="tokenCards"></div>
-
-  <div class="grid" id="cards"></div>
+  <h2 class="section-title">Machines</h2>
+  <div class="pills" id="pills"></div>
   <div class="empty" id="emptyMsg" style="display:none">Aucune machine configurée. Ajoutez une machine dans l'onglet Machines.</div>
   <div class="foot" id="stamp"></div>
 </div>
@@ -101,7 +89,6 @@ function esc(v) {
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
   }[c]));
 }
-
 const UNITS = [["PH/s", 1e15], ["TH/s", 1e12], ["GH/s", 1e9], ["MH/s", 1e6], ["kH/s", 1e3], ["H/s", 1]];
 function fmtHs(hs) {
   if (hs === null || hs === undefined || isNaN(hs)) return "—";
@@ -109,8 +96,7 @@ function fmtHs(hs) {
   for (const [label, factor] of UNITS) {
     if (Math.abs(v) >= factor || factor === 1) {
       const scaled = v / factor;
-      const dec = Math.abs(scaled) >= 100 ? 0 : 1;
-      return scaled.toFixed(dec) + " " + label;
+      return scaled.toFixed(Math.abs(scaled) >= 100 ? 0 : 1) + " " + label;
     }
   }
   return "—";
@@ -123,21 +109,6 @@ function fmtEur(v) {
   if (v === null || v === undefined || isNaN(v)) return "—";
   return Number(v).toFixed(2) + " €";
 }
-function fmtTemp(t) {
-  if (t === null || t === undefined || isNaN(t)) return "—";
-  return Math.round(Number(t)) + " °C";
-}
-function fmtPct(p) {
-  if (p === null || p === undefined || isNaN(p)) return "—";
-  return Math.round(Number(p)) + " %";
-}
-function fmtUptime(s) {
-  if (s === null || s === undefined) return "—";
-  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
-  if (d > 0) return d + " j " + h + " h";
-  if (h > 0) return h + " h " + m + " min";
-  return m + " min";
-}
 function fmtAge(s) {
   if (s === null || s === undefined) return "jamais";
   if (s < 90) return "il y a " + s + " s";
@@ -145,198 +116,52 @@ function fmtAge(s) {
   return "il y a " + Math.round(s / 3600) + " h";
 }
 
-function statusChip(m) {
-  if (!m.collected) return '<span class="chip idle">non collectée</span>';
-  if (m.online) return '<span class="chip on">en ligne</span>';
-  return '<span class="chip off">hors ligne</span>';
+function pill(machine) {
+  const href = "/followup?machine=" + encodeURIComponent(machine.uuid || "");
+  const reason = machine.reason ? '<div class="reason">' + esc(machine.reason) + "</div>" : "";
+  return '<a class="pill" data-status="' + esc(machine.status) + '" data-machine="' +
+    esc(machine.name) + '" href="' + href + '" title="Ouvrir le suivi détaillé">' +
+    '<span class="dot"></span><div><div class="name">' + esc(machine.name) + "</div>" +
+    '<div class="meta">' + (machine.online ? "en ligne" : "hors ligne") + " · " +
+    fmtHs(machine.total_hashrate_hs) + " · " + fmtW(machine.wall_power_w) +
+    " · " + machine.devices + " device(s)</div>" + reason + "</div>" +
+    '<span class="go">Suivi →</span></a>';
 }
 
-function fmtGhz(mhz) {
-  return mhz ? (mhz / 1000).toFixed(2) + " GHz" : "—";
-}
-
-function deviceRows(devices, cpu) {
-  if (!devices.length) return '<tr><td colspan="6" style="color:var(--muted)">Aucun device détecté</td></tr>';
-  return devices.map((d) => {
-    const label = d.kind === "cpu" ? "CPU" : "GPU" + (d.index === null || d.index === undefined ? "" : " " + d.index);
-    // 2026.11.003-c7 : fréquence moyenne du CPU (m.cpu.freq_mhz, /proc/cpuinfo).
-    let model = d.model || (d.kind === "cpu" ? "Processeur" : "GPU");
-    if (d.kind === "cpu" && cpu && cpu.freq_mhz) model += " · " + fmtGhz(cpu.freq_mhz);
-    const bus = d.pci_bus ? ' <span class="mono">' + esc(d.pci_bus) + "</span>" : "";
-    return "<tr>" +
-      '<td><div class="dev-name"><span>' + esc(label) + " · " + esc(model) + bus + "</span></div></td>" +
-      '<td class="num">' + fmtHs(d.hashrate_hs) + "</td>" +
-      '<td class="num">' + fmtTemp(d.temp_c) + "</td>" +
-      '<td class="num">' + fmtPct(d.fan_pct) + "</td>" +
-      '<td class="num">' + fmtW(d.power_w) + "</td>" +
-      '<td class="num">' + fmtPct(d.load_pct) + "</td>" +
-      "</tr>";
-  }).join("");
-}
-
-function externalMinersHtml(m) {
-  const list = m.external_miners || [];
-  if (!list.length) return "";
-  const text = list.map((x) => {
-    let t = [x.name, x.version].filter(Boolean).join(" ");
-    if (x.kind === "cpu") t += " (CPU)";
-    if (x.algorithm) t += " — " + x.algorithm;
-    if (x.coin) t += " — " + x.coin;
-    if (x.pool) t += " — " + x.pool;
-    if (x.threads) t += " — " + x.threads + " threads";
-    if (x.cpu_pct !== null && x.cpu_pct !== undefined) t += " — " + x.cpu_pct + " % CPU";
-    // 2026.11.003-c7 : hashrate CPU et sa source (API, log, nœud) — jamais « — » muet.
-    if (x.kind === "cpu" || x.kind === "solo") {
-      t += " — " + (x.hashrate_hs ? fmtHs(x.hashrate_hs) : (x.hashrate_note || "hashrate inconnu"));
-      if (x.hashrate_hs && x.hashrate_source) t += " (source " + x.hashrate_source + ")";
-    }
-    return t;
-  }).join(", ");
-  return '<div class="err">Mineur externe détecté (non géré par Fossor) : ' + esc(text) + "</div>";
-}
-
-function cpuLineHtml(m) {
-  const c = m.cpu;
-  if (!c) return "";
-  const bits = [];
-  if (c.load_pct !== null && c.load_pct !== undefined) bits.push("charge " + fmtPct(c.load_pct));
-  if (c.temp_c !== null && c.temp_c !== undefined) bits.push(fmtTemp(c.temp_c));
-  if (c.freq_mhz) bits.push(fmtGhz(c.freq_mhz));
-  bits.push(
-    c.power_w === null || c.power_w === undefined
-      ? "puissance non mesurée"
-      : fmtW(c.power_w) + (c.power_source ? " (" + c.power_source + ")" : "")
-  );
-  const miners = (c.miners || []).map((x) => {
-    const hr = x.hashrate_hs ? fmtHs(x.hashrate_hs) : (x.note || "hashrate CPU inconnu");
-    let t = (x.coin || "?") + " · " + hr;
-    if (x.threads) t += " · " + x.threads + " threads";
-    if (x.source) t += " · source " + x.source;
-    if (x.node && x.node.height) t += " · hauteur " + x.node.height;
-    if (x.node && x.node.share_pct !== null && x.node.share_pct !== undefined) t += " · " + x.node.share_pct + " % du réseau";
-    if (x.node && x.node.blocks_found) t += " · " + x.node.blocks_found + " bloc(s)";
-    return t;
-  });
-  return '<div style="font-size:11px;color:var(--muted);margin-top:6px">CPU — ' + esc(bits.join(" · ")) +
-    (miners.length ? "<br>" + miners.map((t) => esc(t)).join("<br>") : "") + "</div>";
-}
-
-function tokenGroups(machines, byUuid) {
-  const groups = {};
-  machines.forEach((m) => {
-    // 2026.11.003-c4: one group per coin mined by the machine (a rig can run
-    // PRL + WAM + KSH at once); fall back to the machine-level coin.
-    let list = m.coin_groups || [];
-    if (!list.length && (m.coin || m.algo || m.total_hashrate_hs)) {
-      list = [{ coin: m.coin, algo: m.algo, hashrate_hs: m.total_hashrate_hs,
-                miners: Math.max(1, (m.external_miners || []).length), workers: 0 }];
-    }
-    if (!list.length) return;
-    const primary = list.reduce((a, b) =>
-      Number(b.hashrate_hs || 0) > Number(a.hashrate_hs || 0) ? b : a, list[0]);
-    list.forEach((g) => {
-      const coin = (g.coin || "").trim();
-      const algo = (g.algo || "").trim();
-      const hs = Number(g.hashrate_hs || 0);
-      const key = (coin || "?").toUpperCase();
-      const entry = groups[key] || (groups[key] = {
-        coin: coin, algo: algo, hs: 0, machines: 0, miners: 0, workers: 0, revenue: null
-      });
-      entry.machines += 1;
-      entry.miners += Number(g.miners || 0);
-      entry.workers += Number(g.workers || 0);
-      entry.hs += hs;
-      if (!entry.algo && algo) entry.algo = algo;
-      if (g === primary) {
-        const energy = byUuid[m.uuid];
-        if (energy && energy.revenue_eur_day !== null && energy.revenue_eur_day !== undefined) {
-          entry.revenue = (entry.revenue || 0) + Number(energy.revenue_eur_day);
-        }
-      }
-    });
-  });
-  return Object.values(groups).sort((a, b) => (b.hs - a.hs) || a.coin.localeCompare(b.coin));
-}
-
-function renderTokens(machines, byUuid) {
-  const groups = tokenGroups(machines, byUuid);
-  if (!groups.length) {
-    $("#tokenCards").innerHTML = '<div class="empty">Aucun token miné pour le moment.</div>';
-    return;
-  }
-  $("#tokenCards").innerHTML = groups.map((g) => {
-    const ticker = g.coin ? esc(g.coin.toUpperCase()) : "Coin inconnu";
-    const algo = g.algo ? esc(g.algo) : (g.coin ? "" : "algo inconnu");
-    const gain = g.revenue === null ? "gain inconnu" : "gain " + fmtEur(g.revenue) + " / j";
-    const workers = g.workers > g.miners ? " · " + g.workers + " workers" : "";
-    return '<div class="token">' +
-      '<div class="head"><span class="ticker">' + ticker + "</span>" +
-      '<span class="algo">' + algo + "</span></div>" +
-      '<div class="hs">' + fmtHs(g.hs || null) + "</div>" +
-      '<div class="meta">' + g.machines + " machine" + (g.machines > 1 ? "s" : "") +
-      " · " + g.miners + " mineur" + (g.miners > 1 ? "s" : "") + workers + " · " + gain + "</div>" +
-      "</div>";
-  }).join("");
-}
-
-function card(m, e) {
-  const coinLabel = (Array.isArray(m.coins) && m.coins.length) ? m.coins.join(" · ") : (m.coin || "");
-  const meta = [m.miner || "aucun mineur", coinLabel, m.algo || ""].filter(Boolean).join(" · ");
-  const api = m.api_port ? " · API " + m.api_port : "";
-  e = e || {};
-  return '<div class="card' + (m.collected && !m.online ? " offline" : "") + '">' +
-    '<div class="card-head">' +
-      "<div><div class=\"name\">" + esc(m.name) + "</div>" +
-      '<div class="sub">' + esc(meta) + esc(api) + "</div>" +
-      '<div class="host">' + esc(m.host) + " · " + esc(m.os_kind) + "</div>" +
-      externalMinersHtml(m) + cpuLineHtml(m) + "</div>" +
-      statusChip(m) +
-    "</div>" +
-    '<div class="totals">' +
-      '<div><span class="k">Hashrate</span><span class="v">' + fmtHs(m.total_hashrate_hs) + "</span></div>" +
-      '<div><span class="k">Conso</span><span class="v">' + fmtW(m.wall_power_w || m.total_power_w) + "</span></div>" +
-      '<div><span class="k">Uptime</span><span class="v">' + fmtUptime(m.uptime_s) + "</span></div>" +
-      '<div><span class="k">Coût 24 h</span><span class="v">' + fmtEur(e.cost_eur_day) + "</span></div>" +
-      '<div><span class="k">Coût / mois</span><span class="v">' + fmtEur(e.cost_eur_month) + "</span></div>" +
-      '<div><span class="k">Net 24 h</span><span class="v">' + fmtEur(e.net_eur_day) + "</span></div>" +
-      '<div><span class="k">Collecte</span><span class="v">' + fmtAge(m.age_s) + "</span></div>" +
-    "</div>" +
-    '<table><thead><tr><th>Device</th><th style="text-align:right">Hashrate</th><th style="text-align:right">Temp</th>' +
-    '<th style="text-align:right">Ventilo</th><th style="text-align:right">Conso</th><th style="text-align:right">Charge</th></tr></thead>' +
-    "<tbody>" + deviceRows(m.devices || [], m.cpu) + "</tbody></table>" +
-    (m.api_error ? '<div class="err">⚠️ ' + esc(m.api_error) + "</div>" : "") +
-    (m.error ? '<div class="err">' + esc(m.error) + "</div>" : "") +
-    "</div>";
-}
-
-function render(machines, energy) {
-  const byUuid = {};
-  ((energy && energy.machines) || []).forEach((e) => { byUuid[e.uuid] = e; });
-  $("#cards").innerHTML = machines.map((m) => card(m, byUuid[m.uuid])).join("");
+async function loadHealth() {
+  const res = await fetch("/api/health", { headers: { "Accept": "application/json" } });
+  if (res.status === 401) { window.location.href = "/"; return []; }
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const data = await res.json();
+  const machines = data.machines || [];
+  $("#pills").innerHTML = machines.map(pill).join("");
   $("#emptyMsg").style.display = machines.length ? "none" : "block";
-
-  const online = machines.filter((m) => m.online).length;
-  $("#sOnline").textContent = online + " / " + machines.length;
-
-  // Never sum hashrates of different tokens/algos: one card per token.
-  renderTokens(machines, byUuid);
-
-  const watts = machines.reduce((acc, m) => acc + (m.wall_power_w || m.total_power_w || 0), 0);
+  const t = data.totals || {};
+  $("#sOnline").textContent = (t.online || 0) + " / " + (t.machines || 0);
+  const watts = machines.reduce((acc, m) => acc + (m.wall_power_w || 0), 0);
   $("#sPower").textContent = fmtW(watts || null);
+  $("#userBadge").textContent = (t.green || 0) + " vert · " + (t.orange || 0) + " orange · " + (t.red || 0) + " rouge";
+  return machines;
+}
 
+async function loadEnergy() {
+  const res = await fetch("/api/energy?period=24h", { headers: { "Accept": "application/json" } });
+  if (!res.ok) return null;
+  return res.json();
+}
+
+function renderEnergy(energy, live) {
   const totals = (energy && energy.total) || {};
   $("#sCost").textContent = fmtEur(totals.cost_eur_day);
   $("#sCostMonth").textContent = fmtEur(totals.cost_eur_month);
-  $("#sNet").textContent = fmtEur(totals.net_eur_day);
-
-  const ages = machines.map((m) => m.age_s).filter((a) => a !== null && a !== undefined);
-  $("#sAge").textContent = ages.length ? fmtAge(Math.min(...ages)) : "jamais";
-
-  $("#stamp").textContent = "Mis à jour à " + new Date().toLocaleTimeString("fr-FR");
+  const revenue = totals.revenue_eur_day !== undefined ? totals.revenue_eur_day : totals.net_eur_day;
+  $("#sRevenue").textContent = fmtEur(revenue);
+  const ages = (live || []).map((m) => m.age_s).filter((a) => a !== null && a !== undefined);
+  $("#sAge").textContent = ages.length ? fmtAge(Math.min.apply(null, ages)) : "jamais";
 }
 
 function campaignHs(value) {
-  if (value === null || value === undefined) { return "—"; }
+  if (value === null || value === undefined) return "—";
   const units = ["H/s", "kH/s", "MH/s", "GH/s", "TH/s", "PH/s"];
   let i = 0, v = Number(value);
   while (v >= 1000 && i < units.length - 1) { v /= 1000; i += 1; }
@@ -345,43 +170,41 @@ function campaignHs(value) {
 
 async function loadCampaign() {
   const box = $("#campaignCard");
-  if (!box) { return; }
   try {
     const res = await fetch("/api/campaigns", { headers: { "Accept": "application/json" } });
-    if (!res.ok) { return; }
+    if (!res.ok) return;
     const data = await res.json();
     const c = data.current;
     if (!c) {
-      box.innerHTML = '<span class="muted">Aucune campagne en cours.</span>';
+      box.innerHTML = '<span style="color:var(--muted)">Aucune campagne en cours.</span>';
+      $("#sCampaign").textContent = "aucune";
       return;
     }
     const devs = (c.devices || []).map((d) => d.machine_name + " · " + d.label).join(", ");
     const cost = c.cost_running_eur != null ? c.cost_running_eur.toFixed(2) + " €" : "—";
-    box.innerHTML =
-      '<div class="head"><span class="ticker">' + esc(c.coin) + '</span>' +
-      '<span class="algo">' + esc(c.profile_name || "") + '</span></div>' +
-      '<div class="hs">' + campaignHs(c.hashrate_hs) + '</div>' +
-      '<div class="meta">' + esc(devs) + '</div>' +
-      '<div class="meta">' + esc(c.status_label) + ' · coût ' + cost +
-      ' · fin ' + (c.end_at ? new Date(c.end_at).toLocaleString("fr-FR") : "sans limite") + '</div>';
+    $("#sCampaign").textContent = c.coin || "en cours";
+    box.innerHTML = '<div class="ticker">' + esc(c.coin) + " · " + campaignHs(c.hashrate_hs) + "</div>" +
+      '<div class="meta">' + esc(devs) + "</div>" +
+      '<div class="meta">' + esc(c.status_label) + " · coût " + cost +
+      " · fin " + (c.end_at ? new Date(c.end_at).toLocaleString("fr-FR") : "sans limite") + "</div>";
   } catch (err) { /* pas de campagnes : carte discrète */ }
 }
 
 async function load() {
   try {
-    const [res, energyRes] = await Promise.all([
-      fetch("/api/metrics/live", { headers: { "Accept": "application/json" } }),
-      fetch("/api/energy?period=24h", { headers: { "Accept": "application/json" } })
-    ]);
-    if (res.status === 401) { window.location.href = "/"; return; }
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    let energy = null;
-    if (energyRes.ok) {
-      try { energy = await energyRes.json(); } catch (err) { energy = null; }
-    }
-    render(await res.json(), energy);
+    const machines = await loadHealth();
+    const energy = await loadEnergy();
+    let live = [];
+    try {
+      const res = await fetch("/api/metrics/live", { headers: { "Accept": "application/json" } });
+      if (res.ok) live = await res.json();
+    } catch (err) { live = []; }
+    renderEnergy(energy, live);
+    await loadCampaign();
+    $("#stamp").textContent = "Mis à jour à " + new Date().toLocaleTimeString("fr-FR") +
+      (machines.length ? "" : " · aucune machine");
   } catch (err) {
-    $("#stamp").textContent = "Collecte indisponible : " + err.message;
+    $("#stamp").textContent = "État de santé indisponible : " + err.message;
   }
 }
 
@@ -391,8 +214,7 @@ $("#logoutBtn").addEventListener("click", async () => {
 });
 
 load();
-loadCampaign();
-setInterval(function () { load(); loadCampaign(); }, 30000);
+setInterval(load, 30000);
 </script>
 </body>
 </html>

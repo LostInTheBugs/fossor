@@ -209,6 +209,10 @@ def campaign_options(db: Session = Depends(get_db), _user=Depends(require_login)
         for device in devices:
             if device.kind == "gpu" and device.integrated and hide:
                 continue
+            # §4.19 : un device « token par défaut uniquement » n'est jamais proposé
+            # à une campagne (l'API le refuse aussi, en 422).
+            if (getattr(device, "role", None) or "default_and_spec") != "default_and_spec":
+                continue
             label = (
                 f"CPU {device.model or ''}".strip()
                 if device.kind == "cpu"
@@ -297,6 +301,17 @@ def _clean_devices(db: Session, devices: list[dict]) -> list[dict]:
                     detail=(
                         f"{machine.name} : {device.model or device_uuid} est tenu par un mineur externe — "
                         "Fossor ne le pilote pas (cohabitation HiveOS à l'étape 3e)"
+                    ),
+                )
+            # §4.19 : seuls les devices « token par défaut + spec mining » peuvent
+            # être pris par une campagne ; les autres sont refusés (422).
+            if (getattr(device, "role", None) or "default_and_spec") != "default_and_spec":
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"{machine.name} : {device.model or device_uuid} est réglé « token par défaut "
+                        "uniquement » — passez son rôle en « token par défaut + spec mining » "
+                        "dans la fiche machine pour l'engager dans une campagne"
                     ),
                 )
             label = (

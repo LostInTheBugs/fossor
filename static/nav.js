@@ -1,4 +1,4 @@
-/* Navigation unique de l'application (défaut 2f).
+/* Navigation unique de l'application (§2f / §4.19).
  *
  * Une seule source pour la barre de navigation : chaque page pose
  * <nav id="nav"></nav> et ce fichier y injecte les liens, en marquant
@@ -12,13 +12,12 @@
     ["/profiles", "⛏️ Profils"],
     ["/campaigns", "🎯 Campagnes"],
     ["/mined", "🪙 Tokens minés"],
+    ["/followup", "📈 Suivi"],
     ["/settings", "⚙️ Configuration"],
-    ["/audit", "📋 Audit Log"]
+    ["/audit", "📋 Log"]
   ];
   var mount = document.getElementById("nav");
-  if (!mount) {
-    return;
-  }
+  if (!mount) { return; }
   var path = window.location.pathname.replace(/\/+$/, "") || "/";
   mount.className = "nav-tabs";
   mount.innerHTML = "";
@@ -35,9 +34,7 @@
 
   /* §5.7 — bandeau permanent tant que la simulation est active. */
   function banner() {
-    if (document.getElementById("simBanner")) {
-      return;
-    }
+    if (document.getElementById("simBanner")) { return; }
     var bar = document.createElement("div");
     bar.id = "simBanner";
     bar.setAttribute("role", "status");
@@ -53,9 +50,7 @@
   fetch("/api/miner/settings", { credentials: "same-origin" })
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (data) {
-      if (data && data.simulation === true) {
-        banner();
-      }
+      if (data && data.simulation === true) { banner(); }
     })
     .catch(function () { /* page sans API : pas de bandeau */ });
 })();

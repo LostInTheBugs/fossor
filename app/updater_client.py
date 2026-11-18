@@ -47,6 +47,9 @@ STALE_HEARTBEAT_SECONDS = 180
 #: États pendant lesquels une demande est en cours.
 ACTIVE_STATES = ("pulling", "backing_up", "switching", "health_check")
 
+#: §4.19 — actions acceptées par le compagnon.
+ACTIONS = ("update", "rollback", "forget_previous")
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -290,6 +293,40 @@ def request_update(db: Session, target: str, image: str | None = None) -> dict:
     return {"request": request, "backup": str(backup)}
 
 
+def request_action(db: Session, action: str, target: str) -> dict:
+    """Dépose une demande d'action (``rollback``, ``forget_previous``).
+
+    Une mise à jour prend une sauvegarde préalable ; un retour arrière utilise
+    celle prise avant l'installation de la version quittée, et un oubli ne
+    touche pas à la base.
+    """
+    if action not in ACTIONS:
+        raise ValueError(f"Action inconnue : {action!r}")
+    tag = normalize_target(target)
+    if not updater_present():
+        raise ValueError(
+            "Le service fossor-updater n'est pas joignable : action indisponible "
+            "sur cette installation"
+        )
+    active = pending_request()
+    if active is not None:
+        raise ValueError(f"Une demande vers {active.get('target')} est déjà en attente")
+
+    request = {
+        "target": tag,
+        "image": expected_image().strip(),
+        "requested_at": _now(),
+        "nonce": uuid.uuid4().hex,
+        "action": action,
+    }
+    backup = None
+    if action == "update":
+        backup = create_pre_update_backup(db, tag)
+        request["backup"] = str(backup)
+    _write_json_atomic(request_path(), request)
+    return {"request": request, "backup": str(backup) if backup else None}
+
+
 def payload() -> dict:
     """Bloc ``updater`` de ``GET /api/update/status``."""
     status = read_status()
@@ -322,5 +359,11 @@ def payload() -> dict:
         "image": expected_image(),
         "directory": str(update_dir()),
         "pending": (pending_request() or {}).get("target"),
+        # §4.19 : version conservée après une mise à jour (retour arrière possible).
+        "precedente": (
+            status.get("precedente")
+            if isinstance((status or {}).get("precedente"), dict)
+            else None
+        ),
         "history": read_history(20),
     }

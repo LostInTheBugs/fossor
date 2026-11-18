@@ -79,6 +79,7 @@ header h1{font-size:26px}
     <button class="subtab" id="tabAi" data-panel="panel-ai">Analyse IA</button>
     <button class="subtab" id="tabEnergy" data-panel="panel-energy">Électricité</button>
     <button class="subtab" id="tabNotifications" data-panel="panel-notifications">Notifications</button>
+    <button class="subtab" id="tabUpdate" data-panel="panel-update">Mise à jour</button>
   </div>
 
   <div id="panel-notifications" style="display:none">
@@ -164,9 +165,18 @@ header h1{font-size:26px}
       <div class="actions"><button class="btn outline" id="igpuSave">Enregistrer</button><span id="igpuState" class="chip off">—</span></div>
       <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
       <h2>Token par défaut</h2>
-      <div class="sub">Profil exécuté par les devices cochés « miner avec » quand aucune campagne ne les occupe (l'étape 3b s'en sert pour le retour automatique). Une machine peut le surcharger.</div>
-      <div class="field"><label>Profil par défaut</label><select id="defProfile"><option value="">— aucun —</option></select></div>
-      <div class="actions"><button class="btn outline" id="defSave">Enregistrer le profil par défaut</button></div>
+      <div class="sub">Réglé dans <a href="/mined#default" style="color:var(--accent)">Tokens minés → Token par défaut</a> : le profil global, avec ses surcharges par machine et par device.</div>
+    </div>
+
+    <div class="card">
+      <h2>Seuils de l'état de santé</h2>
+      <div class="sub">Un device sous le pourcentage de sa moyenne 1 h, ou au-dessus d'une température ou d'une charge d'alimentation, passe la pastille en orange (rouge au-delà du seuil d'alimentation).</div>
+      <div class="field narrow"><label>Hashrate minimal (% de la moyenne 1 h)</label><input type="number" id="hHashrate" min="1" max="100" step="1"></div>
+      <div class="field narrow"><label>Température GPU maximale (°C)</label><input type="number" id="hGpuTemp" min="40" max="120" step="1"></div>
+      <div class="field narrow"><label>Température CPU maximale (°C)</label><input type="number" id="hCpuTemp" min="40" max="120" step="1"></div>
+      <div class="field narrow"><label>Alimentation orange (%)</label><input type="number" id="hPsuWarn" min="10" max="100" step="1"></div>
+      <div class="field narrow"><label>Alimentation rouge (%)</label><input type="number" id="hPsuCrit" min="10" max="100" step="1"></div>
+      <div class="actions"><button class="btn outline" id="hSave">Enregistrer les seuils</button><span id="hState" class="chip off">—</span></div>
     </div>
 
     <div class="card">
@@ -183,7 +193,34 @@ header h1{font-size:26px}
       </div>
     </div>
 
+        <div class="card">
+      <h2>Exporter la configuration</h2>
+      <div class="sub">JSON versionné : machines, devices, réglages, analyse IA. Les secrets (mots de passe SSH, clés API) ne sont <b>jamais</b> exportés en clair ; pour les inclure, ils sont chiffrés avec une phrase de passe (PBKDF2-SHA256 600 000 itérations + sel aléatoire, Fernet). Le jeton entrant Hermes n'est jamais exporté.</div>
+      <div class="field"><label><input type="checkbox" id="expSecrets"> Inclure les secrets (chiffrés)</label></div>
+      <div class="row">
+        <div class="field" style="flex:1"><label>Phrase de passe (si secrets inclus)</label><input type="password" id="expPass" autocomplete="new-password" placeholder="phrase de passe"></div>
+      </div>
+      <div class="actions"><button class="btn" id="exportBtn">Exporter</button></div>
+    </div>
+
     <div class="card">
+      <h2>Importer une configuration</h2>
+      <div class="sub">Aperçu des différences (ajouts / modifications / suppressions par UUID) avant toute écriture ; sauvegarde automatique de la configuration courante dans <span class="mono">/data/backups/</span>.</div>
+      <div class="field"><label>Fichier JSON exporté</label><input type="file" id="impFile" accept="application/json,.json"></div>
+      <div class="row">
+        <div class="field" style="flex:1"><label>Phrase de passe (si le fichier contient des secrets)</label><input type="password" id="impPass" autocomplete="off" placeholder="laisser vide sinon"></div>
+        <div class="field"><label>Mode</label><select id="impMode"><option value="merge">Fusionner</option><option value="replace">Remplacer</option></select></div>
+      </div>
+      <div class="actions">
+        <button class="btn outline" id="previewBtn">Aperçu des différences</button>
+        <button class="btn" id="importApplyBtn" disabled>Appliquer</button>
+      </div>
+      <div class="diff" id="diffBox"></div>
+    </div>
+  </div>
+
+  <div id="panel-update" style="display:none">
+<div class="card">
       <h2>Mise à jour</h2>
       <div class="sub">Vérification automatique des releases GitHub (intervalle réglable par <span class="mono">FOSSOR_UPDATE_CHECK_INTERVAL</span>, 0 = désactivé).</div>
       <dl class="kv">
@@ -214,30 +251,6 @@ header h1{font-size:26px}
       <div id="notesWrap" style="margin-top:14px"></div>
     </div>
 
-    <div class="card">
-      <h2>Exporter la configuration</h2>
-      <div class="sub">JSON versionné : machines, devices, réglages, analyse IA. Les secrets (mots de passe SSH, clés API) ne sont <b>jamais</b> exportés en clair ; pour les inclure, ils sont chiffrés avec une phrase de passe (PBKDF2-SHA256 600 000 itérations + sel aléatoire, Fernet). Le jeton entrant Hermes n'est jamais exporté.</div>
-      <div class="field"><label><input type="checkbox" id="expSecrets"> Inclure les secrets (chiffrés)</label></div>
-      <div class="row">
-        <div class="field" style="flex:1"><label>Phrase de passe (si secrets inclus)</label><input type="password" id="expPass" autocomplete="new-password" placeholder="phrase de passe"></div>
-      </div>
-      <div class="actions"><button class="btn" id="exportBtn">Exporter</button></div>
-    </div>
-
-    <div class="card">
-      <h2>Importer une configuration</h2>
-      <div class="sub">Aperçu des différences (ajouts / modifications / suppressions par UUID) avant toute écriture ; sauvegarde automatique de la configuration courante dans <span class="mono">/data/backups/</span>.</div>
-      <div class="field"><label>Fichier JSON exporté</label><input type="file" id="impFile" accept="application/json,.json"></div>
-      <div class="row">
-        <div class="field" style="flex:1"><label>Phrase de passe (si le fichier contient des secrets)</label><input type="password" id="impPass" autocomplete="off" placeholder="laisser vide sinon"></div>
-        <div class="field"><label>Mode</label><select id="impMode"><option value="merge">Fusionner</option><option value="replace">Remplacer</option></select></div>
-      </div>
-      <div class="actions">
-        <button class="btn outline" id="previewBtn">Aperçu des différences</button>
-        <button class="btn" id="importApplyBtn" disabled>Appliquer</button>
-      </div>
-      <div class="diff" id="diffBox"></div>
-    </div>
   </div>
 
   <div id="panel-energy" style="display:none">
@@ -858,8 +871,10 @@ const loadPilot=async()=>{
   $('#simState').textContent=d.simulation?'simulation active':'pilotage réel';
   $('#simState').className='chip '+(d.simulation?'warn':'on');
   $('#simConfirmBox').style.display=d.simulation?'none':'block';
+  if($('#defProfile')){
   $('#defProfile').innerHTML='<option value="">— aucun —</option>'+
     (d.profiles||[]).map(p=>`<option value="${p.id}"${p.id===d.default_profile_id?' selected':''}>${p.name} · ${p.coin} · ${p.software}</option>`).join('');
+  }
 };
 $('#simToggle').addEventListener('change',()=>{
   $('#simConfirmBox').style.display=$('#simToggle').checked?'none':'block';
@@ -875,7 +890,7 @@ $('#simSave').addEventListener('click',async()=>{
   await loadPilot();
   if(!d.simulation){location.reload();}
 });
-$('#defSave').addEventListener('click',async()=>{
+if($('#defSave'))$('#defSave').addEventListener('click',async()=>{
   const raw=$('#defProfile').value;
   const r=await fetch('/api/miner/settings',{method:'PUT',credentials:'include',
     headers:{'Content-Type':'application/json'},
@@ -886,6 +901,27 @@ $('#defSave').addEventListener('click',async()=>{
   await loadPilot();
 });
 loadPilot();
+
+const loadHealthThresholds=async()=>{
+  const r=await fetch('/api/health/thresholds',{credentials:'include'});
+  if(!r.ok)return;
+  const d=await r.json();const t=d.thresholds||{};
+  $('#hHashrate').value=t.hashrate_min_pct; $('#hGpuTemp').value=t.gpu_temp_max_c;
+  $('#hCpuTemp').value=t.cpu_temp_max_c; $('#hPsuWarn').value=t.psu_warn_pct;
+  $('#hPsuCrit').value=t.psu_crit_pct; $('#hState').textContent='seuils actifs';
+  $('#hState').className='chip on';
+};
+if($('#hSave'))$('#hSave').addEventListener('click',async()=>{
+  const body={thresholds:{hashrate_min_pct:Number($('#hHashrate').value),
+    gpu_temp_max_c:Number($('#hGpuTemp').value),cpu_temp_max_c:Number($('#hCpuTemp').value),
+    psu_warn_pct:Number($('#hPsuWarn').value),psu_crit_pct:Number($('#hPsuCrit').value)}};
+  const r=await fetch('/api/health/thresholds',{method:'PUT',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){toast(d.detail||'Seuils refusés','err');return;}
+  toast('Seuils enregistrés'); await loadHealthThresholds();
+});
+loadHealthThresholds();
 
 $('#logoutBtn').onclick=async()=>{
   await fetch('/api/logout',{method:'POST',credentials:'include'});

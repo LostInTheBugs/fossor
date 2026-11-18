@@ -43,6 +43,15 @@ def audit_page(request: Request):
     return HTMLResponse(html)
 
 
+@router.get("/followup", response_class=HTMLResponse)
+def followup_page(request: Request):
+    """Écran « Suivi » (§4.19) : monitoring détaillé, machine par machine."""
+    if not get_current_user(request):
+        return RedirectResponse(url="/", status_code=303)
+    require_login(request)
+    return HTMLResponse((STATIC_DIR / "followup.html").read_text())
+
+
 @router.get("/campaigns", response_class=HTMLResponse)
 def campaigns_page(request: Request):
     """Écran « Campagnes » (§4.7)."""

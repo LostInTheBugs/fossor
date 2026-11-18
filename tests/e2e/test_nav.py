@@ -8,15 +8,16 @@ import pytest
 from playwright.async_api import async_playwright
 
 ADMIN_PASSWORD = "adminpass"
-PAGES = ["/dashboard", "/machines", "/profiles", "/campaigns", "/mined", "/settings", "/audit"]
+PAGES = ["/dashboard", "/machines", "/profiles", "/campaigns", "/mined", "/followup", "/settings", "/audit"]
 EXPECTED = [
     "📊 Tableau de bord",
     "🖥️ Machines",
     "⛏️ Profils",
     "🎯 Campagnes",
     "🪙 Tokens minés",
+    "📈 Suivi",
     "⚙️ Configuration",
-    "📋 Audit Log",
+    "📋 Log",
 ]
 
 

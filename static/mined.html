@@ -78,6 +78,7 @@ pre.out{background:#0e1218;border:1px solid var(--border);border-radius:8px;padd
   <div class="nav-tabs" style="border-bottom:none;margin-bottom:10px">
     <button data-panel="mined" class="active">Campagnes &amp; historique</button>
     <button data-panel="coins">Catalogue</button>
+    <button data-panel="default">Token par défaut</button>
     <button data-panel="wallets">Wallets</button>
     <button data-panel="import">Import</button>
   </div>
@@ -105,6 +106,15 @@ pre.out{background:#0e1218;border:1px solid var(--border);border-radius:8px;padd
   </section>
 
   <!-- ── Catalogue ────────────────────────────────────────────── -->
+  <section class="panel" id="panel-default">
+    <div class="card">
+      <h2>Token par défaut</h2>
+      <div class="sub">Profil exécuté par les devices cochés « miner avec » quand aucune campagne ne les occupe. Le réglage global vit ici ; chaque machine et chaque device peuvent le surcharger (fiche machine → Matériel détecté).</div>
+      <div class="field"><label>Profil par défaut global</label><select id="defProfile"><option value="">— aucun —</option></select></div>
+      <div class="actions"><button class="btn outline" id="defSave">Enregistrer le profil par défaut</button><span id="defState" class="chip off">—</span></div>
+    </div>
+  </section>
+
   <section class="panel" id="panel-coins">
     <form class="inline" id="coinForm">
       <label>Ticker<input id="cTicker" required maxlength="20" style="width:90px"></label>
@@ -315,6 +325,26 @@ async function loadWallets() {
     });
   });
 }
+
+const loadDefaultToken=async()=>{
+  const r=await fetch('/api/miner/settings',{credentials:'include'});
+  if(!r.ok)return;
+  const d=await r.json();
+  document.querySelector('#defProfile').innerHTML='<option value="">— aucun —</option>'+
+    (d.profiles||[]).map(p=>`<option value="${p.id}"${p.id===d.default_profile_id?' selected':''}>${p.name} · ${p.coin} · ${p.software}</option>`).join('');
+  document.querySelector('#defState').textContent=d.default_profile_id?'défini':'aucun';
+  document.querySelector('#defState').className='chip '+(d.default_profile_id?'on':'off');
+};
+if(document.querySelector('#defSave'))document.querySelector('#defSave').addEventListener('click',async()=>{
+  const raw=document.querySelector('#defProfile').value;let ids=null;
+  if(raw)ids=parseInt(raw,10);
+  const r=await fetch('/api/miner/settings',{method:'PUT',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({default_profile_id:ids})});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){toast(d.detail||'Réglage refusé','err');return;}
+  toast('Profil par défaut enregistré'); loadDefaultToken();
+});
+loadDefaultToken();
 
 document.querySelectorAll('.nav-tabs button[data-panel]').forEach(tab => {
   tab.addEventListener('click', () => {

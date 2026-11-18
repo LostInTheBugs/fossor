@@ -71,7 +71,16 @@ async def test_psu_section_two_psus_split_gpu_and_orange_alert(e2e_server):
             await page.fill(f"#psuName-{machine_id}", name)
             await page.fill(f"#psuW-{machine_id}", watts)
             await page.select_option(f"#psuCert-{machine_id}", "gold")
-            await page.locator("button:has-text('+ Alimentation')").first.click()
+            # `.first` visait le formulaire d'une autre machine quand la suite
+            # a déjà créé des machines : rester dans le panneau de CELLE-CI.
+            scope = page.locator(f"#psuName-{machine_id}").locator(
+                "xpath=ancestor::div[contains(@class,'dev-panel')][1]"
+            )
+            if await scope.count() == 0:
+                scope = page.locator(f"#psuName-{machine_id}").locator(
+                    "xpath=ancestor::div[contains(@class,'card')][1]"
+                )
+            await scope.locator("button:has-text('+ Alimentation')").first.click()
             await page.wait_for_function(
                 "n => document.querySelectorAll('[data-psu-row]').length === n",
                 arg=1 if name == "PSU 1" else 2,

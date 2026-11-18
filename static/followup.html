@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fossor — Suivi</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#12161c;--card:#1a2029;--border:#2c3544;--txt:#e6edf3;--muted:#8b98a9;--accent:#4f8cff;--green:#3fb950;--red:#f85149;--yellow:#d29922}
+body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;min-height:100vh}
+.wrap{max-width:1100px;margin:0 auto;padding:28px 18px 40px}
+header{display:flex;justify-content:space-between;align-items:center;margin-bottom:22px;gap:12px;flex-wrap:wrap}
+header h1{font-size:26px}
+.nav-tabs{display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.nav-tabs a{color:var(--muted);padding:8px 16px;font-size:13.5px;font-weight:600;text-decoration:none;border:1px solid transparent;border-bottom:none;border-radius:10px 10px 0 0}
+.nav-tabs a:hover{color:var(--txt)}
+.nav-tabs a.active{background:var(--card);border-color:var(--border);color:var(--txt)}
+select{background:var(--card);color:var(--txt);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-family:inherit;font-size:13px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px}
+.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:10px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+.grid .k{display:block;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;font-weight:600}
+.grid .v{font-size:17px;font-weight:700}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;padding:5px 6px;border-bottom:1px solid var(--border)}
+td{padding:5px 6px;border-bottom:1px solid #232b37}
+tr:last-child td{border-bottom:none}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+.mono{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--muted)}
+.err{margin-top:10px;padding:8px 10px;border:1px solid #5a2a2a;border-radius:8px;background:#241618;color:#f0a1a1;font-size:11.5px}
+.empty{color:var(--muted);font-size:13px;padding:22px;text-align:center;border:1px dashed var(--border);border-radius:12px}
+.chip{display:inline-block;font-size:10px;font-weight:700;padding:2px 9px;border-radius:999px;text-transform:uppercase;letter-spacing:.3px}
+.chip.on{background:#1a3a2a;color:var(--green);border:1px solid var(--green)}
+.chip.off{background:#3a1a1a;color:var(--red);border:1px solid var(--red)}
+</style>
+  <script src="/static/nav.js" defer></script>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div><h1>📈 Suivi</h1><span style="color:var(--muted);font-size:13px">Monitoring détaillé, machine par machine</span></div>
+    <select id="machineSelect" aria-label="Machine"></select>
+  </header>
+  <nav id="nav"></nav>
+
+  <div class="card">
+    <div id="machineTitle" style="font-size:18px;font-weight:700">—</div>
+    <div class="mono" id="machineMeta"></div>
+    <div id="alerts"></div>
+  </div>
+
+  <div class="card"><h2>Totaux de la machine</h2><div class="grid" id="totals"></div></div>
+  <div class="card"><h2>Devices</h2><div id="devices"></div></div>
+  <div class="card"><h2>Mineurs GPU / CPU</h2><div id="miners"></div></div>
+  <div class="card"><h2>Sondes CPU</h2><div id="cpu"></div></div>
+  <div class="card"><h2>Alimentations</h2><div id="psu"></div></div>
+  <div class="card"><h2>Collecte</h2><div id="collect"></div></div>
+</div>
+<script>
+const $ = (s) => document.querySelector(s);
+function esc(v) {
+  return String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+const UNITS = [["PH/s", 1e15], ["TH/s", 1e12], ["GH/s", 1e9], ["MH/s", 1e6], ["kH/s", 1e3], ["H/s", 1]];
+function fmtHs(hs) {
+  if (hs === null || hs === undefined || isNaN(hs)) return "—";
+  const v = Number(hs);
+  for (const [label, factor] of UNITS) {
+    if (Math.abs(v) >= factor || factor === 1) {
+      const s = v / factor;
+      return s.toFixed(Math.abs(s) >= 100 ? 0 : 1) + " " + label;
+    }
+  }
+  return "—";
+}
+const fmtW = (w) => (w === null || w === undefined || isNaN(w)) ? "—" : Math.round(Number(w)) + " W";
+const fmtT = (t) => (t === null || t === undefined || isNaN(t)) ? "—" : Math.round(Number(t)) + " °C";
+const fmtP = (p) => (p === null || p === undefined || isNaN(p)) ? "—" : Math.round(Number(p)) + " %";
+const fmtAge = (s) => (s === null || s === undefined) ? "jamais" : (s < 90 ? s + " s" : (s < 3600 ? Math.round(s / 60) + " min" : Math.round(s / 3600) + " h"));
+let MACHINES = [];
+
+function visibleDevices(m) {
+  return (m.devices || []).filter((d) => d.present !== false)
+    .filter((d) => !(d.integrated && !d.enabled_for_mining));
+}
+
+function render(m) {
+  const devs = visibleDevices(m);
+  $("#machineTitle").textContent = m.name || "—";
+  $("#machineMeta").textContent = [m.host, m.os_kind, m.username, m.error ? "erreur : " + m.error : ""]
+    .filter(Boolean).join(" · ");
+  $("#alerts").innerHTML = (m.api_error ? '<div class="err">⚠️ API du mineur : ' + esc(m.api_error) + "</div>" : "") +
+    (m.error ? '<div class="err">' + esc(m.error) + "</div>" : "");
+  $("#totals").innerHTML = [
+    ["Hashrate", fmtHs(m.total_hashrate_hs)],
+    ["Consommation", fmtW(m.wall_power_w || m.total_power_w)],
+    ["Uptime", m.uptime_s ? Math.round(m.uptime_s / 3600) + " h" : "—"],
+    ["Devices", devs.length + " / " + (m.devices || []).length],
+    ["État", m.collected ? (m.online ? "en ligne" : "hors ligne") : "jamais collectée"],
+  ].map(([k, v]) => '<div><span class="k">' + k + '</span><span class="v">' + esc(v) + "</span></div>").join("");
+
+  $("#devices").innerHTML = devs.length ? '<table><thead><tr><th>Device</th><th>Rôle</th>' +
+    '<th style="text-align:right">Hashrate</th><th style="text-align:right">Temp</th>' +
+    '<th style="text-align:right">Ventilo</th><th style="text-align:right">Conso</th>' +
+    '<th style="text-align:right">Charge</th></tr></thead><tbody>' +
+    devs.map((d) => {
+      const label = d.kind === "cpu" ? "CPU · " + (d.model || "") : "GPU " + (d.index === null ? "?" : d.index) + " · " + (d.model || "");
+      const role = d.role === "default_only" ? "défaut seul" : "défaut + spec";
+      return "<tr><td>" + esc(label) + (d.boost_pool ? ' <span class="chip on">boost</span>' : "") +
+        "</td><td>" + esc(role) + "</td>" +
+        '<td class="num">' + fmtHs(d.hashrate_hs) + "</td>" +
+        '<td class="num">' + fmtT(d.temp_c) + "</td>" +
+        '<td class="num">' + fmtP(d.fan_pct) + "</td>" +
+        '<td class="num">' + fmtW(d.power_w) + "</td>" +
+        '<td class="num">' + fmtP(d.load_pct) + "</td></tr>";
+    }).join("") + "</tbody></table>" :
+    '<div class="empty">Aucun device sélectionné pour le minage.</div>';
+
+  const miners = m.external_miners || [];
+  const cpu = m.cpu || {};
+  $("#miners").innerHTML = miners.length ? '<table><thead><tr><th>Mineur</th><th>Coin</th>' +
+    '<th style="text-align:right">Hashrate</th><th>Source</th></tr></thead><tbody>' +
+    miners.map((x) => "<tr><td>" + esc([x.name, x.version].filter(Boolean).join(" ")) +
+      (x.kind === "cpu" ? " (CPU)" : "") + "</td><td>" + esc(x.coin || x.algorithm || "—") +
+      '</td><td class="num">' + esc(x.hashrate_hs ? fmtHs(x.hashrate_hs) : (x.hashrate_note || "inconnu")) +
+      "</td><td>" + esc(x.hashrate_source || x.pool || "—") + "</td></tr>").join("") +
+    "</tbody></table>" : '<div class="empty">Aucun mineur externe détecté.</div>';
+
+  const cpuMiners = (cpu.miners || []).map((x) => (x.coin || "?") + " · " +
+    (x.hashrate_hs ? fmtHs(x.hashrate_hs) : (x.note || "inconnu")) +
+    (x.source ? " · source " + x.source : "")).join("<br>");
+  $("#cpu").innerHTML = '<div class="grid">' + [
+    ["Charge", fmtP(cpu.load_pct)], ["Température", fmtT(cpu.temp_c)],
+    ["Fréquence", cpu.freq_mhz ? (cpu.freq_mhz / 1000).toFixed(2) + " GHz" : "—"],
+    ["Puissance", cpu.power_w === null || cpu.power_w === undefined ? "non mesurée" : fmtW(cpu.power_w)],
+  ].map(([k, v]) => '<div><span class="k">' + k + '</span><span class="v">' + esc(v) + "</span></div>").join("") +
+    "</div>" + (cpu.power_source ? '<div class="mono">source puissance : ' + esc(cpu.power_source) + "</div>" : "") +
+    (cpuMiners ? '<div style="margin-top:8px;font-size:12px">' + cpuMiners + "</div>" : "");
+
+  $("#collect").innerHTML = '<div class="grid">' + [
+    ["Dernière collecte", fmtAge(m.age_s)], ["Devices remontés", (m.devices || []).length],
+    ["Collecte brute", "onglet Machines → « Dernière collecte brute »"],
+  ].map(([k, v]) => '<div><span class="k">' + k + '</span><span class="v">' + esc(v) + "</span></div>").join("") + "</div>";
+  $("#psu").innerHTML = '<div class="empty">Charge des alimentations : voir la fiche machine (onglet Machines).</div>';
+}
+
+async function loadPower(m) {
+  if (!m || !m.id) return;
+  try {
+    const res = await fetch("/api/machines/" + m.id + "/power", { credentials: "include" });
+    if (!res.ok) return;
+    const data = await res.json();
+    const psus = data.psus || [];
+    if (!psus.length) return;
+    $("#psu").innerHTML = '<table><thead><tr><th>Alimentation</th><th style="text-align:right">Nominale</th>' +
+      '<th style="text-align:right">Charge</th><th style="text-align:right">Utilisation</th></tr></thead><tbody>' +
+      psus.map((p) => "<tr><td>" + esc(p.name || "PSU") + '</td><td class="num">' + fmtW(p.rated_w) +
+        '</td><td class="num">' + fmtW(p.load_w) + '</td><td class="num">' + fmtP(p.load_pct) + "</td></tr>").join("") +
+      "</tbody></table>";
+  } catch (err) { /* pas de panneau PSU : on garde le texte */ }
+}
+
+async function load() {
+  const res = await fetch("/api/metrics/live", { credentials: "include" });
+  if (res.status === 401) { window.location.href = "/"; return; }
+  const live = await res.json();
+  MACHINES = Array.isArray(live) ? live : (live.machines || []);
+  const wanted = new URLSearchParams(window.location.search).get("machine");
+  const select = $("#machineSelect");
+  select.innerHTML = MACHINES.map((m) => '<option value="' + esc(m.uuid) + '">' + esc(m.name) + "</option>").join("");
+  const chosen = MACHINES.find((m) => m.uuid === wanted) || MACHINES[0];
+  if (!chosen) {
+    $("#machineTitle").textContent = "Aucune machine";
+    return;
+  }
+  select.value = chosen.uuid;
+  render(chosen);
+  loadPower(chosen);
+  select.onchange = () => {
+    const m = MACHINES.find((x) => x.uuid === select.value);
+    if (m) { render(m); loadPower(m); }
+  };
+}
+load();
+</script>
+</body>
+</html>

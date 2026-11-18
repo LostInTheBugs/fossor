@@ -11,10 +11,20 @@ from __future__ import annotations
 from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app import auto_update, update_checker, updater_client
+from app import auto_update, update_checker, update_settings, updater_client
 from app.database import get_db
 from app.dependencies import require_login
 from app.models import AuditLog
+
+
+def _installed_version() -> str:
+    """Version de l'application lue dans ``VERSION`` (pas de constante en dur)."""
+    from pathlib import Path
+
+    try:
+        return (Path(__file__).resolve().parents[2] / "VERSION").read_text().strip()
+    except OSError:
+        return ""
 
 router = APIRouter(prefix="/api/update", tags=["update"])
 
@@ -40,6 +50,7 @@ async def update_status(
     payload = update_checker.status()
     payload["updater"] = updater_client.payload()
     payload["auto"] = auto_update.state(db)
+    payload["settings"] = update_settings.read(db)
     return payload
 
 
@@ -126,3 +137,94 @@ def put_auto(
     )
     db.commit()
     return {"ok": True, **state}
+
+
+# ── Réglages et actions §4.19 ──────────────────────────────────────────────
+@router.get("/history")
+def update_history(limit: int = 200, _user=Depends(require_login)):
+    """Historique des mises à jour (``history.jsonl``), le plus récent d'abord."""
+    return {"entries": updater_client.read_history(max(1, min(limit, 500)))}
+
+
+@router.put("/settings")
+def put_update_settings(
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    _user=Depends(require_login),
+):
+    """Fréquence de vérification, application automatique, version ignorée."""
+    try:
+        values = update_settings.save(db, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    _audit(
+        db,
+        "update_settings",
+        "update",
+        f"intervalle={values['check_interval_s']} auto={values['auto_apply']} "
+        f"ignore={values['ignorer_auto']}",
+    )
+    db.commit()
+    return {"ok": True, "settings": values}
+
+
+def _previous_version() -> dict:
+    previous = updater_client.payload().get("precedente") or {}
+    if not previous.get("version"):
+        raise HTTPException(
+            status_code=400,
+            detail="Aucune version précédente conservée sur cette installation",
+        )
+    if not previous.get("image"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"L'image de la version {previous['version']} n'est plus présente sur le serveur",
+        )
+    return previous
+
+
+@router.post("/rollback")
+def rollback(
+    db: Session = Depends(get_db),
+    _user=Depends(require_login),
+):
+    """Revenir à la version précédente conservée, base restaurée."""
+    previous = _previous_version()
+    try:
+        result = updater_client.request_action(db, "rollback", previous["version"])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    update_settings.ignore_auto(db, _installed_version())
+    _audit(db, "update_rollback", previous["version"], f"cible={previous['version']}")
+    db.commit()
+    return {"ok": True, "target": previous["version"], **result}
+
+
+@router.post("/forget-previous")
+def forget_previous(
+    db: Session = Depends(get_db),
+    _user=Depends(require_login),
+):
+    """Supprimer l'image conservée de la version précédente."""
+    previous = _previous_version()
+    try:
+        result = updater_client.request_action(db, "forget_previous", previous["version"])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    _audit(db, "update_forget_previous", previous["version"], f"cible={previous['version']}")
+    db.commit()
+    return {"ok": True, "target": previous["version"], **result}
+
+
+@router.delete("/request")
+def cancel_request(
+    db: Session = Depends(get_db),
+    _user=Depends(require_login),
+):
+    """Annuler la demande en attente (le fichier n'est pas encore traité)."""
+    path = updater_client.request_path()
+    existed = path.exists()
+    path.unlink(missing_ok=True)
+    _audit(db, "update_cancel", "request", f"annulée={existed}")
+    db.commit()
+    return {"ok": True, "cancelled": existed}

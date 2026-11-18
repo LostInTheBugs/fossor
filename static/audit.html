@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Fossor — Audit Log</title>
+<title>Fossor — Log</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#12161c;--card:#1a2029;--border:#2c3544;--txt:#e6edf3;--muted:#8b98a9;--accent:#4f8cff;--green:#3fb950;--red:#f85149;--yellow:#d29922}
@@ -11,11 +11,14 @@ body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,-app
 .wrap{max-width:1100px;margin:0 auto;padding:28px 18px 40px}
 header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
 header h1{font-size:26px}
-header a{color:var(--accent);font-size:13px;text-decoration:none}
-.nav-tabs{display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--border)}
-.nav-tabs a{color:var(--muted);padding:8px 16px;font-size:13.5px;font-weight:600;text-decoration:none;border:1px solid transparent;border-bottom:none;border-radius:10px 10px 0 0;cursor:pointer}
+.nav-tabs{display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.nav-tabs a{color:var(--muted);padding:8px 16px;font-size:13.5px;font-weight:600;text-decoration:none;border:1px solid transparent;border-bottom:none;border-radius:10px 10px 0 0}
 .nav-tabs a:hover{color:var(--txt)}
 .nav-tabs a.active{background:var(--card);border-color:var(--border);color:var(--txt)}
+.subtabs{display:flex;gap:6px;margin:-6px 0 18px}
+.subtab{background:transparent;border:1px solid var(--border);color:var(--muted);padding:6px 14px;border-radius:999px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit}
+.subtab.active{background:var(--card);color:var(--txt);border-color:var(--accent)}
+.panel{display:none}.panel.active{display:block}
 table{width:100%;border-collapse:collapse;font-size:12px}
 th{background:var(--card);text-align:left;color:var(--muted);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.4px;padding:7px 8px;border-bottom:1px solid var(--border)}
 td{padding:8px;border-bottom:1px solid var(--border);vertical-align:top}
@@ -25,41 +28,83 @@ tr:hover td{background:rgba(79,140,255,.04)}
 .chip{display:inline-block;font-size:10px;font-weight:700;padding:2px 9px;border-radius:999px;text-transform:uppercase;letter-spacing:.3px}
 .chip.ok{background:#1a3a2a;color:var(--green);border:1px solid var(--green)}
 .chip.err{background:#3a1d1d;color:var(--red);border:1px solid var(--red)}
+.chip.warn{background:#3a2f1a;color:var(--yellow);border:1px solid var(--yellow)}
 </style>
   <script src="/static/nav.js" defer></script>
 </head>
 <body>
 <div class="wrap">
-  <header>
-    <h1>📋 Audit Log</h1>
-    <div><a href="/machines">← Machines</a></div>
-  </header>
+  <header><h1>📋 Log</h1></header>
   <nav id="nav"></nav>
-  <table><thead><tr><th>Horodatage</th><th>Acteur</th><th>Action</th><th>Machine</th><th>Résultat</th><th>Détails</th></tr></thead><tbody id="logBody"></tbody></table>
-  <div id="emptyMsg" class="mono" style="padding:20px;text-align:center;display:none">Aucune entrée.</div>
+  <div class="subtabs">
+    <button class="subtab active" id="tabAudit" data-panel="panel-audit">Audit</button>
+    <button class="subtab" id="tabHistory" data-panel="panel-history">Historique des mises à jour</button>
+  </div>
+
+  <section class="panel active" id="panel-audit">
+    <table><thead><tr><th>Horodatage</th><th>Acteur</th><th>Action</th><th>Objet</th><th>Résultat</th><th>Détails</th></tr></thead><tbody id="logBody"></tbody></table>
+    <div id="emptyAudit" class="mono" style="padding:20px;text-align:center;display:none">Aucune entrée.</div>
+  </section>
+
+  <section class="panel" id="panel-history">
+    <table><thead><tr><th>Date</th><th>De → vers</th><th>Étape</th><th>Résultat</th><th>Rollback</th><th>self_update</th><th>Détail</th></tr></thead><tbody id="histBody"></tbody></table>
+    <div id="emptyHistory" class="mono" style="padding:20px;text-align:center;display:none">Aucune mise à jour enregistrée.</div>
+  </section>
 </div>
 <script>
-const $=s=>document.querySelector(s);
-fetch('/api/audit-log',{credentials:'include'}).then(r=>{
-  if(r.status===401){location.href='/';return;}
-  return r.json();
-}).then(data=>{
-  if(!data)return;
-  const tbody=$('#logBody');
-  if(!data.length){$('#emptyMsg').style.display='block';return;}
-  tbody.innerHTML=data.map(l=>{
-    const resultClass=l.result==='ok'?'ok':'err';
-    const ts=new Date(l.ts).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
-    return `<tr>
-      <td class="mono">${ts}</td>
-      <td>${l.actor}</td>
-      <td><b>${l.action}</b></td>
-      <td class="mono">${l.object_ref||'—'}</td>
-      <td><span class="chip ${resultClass}">${l.result}</span></td>
-      <td>${l.output?`<div class="logbox">${l.output}</div>`:'—'}</td>
-    </tr>`;
-  }).join('');
+const $ = (s) => document.querySelector(s);
+const esc = (v) => String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({
+  "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+}[c]));
+const fmtDate = (v) => {
+  if (!v) return "—";
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? esc(v) : d.toLocaleString("fr-FR");
+};
+
+document.querySelectorAll(".subtab").forEach((button) => {
+  button.addEventListener("click", () => {
+    document.querySelectorAll(".subtab").forEach((b) => b.classList.toggle("active", b === button));
+    document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("active", p.id === button.dataset.panel));
+    if (button.dataset.panel === "panel-history") { loadHistory(); }
+  });
 });
+
+async function loadAudit() {
+  const res = await fetch("/api/audit-log", { credentials: "include" });
+  if (res.status === 401) { location.href = "/"; return; }
+  const data = await res.json();
+  if (!data.length) { $("#emptyAudit").style.display = "block"; return; }
+  $("#logBody").innerHTML = data.map((l) => "<tr>" +
+    '<td class="mono">' + fmtDate(l.ts) + "</td><td>" + esc(l.actor) + "</td>" +
+    "<td><b>" + esc(l.action) + '</b></td><td class="mono">' + esc(l.object_ref || "—") + "</td>" +
+    '<td><span class="chip ' + (l.result === "ok" ? "ok" : "err") + '">' + esc(l.result) + "</span></td>" +
+    "<td>" + (l.output ? '<div class="logbox">' + esc(l.output) + "</div>" : "—") + "</td></tr>").join("");
+}
+
+async function loadHistory() {
+  const res = await fetch("/api/update/history", { credentials: "include" });
+  if (!res.ok) { $("#emptyHistory").style.display = "block"; return; }
+  const data = await res.json();
+  const entries = data.entries || [];
+  if (!entries.length) { $("#emptyHistory").style.display = "block"; return; }
+  $("#emptyHistory").style.display = "none";
+  $("#histBody").innerHTML = entries.map((e) => {
+    const rollback = e.event === "rolled_back" || e.event === "rollback" ? "oui" : (e.restore ? "base restaurée" : "non");
+    const selfUpdate = e.event === "self_update" ? "oui" : "non";
+    const detail = e.message || e.reason || e.detail || "";
+    const cls = e.event === "finished" ? "ok" : (e.event === "rolled_back" || e.event === "refused" || e.event === "failed" ? "err" : "warn");
+    return "<tr>" +
+      '<td class="mono">' + fmtDate(e.at || e.ts) + "</td>" +
+      "<td>" + esc(e.from || "—") + " → " + esc(e.to || e.target || "—") + "</td>" +
+      '<td><span class="chip ' + cls + '">' + esc(e.event || e.step || "—") + "</span></td>" +
+      "<td>" + esc(e.result || e.state || "—") + "</td>" +
+      "<td>" + esc(rollback) + "</td><td>" + esc(selfUpdate) + "</td>" +
+      '<td class="mono">' + esc(detail) + "</td></tr>";
+  }).join("");
+}
+
+loadAudit();
 </script>
 </body>
 </html>

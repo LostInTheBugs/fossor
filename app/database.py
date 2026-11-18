@@ -77,6 +77,7 @@ def init_db():
     _migrate_device_psu_columns()
     _migrate_device_psu_split_meaning()
     _migrate_machine_os_detected_column()
+    _migrate_device_role_columns()
 
 
 def _migrate_machine_os_detected_column():
@@ -201,6 +202,21 @@ def _migrate_machine_power_columns():
     _add_column_if_missing(
         "machines", "platform_power_w", "platform_power_w FLOAT NOT NULL DEFAULT 50"
     )
+
+
+def _migrate_device_role_columns():
+    """§4.19 : rôle de chaque device, pool de boost, token par défaut du device.
+
+    Les devices existants passent à ``default_and_spec`` : le comportement des
+    campagnes ne change pas pour eux, seul le réglage devient explicite.
+    """
+    _add_column_if_missing(
+        "devices", "role", "role VARCHAR(20) NOT NULL DEFAULT 'default_and_spec'"
+    )
+    _add_column_if_missing(
+        "devices", "boost_pool", "boost_pool BOOLEAN NOT NULL DEFAULT 0"
+    )
+    _add_column_if_missing("devices", "default_token_id", "default_token_id INTEGER")
 
 
 def _migrate_device_occupied_external_column():

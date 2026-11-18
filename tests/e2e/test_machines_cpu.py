@@ -93,7 +93,9 @@ async def test_machine_sheet_shows_cpu_state_and_cpu_miner_hashrate(e2e_server):
         await page.reload(wait_until="networkidle")
 
         # Ligne CPU de la fiche : charge, température, fréquence, puissance.
-        cpu_line = page.locator('[data-cpu-line="1"]').first
+        # La page liste toutes les machines : cibler CELLE du test (nombre de la
+        # collecte semée), sinon .first tombe sur une machine d'un autre test.
+        cpu_line = page.locator('[data-cpu-line="1"]:has-text("charge 67.5 %")').first
         await cpu_line.wait_for(state="attached", timeout=8000)
         text = await cpu_line.text_content()
         assert "charge 67.5 %" in text, text
@@ -106,7 +108,7 @@ async def test_machine_sheet_shows_cpu_state_and_cpu_miner_hashrate(e2e_server):
         assert "source log /var/log/athlon-korsh-miner.log" in text, text
 
         # L'alerte « mineur externe » porte aussi le hashrate et sa source.
-        alert = await page.locator(".miner-alert").first.text_content()
+        alert = await page.locator('.miner-alert:has-text("238 MH/s")').first.text_content()
         assert "238 MH/s" in alert, alert
         assert "source log" in alert, alert
 

@@ -145,6 +145,17 @@ class Device(Base):
     integrated: Mapped[bool] = mapped_column(Boolean, default=False)
     # GPU occupied by an external miner not managed by Fossor.
     occupied_external: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # §4.19 : rôle du device vis-à-vis du token par défaut et du spec mining.
+    # ``default_only`` : jamais pris par une campagne ; ``default_and_spec`` : peut
+    # l'être, puis revient au token par défaut.  Les devices existants passent à
+    # ``default_and_spec`` par migration.
+    role: Mapped[str] = mapped_column(
+        String(20), default="default_and_spec", server_default="default_and_spec"
+    )
+    # §4.19/§10 : le device fait partie du groupe mobilisé par le mode boost.
+    boost_pool: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # §4.19 : token par défaut propre au device (sinon celui de la machine, sinon le global).
+    default_token_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # §4.2 bis : alimentation qui porte le device, et seconde PSU quand un GPU
     # est réparti (part slot/riser sur psu_id, le reste sur psu2_id).
     psu_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

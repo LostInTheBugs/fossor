@@ -221,7 +221,7 @@ const machineUsage=id=>{
   return 'none';
 };
 const deviceRows=(m)=>{
-  const devs=DEVICES[m.id]||[];
+  const devs=(DEVICES[m.id]||[]).filter(d=>!(d.integrated&&HIDE_IGPU&&!d.enabled_for_mining));
   if(!devs.length)return '<div class="empty" style="padding:8px">Aucun device détecté — cliquez « Détecter le matériel ».</div>';
   const rows=devs.map(d=>{
     const isCpu=d.kind==='cpu';
@@ -235,9 +235,13 @@ const deviceRows=(m)=>{
       <td class="mono">${details}</td>
       <td class="mono">${d.pci_bus||'—'}</td>
       <td>${masked?'<span class="mono">—</span>':`<input type="checkbox" class="dev-check" ${d.enabled_for_mining?'checked':''} ${d.present?'':'disabled'} onchange="toggleDevice(${d.id},${m.id},this.checked)" title="Miner avec ce device">`}</td>
+      <td>${masked?'<span class="mono">—</span>':`<select onchange="setDeviceRole(${d.id},this.value)" title="Rôle vis-à-vis du token par défaut et du spec mining">
+        <option value="default_and_spec"${(d.role||'default_and_spec')==='default_and_spec'?' selected':''}>Défaut + spec mining</option>
+        <option value="default_only"${d.role==='default_only'?' selected':''}>Token par défaut uniquement</option></select>
+        <label class="mono" style="display:block;margin-top:4px"><input type="checkbox" ${d.boost_pool?'checked':''} onchange="setDeviceBoost(${d.id},this.checked)"> pool de boost</label>`}</td>
     </tr>`;
   }).join('');
-  return `<table class="devtab"><thead><tr><th>Type</th><th>Modèle</th><th>Détails</th><th>Bus PCI</th><th>Miner avec</th></tr></thead><tbody>${rows}</tbody></table>`;
+  return `<table class="devtab"><thead><tr><th>Type</th><th>Modèle</th><th>Détails</th><th>Bus PCI</th><th>Miner avec</th><th>Rôle / boost</th></tr></thead><tbody>${rows}</tbody></table>`;
 };
 // ── Alimentations et consommation (§4.2 / §4.2 bis) ──────────────────
 const psuOpts=(m,sel)=>['<option value="">— défaut —</option>'].concat(
@@ -380,7 +384,7 @@ const cpuLineHTML=(m)=>{
   return `<div class="cpu-line" data-cpu-line="1" style="font-size:11px;color:var(--muted);margin:6px 0">CPU — ${bits.join(' · ')}${miners.length?'<br>'+miners.join('<br>'):''}</div>`;
 };
 const detailRow=(m)=>{
-  const devs=DEVICES[m.id]||[];
+  const devs=(DEVICES[m.id]||[]).filter(d=>!(d.integrated&&HIDE_IGPU&&!d.enabled_for_mining));
   const present=devs.filter(d=>d.present).length;
   const label=devs.length?`${present} présent(s)${devs.length-present?' · '+(devs.length-present)+' absent(s)':''}`:'aucune détection';
   const pending=m.auth_type==='provision_pending';
@@ -517,6 +521,16 @@ const retryProvision=async(id)=>{
   // Open modal pre-filled for re-provisioning
   editMachine(id);
 };
+const patchDevice=async(deviceId,body,message)=>{
+  const r=await fetch('/api/devices/'+deviceId,{method:'PATCH',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){toast(d.detail||'Modification refusée','err');return false;}
+  toast(message); await loadMachines(); return true;
+};
+const setDeviceRole=(id,role)=>patchDevice(id,{role:role},'Rôle du device enregistré');
+const setDeviceBoost=(id,on)=>patchDevice(id,{boost_pool:!!on},'Pool de boost '+(on?'activé':'désactivé'));
+
 const toggleDevice=async(deviceId,machineId,checked)=>{
   const r=await fetch('/api/devices/'+deviceId,{method:'PATCH',credentials:'include',
     headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled_for_mining:checked})});

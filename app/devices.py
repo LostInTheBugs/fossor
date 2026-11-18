@@ -339,6 +339,10 @@ def device_to_dict(device: Device) -> dict[str, Any]:
         "enabled_for_mining": device.enabled_for_mining,
         "integrated": device.integrated,
         "occupied_external": device.occupied_external,
+        # §4.19 : rôle (token par défaut / spec mining), pool de boost, token propre.
+        "role": getattr(device, "role", None) or "default_and_spec",
+        "boost_pool": bool(getattr(device, "boost_pool", False)),
+        "default_token_id": getattr(device, "default_token_id", None),
         # §4.2 bis : PSU qui porte la carte (et seconde PSU si réparti).
         "psu_id": device.psu_id,
         "psu2_id": device.psu2_id,
