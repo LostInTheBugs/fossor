@@ -244,14 +244,18 @@ def compute_power(
             gpus_without_psu.append(label)
             add(None, watts, label, is_measured)
             continue
-        if psu2_id is not None:
+        if psu2_id is not None and psu_id is not None:
             split = device.get("split_w")
             slot = 75.0 if split is None else max(0.0, float(split))
             slot = min(slot, watts)
             add(psu_id, slot, f"{label} (slot/riser)", is_measured)
             add(psu2_id, watts - slot, f"{label} (reste)", is_measured)
-        else:
+        elif psu_id is not None:
             add(psu_id, watts, label, is_measured)
+        else:
+            # 2026.11.004-c5 : une seconde PSU seule porte la carte entière —
+            # la répartition slot/riser exige les deux alimentations.
+            add(psu2_id, watts, label, is_measured)
 
     rows: list[dict[str, Any]] = []
     total_wall = 0.0

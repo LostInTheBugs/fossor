@@ -24,6 +24,39 @@ from app import auto_update, update_checker, updater_client
 PARIS = ZoneInfo("Europe/Paris")
 
 
+@pytest.fixture(autouse=True)
+def _known_releases(monkeypatch):
+    """Aucun test ne joint GitHub : les releases connues sont posées ici."""
+    monkeypatch.setattr(update_checker, "known_versions", lambda: ["2026.11.004"])
+
+
+async def test_apply_uses_requested_target_not_latest(client, tmp_path, monkeypatch):
+    """2026.11.004-c5 : ``apply`` vise la version demandée, jamais ``latest``."""
+    write_status(tmp_path)
+    monkeypatch.setattr(
+        update_checker, "known_versions", lambda: ["2026.11.005", "2026.11.004-c5"]
+    )
+    monkeypatch.setattr(update_checker, "status", lambda: {"latest_version": "2026.11.005"})
+    response = await client.post("/api/update/apply", json={"target": "2026.11.004-c5"})
+    assert response.status_code == 200, response.text
+    assert response.json()["target"] == "2026.11.004-c5"
+    request = json.loads((tmp_path / "update" / "request.json").read_text())
+    assert request["target"] == "2026.11.004-c5"
+
+
+async def test_apply_refuses_unknown_release(client, tmp_path, monkeypatch):
+    write_status(tmp_path)
+    monkeypatch.setattr(update_checker, "known_versions", lambda: [])
+
+    async def fake_check(force: bool = False):
+        return update_checker.STATE
+
+    monkeypatch.setattr(update_checker, "check", fake_check)
+    response = await client.post("/api/update/apply", json={"target": "2026.11.777"})
+    assert response.status_code == 400
+    assert "inconnue" in response.json()["detail"]
+
+
 def session():
     from app.database import SessionLocal
 

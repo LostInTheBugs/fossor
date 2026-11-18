@@ -84,14 +84,18 @@ KSH_CPUMINER_LOG = """[2026-11-18 00:23:10] yespower: stratum+tcp://pool.korsh.o
                       Periodic Report     5m04s        2d07h
                       Hash rate          0.00h/s      0.00h/s   (235.66Mh/s)"""
 
-PROBE_RIG = """### LOGI 4993 /root/korsh/mining.log
+PROBE_RIG = """### JLOG 697
+-- No entries --
+### LOGI 4993 /root/korsh/mining.log
 1794961673
 {korsh}
-### JLOG 697
+### JLOG 4993
 -- No entries --
 ### LOGI 699 /root/wam/miner.log
 1794961532
 {wam}
+### JLOG 699
+-- No entries --
 ### NODE korsh
 {{
   "blocks": 78497,

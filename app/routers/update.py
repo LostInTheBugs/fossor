@@ -51,13 +51,33 @@ async def check_now(_user=Depends(require_login)):
 
 
 @router.post("/apply")
-def apply_update(
+async def apply_update(
     payload: dict = Body(default_factory=dict),
     db: Session = Depends(get_db),
     _user=Depends(require_login),
 ):
     """Sauvegarde la base puis demande la mise à jour au compagnon."""
-    target = str(payload.get("target") or update_checker.status().get("latest_version") or "")
+    # 2026.11.004-c5 : la cible demandée est utilisée telle quelle ; elle est
+    # seulement validée (format puis release publiée, avec un ``check`` si le
+    # cache ne la connaît pas).  Sans cible : la dernière version connue.
+    requested = payload.get("target") or payload.get("version")
+    if requested in (None, ""):
+        target = str(update_checker.status().get("latest_version") or "")
+    else:
+        try:
+            target = updater_client.normalize_target(str(requested).strip())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        if target not in update_checker.known_versions():
+            await update_checker.check(force=True)
+            if target not in update_checker.known_versions():
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Version {target} inconnue : aucune release publiée "
+                        "sous ce tag"
+                    ),
+                )
     try:
         result = updater_client.request_update(db, target)
     except ValueError as exc:

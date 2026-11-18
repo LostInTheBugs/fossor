@@ -1097,6 +1097,12 @@ def _mtime_text(mtime: int) -> str:
         return ""
 
 
+def _usable_log_text(text: Any) -> bool:
+    """Un texte de log exploitable : ni vide, ni le placeholder de journald."""
+    stripped = str(text or "").strip()
+    return bool(stripped) and stripped != "-- No entries --"
+
+
 def _attach_solo(
     miner: dict[str, Any],
     probes: dict[str, Any],
@@ -1131,12 +1137,22 @@ def _attach_solo(
     for path, pid in (report.get("log_pids") or {}).items():
         if pid in pids and path not in candidates:
             candidates.append(path)
+    # 2026.11.004-c5 : la sonde émet un ``### JLOG <pid>`` (« -- No entries -- »
+    # quand journald n'a rien pour ce pid) avant le ``### LOGI`` du même pid.
+    # Un JLOG vide n'est pas un log : il est écarté, et un vrai fichier passe
+    # avant le journal quel que soit l'ordre des sections.
+    usable: list[str] = []
     for candidate in candidates:
         entry = report["logs"].get(candidate)
-        if entry and entry.get("text"):
-            log_entry = dict(entry, path=candidate)
-            break
-    if not log_entry and (node.get("log") or {}).get("text"):
+        if candidate in usable or not isinstance(entry, dict):
+            continue
+        if _usable_log_text(entry.get("text")):
+            usable.append(candidate)
+    usable.sort(key=lambda path: str(path).startswith("journal:"))
+    for candidate in usable:
+        log_entry = dict(report["logs"][candidate], path=candidate)
+        break
+    if not log_entry and _usable_log_text((node.get("log") or {}).get("text")):
         # ``### LOGS`` : la redirection du lanceur, hors ``report["logs"]``.
         entry = node["log"]
         log_entry = {"path": entry.get("path", ""), "mtime": entry.get("mtime"),
@@ -1217,6 +1233,27 @@ def _format_hs(value: float | None) -> str:
     return f"{number:.2f} {units[index]}" if number < 100 else f"{number:.0f} {units[index]}"
 
 
+#: TDP des modèles courants (W, spécification constructeur) : c'est une
+#: **estimation**, affichée comme telle et jamais confondue avec une mesure.
+CPU_TDP: tuple[tuple[str, float, str], ...] = (
+    ("athlon 3000g", 35.0, "Athlon 3000G"),
+    ("ryzen 5 5600g", 65.0, "Ryzen 5 5600G"),
+    ("ryzen 5 3600", 65.0, "Ryzen 5 3600"),
+    ("i5-12400", 65.0, "Core i5-12400"),
+    ("i5-4570", 84.0, "Core i5-4570"),
+)
+CPU_GENERIC_W = 65.0
+
+
+def estimate_cpu_w(model: str | None) -> tuple[float, str]:
+    """``(watts, source)`` — TDP du modèle, sinon 65 W générique (estimé)."""
+    text = str(model or "").lower()
+    for token, watts, label in CPU_TDP:
+        if token in text:
+            return watts, f"TDP du modèle ({label})"
+    return CPU_GENERIC_W, "estimation générique 65 W"
+
+
 def cpu_state_with(
     report: dict[str, Any],
     hive_cputemp: float | None = None,
@@ -1258,9 +1295,18 @@ def cpu_state_with(
         if float(typed_power_w) > 0:
             state["power_w"] = float(typed_power_w)
             state["power_source"] = "saisie (machines.cpu_power_w)"
+    # 5e source (2026.11.004-c5) : le TDP du modèle, puis 65 W générique.
+    # Une estimation se déclare (``power_estimated``) et porte sa source.
+    estimated = False
+    if state.get("power_w") is None or float(state["power_w"]) <= 0:
+        watts, source = estimate_cpu_w(state.get("model"))
+        state["power_w"] = watts
+        state["power_source"] = source
+        estimated = True
     if state.get("power_w") is not None and float(state["power_w"]) <= 0:
         state["power_w"] = None
         state["power_source"] = "non mesurée"
+    state["power_estimated"] = estimated
     state["power_source"] = state.get("power_source") or "non mesurée"
     state["freq_source"] = state.get("freq_source") or ""
     # 2026.11.004 : on n'additionne jamais deux algos. Le total du device CPU

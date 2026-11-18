@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026.11.004-c5 — 2026-11-18
+- Solo KORSH : un `### JLOG` vide (« -- No entries -- ») n'est plus pris pour un
+  log, et un vrai fichier passe avant le journal — le rig retrouve ≈ 6,25 kH/s
+  (source « log du script ») ; la fixture `PROBE_RIG` porte les JLOG réels.
+- `POST /api/update/apply` : la version demandée est validée (format puis release
+  publiée, avec un `check` si le cache l'ignore) et utilisée telle quelle ; sans
+  version, la dernière connue.
+- Alimentations : `psu2_id` sans `psu_id` → 422, `psu2_id == psu_id` → 422,
+  `split_w` = part slot/riser (75 W par défaut, NULL sans seconde PSU) ; le
+  second menu n'est actif qu'avec une PSU 1 différente ; migration des
+  affectations existantes (`psu_id` NULL + `psu2_id` → `psu_id`).
+- Puissance CPU : table de TDP des modèles courants (Athlon 3000G 35 W, Ryzen 5
+  3600/5600G 65 W, i5-4570 84 W, i5-12400 65 W), estimation déclarée
+  (`power_estimated`) avec sa source, ordre mesure > saisie > TDP > 65 W
+  générique ; `GET /api/machines/<id>/power` expose le bloc `cpu`.
+
 ## [2026.11.004-c4] — 2026-11-18
 
 ### Corrigé

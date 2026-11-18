@@ -75,6 +75,7 @@ def init_db():
     _migrate_machine_status_api_error_column()
     _migrate_machine_status_cpu_json_column()
     _migrate_device_psu_columns()
+    _migrate_device_psu_split_meaning()
     _migrate_machine_os_detected_column()
 
 
@@ -327,6 +328,38 @@ def _migrate_device_psu_columns():
         for name, ddl in (("psu_id", "INTEGER"), ("psu2_id", "INTEGER"), ("split_w", "FLOAT")):
             if name not in cols:
                 conn.execute(f"ALTER TABLE devices ADD COLUMN {name} {ddl}")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _migrate_device_psu_split_meaning():
+    """2026.11.004-c5 : une seconde PSU seule devient la PSU de la carte.
+
+    Le formulaire permettait de choisir une PSU dans le second menu sans rien
+    dans le premier : la base gardait ``psu_id`` NULL et ``psu2_id`` renseigné,
+    puis toute la charge partait sur la PSU par défaut avec l'étiquette
+    « slot/riser ».  La répartition slot/riser exige les deux : on remonte la
+    seconde PSU en première et on efface la part.
+    """
+    import os
+    import sqlite3
+
+    db_url = _get_db_url()
+    if not db_url.startswith("sqlite"):
+        return
+    db_path = db_url.replace("sqlite:///", "").replace("sqlite://", "")
+    if not os.path.exists(db_path):
+        return
+    conn = sqlite3.connect(db_path)
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(devices)").fetchall()}
+        if not {"psu_id", "psu2_id", "split_w"} <= cols:
+            return
+        conn.execute(
+            "UPDATE devices SET psu_id = psu2_id, psu2_id = NULL, split_w = NULL "
+            "WHERE psu_id IS NULL AND psu2_id IS NOT NULL"
+        )
         conn.commit()
     finally:
         conn.close()

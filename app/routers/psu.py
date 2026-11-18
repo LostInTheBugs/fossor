@@ -303,21 +303,32 @@ def assign_device_psu(
     if device is None:
         raise HTTPException(status_code=404, detail="Device introuvable")
     machine = _machine(db, device.machine_id)
-    ids = []
+    resolved: list[int | None] = []
     for field in ("psu_id", "psu2_id"):
         value = data.get(field)
         if value in (None, "", 0):
-            device_psu = None
-        else:
-            psu = _psu_or_404(db, int(value))
-            if psu.machine_id != machine.id:
-                raise HTTPException(status_code=400, detail="Cette alimentation n'appartient pas à la machine")
-            device_psu = psu.id
-        setattr(device, field, device_psu)
-        ids.append(device_psu)
-    if ids[0] is not None and ids[0] == ids[1]:
-        raise HTTPException(status_code=400, detail="psu_id et psu2_id doivent être différents")
-    if "split_w" in data:
+            resolved.append(None)
+            continue
+        psu = _psu_or_404(db, int(value))
+        if psu.machine_id != machine.id:
+            raise HTTPException(status_code=400, detail="Cette alimentation n'appartient pas à la machine")
+        resolved.append(psu.id)
+    target_psu, second_psu = resolved
+    # 2026.11.004-c5 : la répartition slot/riser exige les deux PSU — une
+    # seconde alimentation seule est un choix incomplet, pas une répartition.
+    if second_psu is not None and target_psu is None:
+        raise HTTPException(
+            status_code=422,
+            detail="psu2_id exige psu_id : la part slot/riser se prend sur la PSU 1",
+        )
+    if target_psu is not None and target_psu == second_psu:
+        raise HTTPException(status_code=422, detail="psu_id et psu2_id doivent être différents")
+    device.psu_id = target_psu
+    device.psu2_id = second_psu
+    if second_psu is None:
+        # Pas de seconde PSU, pas de répartition : ``split_w`` perd son sens.
+        device.split_w = None
+    elif "split_w" in data:
         if data["split_w"] in (None, ""):
             device.split_w = None
         else:
@@ -421,14 +432,36 @@ def evaluate_machine_power(db: Session, machine: Machine, notify: bool = False) 
             "enabled": bool(device.enabled_for_mining) and not (device.integrated and hide),
             "integrated": bool(device.integrated),
         })
+    # 2026.11.004-c5 : la puissance CPU suit l'ordre mesure > saisie > TDP du
+    # modèle > 65 W générique, et la réponse dit laquelle a servi.
+    from app.cpu_stats import estimate_cpu_w
+
+    cpu_row = next((row for row in device_rows if row["kind"] == "cpu"), None)
+    cpu_uuid = (cpu_row or {}).get("uuid") or ""
+    cpu_model = (cpu_row or {}).get("model")
+    measured_cpu = measured.get(cpu_uuid)
+    cpu_power_w: float
+    if measured_cpu:
+        cpu_power_w, cpu_source, cpu_estimated = float(measured_cpu), "mesure (dernière collecte)", False
+    elif machine.cpu_power_w:
+        cpu_power_w, cpu_source, cpu_estimated = float(machine.cpu_power_w), "saisie (machines.cpu_power_w)", False
+    else:
+        cpu_power_w, cpu_source = estimate_cpu_w(cpu_model)
+        cpu_estimated = True
     result = compute_power(
         [psu_to_dict(psu) for psu in psus],
         [component_to_dict(row) for row in components],
         device_rows,
-        machine_power_w=machine.cpu_power_w,
+        machine_power_w=cpu_power_w,
     )
     result["machine_id"] = machine.id
     result["machine"] = machine.name
+    result["cpu"] = {
+        "model": cpu_model,
+        "power_w": round(float(cpu_power_w), 1),
+        "power_source": cpu_source,
+        "estimated": cpu_estimated,
+    }
     if notify:
         emit_overload_alerts(db, machine, result)
     return result

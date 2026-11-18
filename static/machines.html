@@ -254,9 +254,9 @@ const powerPanelHTML=(m)=>{
   const gpus=(DEVICES[m.id]||[]).filter(d=>d.kind==='gpu'&&d.present&&!d.integrated);
   const assign=gpus.map(d=>`<div class="assign-row" data-gpu="${d.id}">
     <span class="mono">GPU ${d.index} — ${d.model||''}</span>
-    <select data-assign-primary="${d.id}">${psuOpts(m,d.psu_id)}</select>
-    <select data-assign-second="${d.id}">${psuOpts(m,d.psu2_id)}</select>
-    <input type="number" data-assign-split="${d.id}" value="${d.split_w!=null?d.split_w:75}" min="0" max="600" style="width:72px"> W slot/riser
+    <select data-assign-primary="${d.id}" onchange="syncPsuSelects(${d.id})">${psuOpts(m,d.psu_id)}</select>
+    <select data-assign-second="${d.id}" ${d.psu_id?'':'disabled'} title="PSU 1 requise pour choisir une PSU 2">${psuOpts(m,d.psu2_id)}</select>
+    <input type="number" data-assign-split="${d.id}" value="${d.split_w!=null?d.split_w:75}" min="0" max="600" style="width:72px" title="Part prise sur le slot/riser (PSU 1) ; le reste sur PSU 2"> W slot/riser
     <button class="btn sm outline" onclick="assignPsu(${d.id},${m.id})">Affecter</button>
   </div>`).join('');
   const total=`<div style="font-size:12px;margin-bottom:6px">Conso totale : <b>${p.total_dc_w} W DC</b> · <b>${p.total_wall_w} W à la prise</b> — mesuré ${p.measured_w} W, estimé ${p.estimated_w} W${p.psus.length?' · pire charge '+p.worst_load_pct+' % ('+p.worst_psu+')':''}</div>`;
@@ -269,7 +269,8 @@ const powerPanelHTML=(m)=>{
       <select id="psuCert-${m.id}"><option value="gold">Gold</option><option value="platinum">Platinum</option><option value="bronze">Bronze</option><option value="silver">Silver</option><option value="titanium">Titanium</option><option value="white">White</option><option value="none">aucune</option></select>
       <button class="btn sm" onclick="addPsu(${m.id})">+ Alimentation</button>
     </div>
-    ${assign?`<div style="margin-top:8px;font-size:11.5px;color:var(--muted)">Affectation GPU → PSU (deux PSU = GPU réparti, part slot/riser sur la première)</div>${assign}`:''}
+    ${p.cpu?`<div class="mono" style="font-size:11.5px">CPU ${p.cpu.model||''} : ${p.cpu.power_w} W — ${p.cpu.power_source}${p.cpu.estimated?' (estimé)':''} · modifiable dans Réglages, colonne « puissance CPU »</div>`:''}
+    ${assign?`<div style="margin-top:8px;font-size:11.5px;color:var(--muted)">Affectation GPU → PSU. PSU 1 porte la carte ; avec une PSU 2, la part « slot/riser » (75 W par défaut) va sur la PSU 1 et le reste sur la PSU 2.</div>${assign}`:''}
     <div class="psu-form">
       <input id="compLabel-${m.id}" placeholder="Ventilateur supplémentaire" style="width:190px">
       <input id="compW-${m.id}" type="number" placeholder="2" style="width:64px">
@@ -293,12 +294,20 @@ const addPsu=async(id)=>{
   if(!r.ok){const d=await r.json().catch(()=>({}));toast(d.detail||'Ajout impossible','err');return;}
   toast('Alimentation ajoutée');await refreshPower(id);
 };
+const syncPsuSelects=(deviceId)=>{
+  const first=$('[data-assign-primary="'+deviceId+'"]');
+  const second=$('[data-assign-second="'+deviceId+'"]');
+  if(!first||!second)return;
+  const value=parseInt(first.value,10)||null;
+  second.disabled=!value;
+  if(!value||parseInt(second.value,10)===value)second.value='';
+};
 const assignPsu=async(deviceId,machineId)=>{
-  const body={
-    psu_id:parseInt($('[data-assign-primary="'+deviceId+'"]').value,10)||null,
-    psu2_id:parseInt($('[data-assign-second="'+deviceId+'"]').value,10)||null,
-    split_w:parseFloat($('[data-assign-split="'+deviceId+'"]').value)||75
-  };
+  const first=parseInt($('[data-assign-primary="'+deviceId+'"]').value,10)||null;
+  const second=parseInt($('[data-assign-second="'+deviceId+'"]').value,10)||null;
+  // 2026.11.004-c5 : jamais de seconde PSU sans première, ni la même des deux côtés.
+  const body={psu_id:first,psu2_id:(first&&second&&second!==first)?second:null};
+  if(body.psu2_id)body.split_w=parseFloat($('[data-assign-split="'+deviceId+'"]').value)||75;
   const r=await fetch('/api/devices/'+deviceId+'/psu',{method:'PUT',credentials:'include',
     headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   if(!r.ok){const d=await r.json().catch(()=>({}));toast(d.detail||'Affectation impossible','err');return;}
