@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026.11.005-c1 — 2026-11-18
+- Fréquence de vérification : le réglage enregistré (Jamais / 1 h / 6 h / 12 h / 24 h)
+  pilote désormais réellement la boucle de vérification ;
+  `FOSSOR_UPDATE_CHECK_INTERVAL` ne sert plus que de valeur par défaut au premier
+  démarrage.
+- Application automatique : une version quittée par un retour arrière n'est plus
+  réinstallée automatiquement, même lorsqu'elle redevient « la dernière ».
+
 ## 2026.11.005 — 2026-11-18
 - Campagnes de minage (§4.7) : modèle `campaigns`, `campaign_devices` et journal
   `campaign_events` ; machine à états proposée → approuvée → en cours → arrêt →
