@@ -7,6 +7,7 @@ ad hoc.  Tous les calculs sont dans :mod:`app.psu`.
 
 from __future__ import annotations
 
+import json
 import uuid as uuid_lib
 from datetime import datetime, timezone
 from typing import Any
@@ -425,7 +426,10 @@ def evaluate_machine_power(db: Session, machine: Machine, notify: bool = False) 
             "kind": device.kind,
             "label": label,
             "model": device.model,
-            "power_w": measured.get(device.uuid),
+            # Le CPU n'a pas de ``power_w`` mesuré par device : sa puissance vient
+            # de l'état CPU (``cpu_json``), qui porte déjà source et caractère
+            # estimé — jamais l'estimation relue comme une mesure.
+            "power_w": None if device.kind == "cpu" else measured.get(device.uuid),
             "psu_id": device.psu_id,
             "psu2_id": device.psu2_id,
             "split_w": device.split_w,
@@ -433,21 +437,35 @@ def evaluate_machine_power(db: Session, machine: Machine, notify: bool = False) 
             "integrated": bool(device.integrated),
         })
     # 2026.11.004-c5 : la puissance CPU suit l'ordre mesure > saisie > TDP du
-    # modèle > 65 W générique, et la réponse dit laquelle a servi.
+    # modèle > 65 W générique, et la réponse dit laquelle a servi.  La source
+    # vient de l'état CPU écrit par le collecteur (``machine_status.cpu_json``) :
+    # une estimation ne doit jamais ressortir comme une mesure.
     from app.cpu_stats import estimate_cpu_w
+    from app.models import MachineStatus
 
     cpu_row = next((row for row in device_rows if row["kind"] == "cpu"), None)
-    cpu_uuid = (cpu_row or {}).get("uuid") or ""
     cpu_model = (cpu_row or {}).get("model")
-    measured_cpu = measured.get(cpu_uuid)
-    cpu_power_w: float
-    if measured_cpu:
-        cpu_power_w, cpu_source, cpu_estimated = float(measured_cpu), "mesure (dernière collecte)", False
-    elif machine.cpu_power_w:
-        cpu_power_w, cpu_source, cpu_estimated = float(machine.cpu_power_w), "saisie (machines.cpu_power_w)", False
-    else:
-        cpu_power_w, cpu_source = estimate_cpu_w(cpu_model)
-        cpu_estimated = True
+    cpu_state: dict[str, Any] = {}
+    status_row = (
+        db.query(MachineStatus).filter(MachineStatus.machine_id == machine.id).first()
+    )
+    raw_cpu = getattr(status_row, "cpu_json", None) if status_row else None
+    if raw_cpu:
+        try:
+            decoded = json.loads(raw_cpu)
+        except (TypeError, ValueError):
+            decoded = None
+        if isinstance(decoded, dict):
+            cpu_state = decoded
+    cpu_power_w = cpu_state.get("power_w")
+    cpu_source = str(cpu_state.get("power_source") or "")
+    cpu_estimated = bool(cpu_state.get("power_estimated"))
+    if not cpu_power_w:
+        if machine.cpu_power_w:
+            cpu_power_w, cpu_source, cpu_estimated = float(machine.cpu_power_w), "saisie (machines.cpu_power_w)", False
+        else:
+            cpu_power_w, cpu_source = estimate_cpu_w(cpu_model)
+            cpu_estimated = True
     result = compute_power(
         [psu_to_dict(psu) for psu in psus],
         [component_to_dict(row) for row in components],

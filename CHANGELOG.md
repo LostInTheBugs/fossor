@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026.11.004-c6 — 2026-11-18
+- `GET /api/machines/<id>/power` : la puissance CPU vient de l'état CPU écrit par
+  le collecteur (`machine_status.cpu_json`), qui porte sa source. Une valeur
+  estimée (TDP du modèle, 65 W générique) n'est plus étiquetée « mesure », et le
+  CPU n'est plus compté deux fois dans la charge. `pyproject.toml` revient à
+  `2026.11.4` (le numéro de version ne s'incrémente pas pour un correctif).
+
 ## 2026.11.004-c5 — 2026-11-18
 - Solo KORSH : un `### JLOG` vide (« -- No entries -- ») n'est plus pris pour un
   log, et un vrai fichier passe avant le journal — le rig retrouve ≈ 6,25 kH/s

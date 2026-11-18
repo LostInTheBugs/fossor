@@ -196,3 +196,8 @@ async def test_api_refuses_second_psu_without_first(client):
     assert saved.status_code == 200, saved.text
     assert saved.json()["psu2_id"] is None
     assert saved.json()["split_w"] is None
+    # 2026.11.004-c5 : la puissance CPU affichée par /power est une estimation
+    # déclarée (TDP ou 65 W), jamais une « mesure » relue depuis les métriques.
+    cpu = saved.json()["power"]["cpu"]
+    assert cpu["estimated"] is True
+    assert cpu["power_source"].startswith("estimation générique")
