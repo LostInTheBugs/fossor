@@ -259,6 +259,38 @@ header h1{font-size:26px}
       <div class="sub" id="vmHostReport" style="margin-top:8px"></div>
     </div>
 
+    <div class="card" id="pveModelCard">
+      <h2>Modèle de VM jetable Proxmox</h2>
+      <div class="sub">Pilote <code>qm</code>/<code>pvesh</code>/<code>pvesm</code> en SSH (compte racine du préréglage Proxmox, sans jeton d'API). Le VMID est pris dans la plage réservée ; la VM porte le tag <code>fossor</code> et la métadonnée <code>fossor_vm=1</code>. Destruction refusée hors de ces critères ou sans sauvegarde vérifiée.</div>
+      <div class="row" style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px">
+        <div class="field"><label for="pveHost">Machine hôte (Proxmox)</label><select id="pveHost"></select></div>
+        <div class="field"><label for="pveNode">Nœud</label><input id="pveNode" placeholder="pve" maxlength="32"></div>
+      </div>
+      <div class="row" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+        <div class="field"><label for="pveDisk">Stockage disque (images)</label><select id="pveDisk"></select></div>
+        <div class="field"><label for="pveCi">Stockage cloud-init</label><select id="pveCi"></select></div>
+        <div class="field"><label for="pveBridge">Pont réseau</label><input id="pveBridge" value="vmbr0" maxlength="16"></div>
+      </div>
+      <div class="row" style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px">
+        <div class="field"><label for="pveVmidMin">VMID min</label><input id="pveVmidMin" type="number" min="100" max="999999999"></div>
+        <div class="field"><label for="pveVmidMax">VMID max</label><input id="pveVmidMax" type="number" min="101" max="999999999"></div>
+        <div class="field"><label for="pveVcpus">vCPU</label><input id="pveVcpus" type="number" min="1" max="32"></div>
+        <div class="field"><label for="pveMem">RAM (Mo)</label><input id="pveMem" type="number" min="256" max="65536" step="256"></div>
+        <div class="field"><label for="pveDiskGb">Disque (Go)</label><input id="pveDiskGb" type="number" min="2" max="2048"></div>
+      </div>
+      <div class="field"><label for="pveImageUrl">Image cloud (URL qcow2)</label><input id="pveImageUrl" placeholder="https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2"></div>
+      <div class="row" style="display:grid;grid-template-columns:3fr 1fr;gap:12px">
+        <div class="field"><label for="pveChecksum">Somme de contrôle (obligatoire, vérifiée sur l'hôte)</label><input id="pveChecksum" placeholder="valeur issue du SHA512SUMS officiel"></div>
+        <div class="field"><label for="pveAlgo">Algorithme</label><select id="pveAlgo"><option value="sha512">SHA512</option><option value="sha256">SHA256</option></select></div>
+      </div>
+      <div class="actions">
+        <button class="btn" id="pveSave">Enregistrer le modèle Proxmox</button>
+        <button class="btn outline" id="pveInspect">Inspecter l'hôte (lecture seule)</button>
+        <span id="pveState" class="chip off">—</span>
+      </div>
+      <div class="sub" id="pveReport" style="margin-top:8px"></div>
+    </div>
+
     <div class="card">
       <h2>VM du spec mining</h2>
       <div class="sub">Une VM n'est pilotée que si son nom porte le préfixe <code>fossor-</code> <b>et</b> si libvirt porte la métadonnée <code>fossor_vm=1</code>. Fin de campagne : la VM est éteinte et conservée ; sa destruction est une action séparée, refusée tant que la sauvegarde du wallet n'a pas été vérifiée (§10.11).</div>
@@ -1263,6 +1295,67 @@ function vmPayload(){
     wallet_create_cmd: vmField('vmWalletCmd').value.trim()
   };
 }
+function pveField(id){return document.getElementById(id);}
+function pveNum(id,def){const v=parseInt(pveField(id).value,10);return isNaN(v)?def:v;}
+function pveStorageOptions(sel,names,current){
+  const list=(names||[]).slice();
+  if(current&&list.indexOf(current)<0){list.push(current);}
+  pveField(sel).innerHTML=list.map(n=>'<option value="'+n+'">'+n+'</option>').join('');
+  if(current){pveField(sel).value=current;}
+}
+function pvePayload(){
+  return {host_id:parseInt(pveField('pveHost').value,10)||0,
+    node:pveField('pveNode').value.trim(),
+    disk_storage:pveField('pveDisk').value,
+    ci_storage:pveField('pveCi').value,
+    bridge:pveField('pveBridge').value.trim()||'vmbr0',
+    vmid_min:pveNum('pveVmidMin',9900), vmid_max:pveNum('pveVmidMax',9999),
+    vcpus:pveNum('pveVcpus',1), memory_mb:pveNum('pveMem',1024), disk_gb:pveNum('pveDiskGb',8),
+    image_url:pveField('pveImageUrl').value.trim(),
+    checksum:pveField('pveChecksum').value.trim().toLowerCase(),
+    checksum_algo:pveField('pveAlgo').value};
+}
+async function loadPve(){
+  const r=await fetch('/api/spec/pve/settings',{credentials:'include'});
+  if(!r.ok){pveField('pveState').textContent='lecture impossible';return;}
+  const d=await r.json();
+  pveField('pveHost').innerHTML=(d.hosts||[]).length
+    ? d.hosts.map(h=>'<option value="'+h.id+'">'+h.name+' — '+h.host+' ('+(h.os_kind||'')+')</option>').join('')
+    : '<option value="0">aucune machine marquée vm_host</option>';
+  const m=d.pve_model||{}, def=d.defaults||{};
+  if(m.host_id){pveField('pveHost').value=String(m.host_id);}
+  pveField('pveNode').value=m.node||def.node||'';
+  pveStorageOptions('pveDisk',[m.disk_storage||def.disk_storage],m.disk_storage||def.disk_storage);
+  pveStorageOptions('pveCi',[m.ci_storage||def.ci_storage],m.ci_storage||def.ci_storage);
+  pveField('pveBridge').value=m.bridge||def.bridge||'vmbr0';
+  pveField('pveVmidMin').value=m.vmid_min||def.vmid_min;
+  pveField('pveVmidMax').value=m.vmid_max||def.vmid_max;
+  pveField('pveVcpus').value=m.vcpus||def.vcpus;
+  pveField('pveMem').value=m.memory_mb||def.memory_mb;
+  pveField('pveDiskGb').value=m.disk_gb||def.disk_gb;
+  pveField('pveImageUrl').value=m.image_url||'';
+  pveField('pveChecksum').value=m.checksum||'';
+  pveField('pveAlgo').value=m.checksum_algo||def.checksum_algo||'sha512';
+  pveField('pveState').textContent=m.image_name?('modèle : '+m.image_name):'aucun modèle Proxmox';
+}
+async function savePveModel(){
+  const r=await fetch('/api/spec/pve/settings',{method:'PUT',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({pve_model:pvePayload()})});
+  const d=await r.json();
+  pveField('pveState').textContent=r.ok?('modèle : '+((d.pve_model||{}).image_name||'enregistré')):(d.detail||'modèle refusé');
+}
+async function inspectPve(){
+  const id=parseInt(pveField('pveHost').value,10)||0;
+  if(!id){pveField('pveReport').textContent='Aucune machine hôte à inspecter.';return;}
+  const r=await fetch('/api/spec/pve/inspect',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({machine_id:id,model:pvePayload()})});
+  const d=await r.json();
+  if(!r.ok){pveField('pveReport').textContent=d.detail||'inspection impossible';return;}
+  const eligible=d.eligible||[];
+  pveStorageOptions('pveDisk',eligible.map(s=>s.name),pveField('pveDisk').value);
+  pveStorageOptions('pveCi',(d.storage_content||[]).filter(s=>(s.content||[]).indexOf('images')>=0).map(s=>s.name),pveField('pveCi').value);
+  pveField('pveReport').textContent='Proxmox '+(d.version||'?')+' — VMID pris : '+(d.taken||[]).join(', ')+
+    (d.free_vmid?' — premier libre : '+d.free_vmid:'')+
+    ' — stockages images : '+eligible.map(s=>s.name+' ('+s.avail_gb+' Go libres)').join(', ');
+}
 async function loadSpec(){
   const r=await fetch('/api/spec/settings',{credentials:'include'});
   if(!r.ok){vmField('vmState').textContent='lecture impossible';return;}
@@ -1289,6 +1382,7 @@ async function loadSpec(){
   vmField('vmNodeStart').value=m.node_start_cmd||'';
   vmField('vmWalletCmd').value=m.wallet_create_cmd||'';
   vmField('vmState').textContent=m.base_image_name?('modèle : '+m.base_image_name):'aucun modèle enregistré';
+  loadPve();
   loadVmList();
 }
 async function saveSpecMode(){
@@ -1352,6 +1446,8 @@ document.addEventListener('click',(e)=>{
   if(e.target.id==='specModeSave'){saveSpecMode();return;}
   if(e.target.id==='vmSave'){saveVmModel();return;}
   if(e.target.id==='vmHostCheck'){checkVmHost();return;}
+  if(e.target.id==='pveSave'){savePveModel();return;}
+  if(e.target.id==='pveInspect'){inspectPve();return;}
 });
 
 const loadIgpu=async()=>{try{const r=await fetch('/api/power/settings',{credentials:'include'});if(!r.ok)return;const d=await r.json();$('#igpuToggle').checked=!!d.hide_integrated_gpus;$('#igpuState').textContent=d.hide_integrated_gpus?'masqués':'visibles';}catch(e){}};

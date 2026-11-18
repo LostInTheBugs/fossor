@@ -198,8 +198,19 @@ async def host_check(data: dict, db: Session = Depends(get_db), _user=Depends(re
     simulated = simulation_enabled(db)
     result = await VR.hypervisor(machine, simulated=simulated)
     if result.get("driver") == "proxmox":
-        # Détection uniquement : aucun pilote Proxmox n'est branché à cette étape.
-        result["message"] = "Proxmox : pilote à venir."
+        # §2.9 : vm_host Proxmox = pveversion **et** /dev/kvm (pilote qm/pvesh).
+        from app import pve_remote as PR
+
+        pve = await PR.detect(machine, simulated=simulated)
+        result["pve"] = pve
+        result["kvm"] = pve.get("kvm")
+        result["vm_host_possible"] = bool(pve.get("vm_host"))
+        result["message"] = (
+            f"Proxmox {pve.get('version') or ''} : pilote qm/pvesh/pvesm actif."
+            if pve.get("vm_host")
+            else "Proxmox détecté, mais /dev/kvm absent : modes vm/hybrid indisponibles."
+        )
+        return result
     if not simulated:
         # §4.6 : « vm_host » suppose /dev/kvm **et** domain type='kvm'.
         probe = await VR.probe_kvm(machine, simulated=False)

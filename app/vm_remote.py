@@ -79,8 +79,9 @@ def create_plan(model: dict[str, Any], name: str, ssh_public_key: str, private_k
 KVM_PROBE_SCRIPT = (
     "test -e /dev/kvm && echo KVM=1; "
     "command -v virsh >/dev/null 2>&1 && echo VIRSH=1; "
-    "echo \"KVM_DOMAIN=$(virsh --connect qemu:///system capabilities 2>/dev/null "
-    "| grep -c \"domain type='kvm'\")\"; exit 0"
+    "command -v pveversion >/dev/null 2>&1 && echo PVERSION=1; "
+    "echo \"KVM_DOMAIN=$(virsh --connect qemu:///system capabilities 2>/dev/null | "
+    "grep -c 'domain type=.kvm.')\"; exit 0"
 )
 KVM_MISSING_MESSAGE = (
     "libvirt sans KVM (émulation seule) : modes vm/hybrid indisponibles sur cet hôte"
