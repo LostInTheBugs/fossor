@@ -109,11 +109,22 @@ async def test_psu_section_two_psus_split_gpu_and_orange_alert(e2e_server):
         await page.wait_for_selector('[data-psu-status="orange"]', timeout=15000)
 
         # 3. Les barres existent, l'alerte orange est visible.
-        await page.wait_for_selector('[data-psu-alert="orange"]', timeout=15000)
-        assert await page.locator('[data-psu-row]').count() == 2
-        assert await page.locator('[data-psu-status="orange"]').count() == 1
-        alert = await page.inner_text('[data-psu-alert="orange"]')
-        assert "85.3 %" in alert or "85,3" in alert
+        # La page liste TOUTES les machines : cibler nos deux PSU, sinon une
+        # alerte « GPU sans alimentation » d'une machine créée par un test
+        # précédent est lue à la place (échec en suite complète seulement).
+        await page.wait_for_selector(f'[data-psu-row="{psus[1]}"][data-psu-status="orange"]',
+                                     timeout=15000)
+        assert await page.locator(
+            f'[data-psu-row="{psus[0]}"], [data-psu-row="{psus[1]}"]'
+        ).count() == 2
+        assert await page.locator(f'[data-psu-row="{psus[1]}"]').count() == 1
+        alerts = await page.evaluate(
+            """() => Array.from(document.querySelectorAll('[data-psu-alert="orange"]'))
+                 .map(e => e.textContent)"""
+        )
+        alert = [text for text in alerts if "PSU 2" in text]
+        assert alert, alerts
+        assert "85.3 %" in alert[0] or "85,3" in alert[0], alert
 
         assert page_errors == []
         assert console_errors == []
