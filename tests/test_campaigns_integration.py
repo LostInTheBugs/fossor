@@ -197,7 +197,7 @@ async def _prepare_target(client) -> tuple[int, int, int]:
     return machine_id, default_profile.json()["id"], campaign_profile.json()["id"]
 
 
-async def test_cycle_complet_done_puis_failed(client, capsys):
+async def test_cycle_complet_done_puis_failed(client):
     machine_id, default_id, campaign_id_profile = await _prepare_target(client)
     show("PRÉPARATION", {"machine_id": machine_id, "profil_defaut": default_id,
                          "profil_campagne": campaign_id_profile,
@@ -324,4 +324,3 @@ async def test_cycle_complet_done_puis_failed(client, capsys):
         assert rows[0].level == "critique"
     finally:
         db.close()
-    capsys.readouterr()

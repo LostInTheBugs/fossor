@@ -13,6 +13,7 @@ EXPECTED = [
     "📊 Tableau de bord",
     "🖥️ Machines",
     "⛏️ Profils",
+    "🎯 Campagnes",
     "🪙 Tokens minés",
     "⚙️ Configuration",
     "📋 Audit Log",
