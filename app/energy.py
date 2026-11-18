@@ -627,6 +627,24 @@ def build_report(
     priced = [m for m in report_machines if m["revenue_eur_day"] is not None]
     total_revenue = round(sum(m["revenue_eur_day"] for m in priced), 9) if priced else None
 
+    # §4.19 : un tiret muet n'apprend rien à l'exploitant — la raison voyage
+    # avec la valeur, le tableau de bord l'affiche sous la tuile.
+    from app.ai_config import get_setting
+
+    if not report_machines:
+        cost_note = "aucune machine suivie"
+    elif get_setting(db, TARIFF_KEY, None) is None:
+        cost_note = "tarif non configuré (défaut 0,20 €/kWh)"
+    elif total_kwh <= 0:
+        cost_note = "aucune mesure de puissance"
+    else:
+        cost_note = ""
+    if total_revenue is not None:
+        revenue_note = ""
+    else:
+        notes = [c.get("note") for c in coin_report if c.get("note")]
+        revenue_note = str(notes[0]) if notes else "prix inconnu"
+
     return {
         "as_of": now.isoformat(),
         "period": (period or "24h").lower(),
@@ -639,6 +657,8 @@ def build_report(
             "cost_eur_day": total_cost_day,
             "cost_eur_month": round(total_cost_day * 30, 9),
             "revenue_eur_day": total_revenue,
+            "revenue_note": revenue_note,
+            "cost_note": cost_note,
             "net_eur_day": round(total_revenue - total_cost_day, 9) if total_revenue is not None else None,
             "machines": len(report_machines),
             "priced_machines": len(priced),

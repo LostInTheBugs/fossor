@@ -51,6 +51,10 @@ async def update_status(
     payload["updater"] = updater_client.payload()
     payload["auto"] = auto_update.state(db)
     payload["settings"] = update_settings.read(db)
+    # §4.19 : la liste « Mettre à jour vers… » et l'état des boutons viennent
+    # du même appel — une seule requête pour tout l'écran.
+    payload["known_versions"] = update_checker.known_versions()
+    payload["request_pending"] = updater_client.pending_request() is not None
     return payload
 
 
@@ -194,7 +198,10 @@ def rollback(
         result = updater_client.request_action(db, "rollback", previous["version"])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    update_settings.ignore_auto(db, _installed_version())
+    try:  # une version de développement (« -dev ») n'est pas un tag normalisable
+        update_settings.ignore_auto(db, _installed_version())
+    except ValueError:
+        pass
     _audit(db, "update_rollback", previous["version"], f"cible={previous['version']}")
     db.commit()
     return {"ok": True, "target": previous["version"], **result}

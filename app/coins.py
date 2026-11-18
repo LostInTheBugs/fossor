@@ -38,14 +38,14 @@ BASE_COINS: tuple[dict[str, Any], ...] = (
     {
         "ticker": "WAM",
         "name": "Wamcoin",
-        "algo": "yespower",
+        "algo": "randomx",
         "kind": "both",
         "pool_hosts": ["pool.wamcoin.org", "wamcoin.luckypool.io"],
     },
     {
         "ticker": "BIG",
         "name": "Bigcoin",
-        "algo": "sha256d",
+        "algo": "yespower",
         "kind": "both",
         "pool_hosts": [],
     },
@@ -114,6 +114,36 @@ def builtin_hosts() -> dict[str, str]:
     return hosts
 
 
+def builtin_algo(ticker: str) -> str:
+    """Algorithme d'un coin de base ("" quand il n'est pas documenté)."""
+    wanted = str(ticker or "").strip().upper()
+    for coin in BASE_COINS:
+        if coin["ticker"] == wanted:
+            return str(coin["algo"])
+    return ""
+
+
+def algo_for_coin(db, ticker: str) -> str:
+    """Algorithme affiché : catalogue (table ``coins``) puis table intégrée.
+
+    L'algorithme de la commande du mineur reste prioritaire à l'appel ; ce
+    repli sert quand le mineur n'annonce rien (§4.19 : WAM est en RandomX,
+    pas en yespower comme la première version du catalogue le disait).
+    """
+    wanted = str(ticker or "").strip().upper()
+    if not wanted:
+        return ""
+    try:
+        from app.models import Coin
+
+        row = db.query(Coin).filter(Coin.ticker == wanted).first()
+    except Exception:  # pragma: no cover - catalogue absent avant create_all
+        row = None
+    if row is not None and (row.algo or "").strip():
+        return str(row.algo).strip()
+    return builtin_algo(wanted)
+
+
 def builtin_tickers() -> list[str]:
     return [coin["ticker"] for coin in BASE_COINS]
 
@@ -124,28 +154,34 @@ def builtin_names() -> dict[str, str]:
 
 
 def seed_builtin_coins(db) -> int:
-    """Create the base coins when the catalogue is empty.  Returns rows added.
+    """Create the missing base coins and align their algorithm.  Returns rows added.
 
-    Never touches an existing catalogue: it only fills a void (the production
-    database had zero rows, which is why every pool lookup failed).
+    Fills a void (the production database had zero rows, which is why every pool
+    lookup failed) and corrects the algorithm of the base tickers: the first
+    catalogue wrongly described WAM as ``yespower`` (it mines RandomX) and BIG
+    as ``sha256d``.  Only base tickers are touched; a coin added by the operator
+    keeps its own values.
     """
     from app.models import Coin
 
     try:
-        if db.query(Coin).count() > 0:
-            return 0
+        rows = {str(row.ticker).upper(): row for row in db.query(Coin).all()}
     except Exception:  # pragma: no cover - table missing before create_all
         return 0
 
     added = 0
     for entry in BASE_COINS:
-        db.add(Coin(
-            ticker=entry["ticker"],
-            name=entry["name"],
-            algo=entry["algo"],
-            kind=entry["kind"],
-            pool_hosts=list(entry["pool_hosts"]),
-        ))
-        added += 1
+        row = rows.get(entry["ticker"])
+        if row is None:
+            db.add(Coin(
+                ticker=entry["ticker"],
+                name=entry["name"],
+                algo=entry["algo"],
+                kind=entry["kind"],
+                pool_hosts=list(entry["pool_hosts"]),
+            ))
+            added += 1
+        elif (row.algo or "").strip() != entry["algo"]:
+            row.algo = entry["algo"]
     db.commit()
     return added

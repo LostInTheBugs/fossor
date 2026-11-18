@@ -57,7 +57,7 @@ async def test_update_screen_without_updater(e2e_server):
         await page.check("#autoEnabled")
         await page.click("#autoSave")
         await page.wait_for_selector("#toast", state="visible", timeout=10000)
-        assert "enregistrée" in await page.inner_text("#toast")
+        assert "enregistrés" in await page.inner_text("#toast")
 
         saved = await page.evaluate(
             "async () => (await fetch('/api/update/auto', {credentials: 'include'})).json()"
@@ -66,9 +66,11 @@ async def test_update_screen_without_updater(e2e_server):
         assert saved["window"]["start"] == "23:30"
         assert saved["window"]["end"] == "01:15"
 
-        # 4. Les notes de version et l'historique sont rendus (vides ici).
+        # 4. Les notes de version sont rendues ; l'historique vit désormais
+        #    dans Log → Historique des mises à jour (§4.19), pas ici.
         assert await page.is_visible("#notesWrap")
-        assert await page.is_visible("#updHistory")
+        assert await page.locator("#updHistory").count() == 0
+        assert await page.locator('a[href="/log#update"]').count() >= 1
 
         # 5. Le refus de mise à jour (400) est couvert par les tests unitaires :
         #    un appel volontairement en erreur salirait la console du navigateur.

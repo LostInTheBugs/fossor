@@ -58,8 +58,8 @@ def test_empty_database_creates_base_coins():
     assert coins["PRL"].kind == "gpu"
     assert "pearl-eu2.luckypool.io" in coins["PRL"].pool_hosts
     assert coins["KSH"].algo == "yespower"
-    assert coins["WAM"].algo == "yespower"
-    assert coins["BIG"].algo == "sha256d"
+    assert coins["WAM"].algo == "randomx"
+    assert coins["BIG"].algo == "yespower"
 
 
 def test_builtin_table_is_independent_from_the_catalogue():

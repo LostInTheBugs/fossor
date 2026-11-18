@@ -42,6 +42,7 @@ header h1{font-size:26px}
 .pill[data-status="orange"] .reason{color:var(--yellow)}
 .pill[data-status="red"] .reason{color:var(--red)}
 .pill .go{margin-left:auto;color:var(--muted);font-size:11px;white-space:nowrap}
+.box .why{display:block;color:var(--muted);font-size:10.5px;margin-top:2px}
 .campaign-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin-bottom:22px}
 .campaign-card .ticker{font-size:16px;font-weight:700}
 .campaign-card .meta{color:var(--muted);font-size:11.5px;margin-top:3px}
@@ -65,9 +66,9 @@ header h1{font-size:26px}
   <div class="summary">
     <div class="box"><span class="k">Machines en ligne</span><span class="v" id="sOnline">—</span></div>
     <div class="box"><span class="k">Puissance à la prise</span><span class="v" id="sPower">—</span></div>
-    <div class="box"><span class="k">Coût / jour</span><span class="v" id="sCost">—</span></div>
+    <div class="box"><span class="k">Coût / jour</span><span class="v" id="sCost">—</span><span class="why" id="sCostWhy"></span></div>
     <div class="box"><span class="k">Coût / mois</span><span class="v" id="sCostMonth">—</span></div>
-    <div class="box"><span class="k">Revenu estimé / jour</span><span class="v" id="sRevenue">—</span></div>
+    <div class="box"><span class="k">Revenu estimé / jour</span><span class="v" id="sRevenue">—</span><span class="why" id="sRevenueWhy"></span></div>
     <div class="box"><span class="k">Campagne en cours</span><span class="v" id="sCampaign">—</span></div>
     <div class="box"><span class="k">Dernière collecte</span><span class="v" id="sAge">—</span></div>
   </div>
@@ -146,7 +147,7 @@ async function loadHealth() {
 
 async function loadEnergy() {
   const res = await fetch("/api/energy?period=24h", { headers: { "Accept": "application/json" } });
-  if (!res.ok) return null;
+  if (!res.ok) return { error: "HTTP " + res.status };
   return res.json();
 }
 
@@ -156,6 +157,15 @@ function renderEnergy(energy, live) {
   $("#sCostMonth").textContent = fmtEur(totals.cost_eur_month);
   const revenue = totals.revenue_eur_day !== undefined ? totals.revenue_eur_day : totals.net_eur_day;
   $("#sRevenue").textContent = fmtEur(revenue);
+  // §4.19 : pas de tiret muet — la raison est écrite sous la valeur.
+  if (energy && energy.error) {
+    $("#sCostWhy").textContent = "rapport indisponible (" + energy.error + ")";
+    $("#sRevenueWhy").textContent = "rapport indisponible (" + energy.error + ")";
+  } else {
+    $("#sCostWhy").textContent = totals.cost_note || "";
+    $("#sRevenueWhy").textContent = (revenue === null || revenue === undefined)
+      ? (totals.revenue_note || "prix inconnu") : "";
+  }
   const ages = (live || []).map((m) => m.age_s).filter((a) => a !== null && a !== undefined);
   $("#sAge").textContent = ages.length ? fmtAge(Math.min.apply(null, ages)) : "jamais";
 }
@@ -172,11 +182,16 @@ async function loadCampaign() {
   const box = $("#campaignCard");
   try {
     const res = await fetch("/api/campaigns", { headers: { "Accept": "application/json" } });
-    if (!res.ok) return;
+    if (!res.ok) {
+      box.innerHTML = '<span style="color:var(--muted)">Campagnes indisponibles (HTTP ' + res.status + ").</span>";
+      $("#sCampaign").textContent = "indisponible";
+      return;
+    }
     const data = await res.json();
     const c = data.current;
     if (!c) {
-      box.innerHTML = '<span style="color:var(--muted)">Aucune campagne en cours.</span>';
+      box.innerHTML = '<span style="color:var(--muted)">Aucune campagne en cours' +
+        (data.simulation ? " (mode simulation activé)" : "") + ".</span>";
       $("#sCampaign").textContent = "aucune";
       return;
     }
@@ -187,25 +202,33 @@ async function loadCampaign() {
       '<div class="meta">' + esc(devs) + "</div>" +
       '<div class="meta">' + esc(c.status_label) + " · coût " + cost +
       " · fin " + (c.end_at ? new Date(c.end_at).toLocaleString("fr-FR") : "sans limite") + "</div>";
-  } catch (err) { /* pas de campagnes : carte discrète */ }
+  } catch (err) {
+    // Jamais de carte figée sur « Chargement… » : une erreur se dit.
+    box.innerHTML = '<span style="color:var(--muted)">Campagnes indisponibles : ' + esc(err.message) + ".</span>";
+    $("#sCampaign").textContent = "indisponible";
+  }
 }
 
 async function load() {
+  // Chaque bloc échoue seul : une erreur de santé ne laisse plus la carte de
+  // campagne sur « Chargement… » ni les tuiles sur un tiret muet.
+  let machines = [];
+  let healthError = "";
   try {
-    const machines = await loadHealth();
-    const energy = await loadEnergy();
-    let live = [];
-    try {
-      const res = await fetch("/api/metrics/live", { headers: { "Accept": "application/json" } });
-      if (res.ok) live = await res.json();
-    } catch (err) { live = []; }
-    renderEnergy(energy, live);
-    await loadCampaign();
-    $("#stamp").textContent = "Mis à jour à " + new Date().toLocaleTimeString("fr-FR") +
-      (machines.length ? "" : " · aucune machine");
-  } catch (err) {
-    $("#stamp").textContent = "État de santé indisponible : " + err.message;
-  }
+    machines = await loadHealth();
+  } catch (err) { healthError = err.message; }
+  let energy = null;
+  try { energy = await loadEnergy(); } catch (err) { energy = { error: err.message }; }
+  let live = [];
+  try {
+    const res = await fetch("/api/metrics/live", { headers: { "Accept": "application/json" } });
+    if (res.ok) live = await res.json();
+  } catch (err) { live = []; }
+  renderEnergy(energy, live);
+  await loadCampaign();
+  $("#stamp").textContent = (healthError ? "État de santé indisponible : " + healthError + " · " : "")
+    + "Mis à jour à " + new Date().toLocaleTimeString("fr-FR")
+    + (machines.length ? "" : " · aucune machine");
 }
 
 $("#logoutBtn").addEventListener("click", async () => {

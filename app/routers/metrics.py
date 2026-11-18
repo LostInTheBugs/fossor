@@ -188,6 +188,16 @@ def metrics_live(
             status.algo if status else "",
             total_hs,
         )
+        # §4.19 : l'algorithme vient de la commande du mineur s'il y est,
+        # sinon du catalogue — jamais de l'ancien ``status.algo`` (WAM y était
+        # annoncé yespower alors qu'il mine en RandomX).
+        from app.coins import algo_for_coin
+
+        for group in groups:
+            if not (group.get("algo") or "").strip():
+                group["algo"] = algo_for_coin(db, group.get("coin") or "") or (
+                    status.algo if status else ""
+                )
         wall_w, worst_pct = total_w, 0.0
         try:
             from app.routers.psu import evaluate_machine_power

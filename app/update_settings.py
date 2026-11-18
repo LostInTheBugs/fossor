@@ -18,6 +18,7 @@ Docker — c'est toujours ``updater_client`` qui écrit ``request.json``.
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
@@ -122,6 +123,12 @@ async def auto_apply_tick(db: Session) -> str | None:
 
     settings = read(db)
     if not settings["auto_apply"]:
+        return None
+    from app import auto_update
+
+    # La plage « seulement entre … et … » restreint bien l'application auto :
+    # 00:00 → 00:00 couvre la journée (plage vide = aucune restriction).
+    if not auto_update.in_window(datetime.now(timezone.utc), auto_update.state(db)["window"]):
         return None
     status = update_checker.status()
     latest = str(status.get("latest_version") or "")

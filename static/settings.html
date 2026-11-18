@@ -220,37 +220,70 @@ header h1{font-size:26px}
   </div>
 
   <div id="panel-update" style="display:none">
-<div class="card">
+    <div class="card">
       <h2>Mise à jour</h2>
-      <div class="sub">Vérification automatique des releases GitHub (intervalle réglable par <span class="mono">FOSSOR_UPDATE_CHECK_INTERVAL</span>, 0 = désactivé).</div>
+      <div class="sub">Versions installées, fréquence de vérification, application automatique,
+        retour arrière. L'historique des bascules est dans
+        <a href="/log#update">Log → Historique des mises à jour</a>.</div>
       <dl class="kv">
-        <dt>Version installée</dt><dd id="vInstalled">…</dd>
+        <dt>Version de l'application</dt><dd id="vInstalled" class="mono">…</dd>
+        <dt>Version de l'updater</dt><dd id="vUpdater">…</dd>
         <dt>Dernière version publiée</dt><dd id="vLatest">…</dd>
         <dt>État</dt><dd id="vState">…</dd>
         <dt>Dernier contrôle</dt><dd id="vChecked">—</dd>
         <dt>Requêtes GitHub restantes</dt><dd id="vRate">—</dd>
-        <dt>Prochaine vérification</dt><dd id="vInterval">—</dd>
       </dl>
       <div class="actions">
         <button class="btn outline" id="checkBtn">Vérifier maintenant</button>
-        <button class="btn" id="updateApplyBtn" disabled>Mettre à jour</button>
+        <a class="btn outline" href="/log#update">Historique des mises à jour</a>
       </div>
       <div id="updError" class="empty" style="margin-top:10px;color:var(--red)"></div>
       <div id="updBanner" class="empty" style="display:none;margin-top:10px;border:1px solid var(--warn,#a60);border-radius:8px;padding:10px"></div>
       <div id="updLive" style="margin-top:14px"></div>
-      <div class="row" style="margin-top:16px;align-items:flex-end">
-        <div class="field"><label><input type="checkbox" id="autoEnabled"> Mise à jour automatique</label></div>
+
+      <h3 style="margin-top:18px">Fréquence de vérification</h3>
+      <div class="row" style="align-items:flex-end">
+        <div class="field"><label>Vérifier</label>
+          <select id="updInterval">
+            <option value="0">Jamais</option>
+            <option value="3600">Toutes les heures</option>
+            <option value="21600">Toutes les 6 heures</option>
+            <option value="43200">Toutes les 12 heures</option>
+            <option value="86400">Toutes les 24 heures</option>
+          </select></div>
+        <div class="field"><label><input type="checkbox" id="autoEnabled"> Application automatique</label></div>
+        <div class="field"><label><input type="checkbox" id="autoWindowOn"> Seulement entre</label></div>
         <div class="field"><label>De</label><input type="time" id="autoStart" value="03:00" style="width:110px"></div>
         <div class="field"><label>À</label><input type="time" id="autoEnd" value="05:00" style="width:110px"></div>
-        <div class="field"><label>Fuseau</label><input id="autoTz" value="Europe/Paris" style="width:170px"></div>
+        <div class="field"><label>Fuseau</label><input id="autoTz" value="Europe/Paris" style="width:150px"></div>
         <div class="field"><button class="btn outline" id="autoSave">Enregistrer</button></div>
       </div>
-      <div class="sub" id="autoHint">Désactivée par défaut. La demande n'est déposée que dans la plage horaire (une plage qui traverse minuit est acceptée).</div>
-      <h3 style="margin-top:18px">Historique des mises à jour</h3>
-      <div id="updHistory" class="empty">Aucune mise à jour demandée.</div>
+      <div class="sub" id="autoHint">Désactivée par défaut. Une fois activée, la demande est déposée dès
+        qu'une version est trouvée, dans la plage horaire si « Seulement entre » est cochée.</div>
+      <div id="ignoredWrap" class="sub" style="display:none;margin-top:8px">
+        Version ignorée par l'application automatique après un retour arrière :
+        <span class="mono" id="ignoredVersion"></span>
+        <button class="btn outline" id="unignoreBtn" style="margin-left:8px">Ne plus l'ignorer</button>
+      </div>
+
+      <h3 style="margin-top:18px">Retour arrière et demande</h3>
+      <dl class="kv">
+        <dt>Version précédente conservée</dt><dd id="prevVersion">—</dd>
+        <dt>Demande en attente</dt><dd id="pendingReq">—</dd>
+        <dt>Updater</dt><dd id="updPresence">—</dd>
+      </dl>
+      <div class="row" style="align-items:flex-end">
+        <div class="field"><button class="btn outline" id="rollbackBtn" disabled>Revenir à la version précédente</button></div>
+        <div class="field"><button class="btn outline" id="forgetBtn" disabled>Oublier la version précédente</button></div>
+        <div class="field"><button class="btn outline" id="cancelBtn" disabled>Annuler la demande en attente</button></div>
+      </div>
+      <div class="row" style="align-items:flex-end;margin-top:10px">
+        <div class="field"><label>Version cible</label><select id="targetVersion"></select></div>
+        <div class="field"><button class="btn" id="updateApplyBtn" disabled>Mettre à jour vers…</button></div>
+        <div class="field"><a class="btn outline" href="/log#update">Voir l'historique</a></div>
+      </div>
       <div id="notesWrap" style="margin-top:14px"></div>
     </div>
-
   </div>
 
   <div id="panel-energy" style="display:none">
@@ -339,15 +372,30 @@ const STATE_LABELS={idle:'En attente',pulling:'Téléchargement de l\'image',bac
   rolled_back:'Retour arrière',failed:'Échec',absent:'Compagnon absent'};
 const esc=s=>String(s==null?'':s).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
 
+const INTERVAL_LABELS={0:'Jamais',3600:'Toutes les heures',21600:'Toutes les 6 heures',
+  43200:'Toutes les 12 heures',86400:'Toutes les 24 heures'};
+let UPD={};
+
+const updCall=async(method,url,body)=>{
+  const opt={method,credentials:'include'};
+  if(body!==undefined){opt.headers={'Content-Type':'application/json'};opt.body=JSON.stringify(body);}
+  const r=await fetch(url,opt);
+  const data=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(data.detail||('HTTP '+r.status));
+  return data;
+};
+const updTarget=()=>{const sel=$('#targetVersion');return sel&&sel.value?sel.value:'';};
+
 const renderUpdater=(d)=>{
-  const u=d.updater||{}, a=d.auto||{};
-  const btn=$('#updateApplyBtn');
+  const u=d.updater||{}, a=d.auto||{}, s=d.settings||{};
+  UPD={d:d,u:u,s:s,a:a};
+  const prev=u.precedente||{};
+  const busy=['pulling','backing_up','switching','health_check'].includes(u.state);
   $('#updError').textContent=d.error||'';
   const banner=$('#updBanner');
   if(!u.present){
     banner.style.display='block';
     if(u.installed||u.heartbeat_age_seconds!=null){
-      // Le conteneur existe (status.json est là) mais le battement est figé.
       const mins=u.stale_minutes==null?'?':Math.round(u.stale_minutes);
       banner.innerHTML='<b>Updater sans réponse depuis '+mins+' min.</b> Le service '
         +'<span class="mono">fossor-updater</span> existe mais son battement de cœur est figé '
@@ -363,48 +411,81 @@ const renderUpdater=(d)=>{
         +'mettez à jour à la main avec <span class="mono">docker compose pull &amp;&amp; docker compose up -d</span>. '
         +'Les sauvegardes et la vérification de version restent actives.';
     }
-    btn.disabled=true; btn.textContent='Mettre à jour';
-    $('#updLive').innerHTML='';
   }else{
     banner.style.display='none';
-    const target=d.latest_version;
-    const busy=['pulling','backing_up','switching','health_check'].includes(u.state);
-    btn.disabled=!d.update_available||busy;
-    btn.textContent=busy?'Mise à jour en cours…':(d.update_available?`Mettre à jour vers ${target}`:'À jour');
-    $('#updLive').innerHTML=`<dl class="kv">
-      <dt>Compagnon</dt><dd><span class="chip ${u.present?'on':'off'}">${u.present?'joignable':'absent'}</span></dd>
-      <dt>Version de l'application</dt><dd class="mono">${esc(d.installed_version||'—')}</dd>
-      <dt>Version du compagnon</dt><dd class="mono">${esc(u.version||'inconnue')}${u.version&&d.installed_version&&u.version!==d.installed_version?' <span class="chip off">différente de l\'application</span>':''}${!u.version?' <span class="chip idle">non rapportée par un updater antérieur</span>':''}</dd>
-      <dt>État</dt><dd>${esc(STATE_LABELS[u.state]||u.state)}</dd>
+  }
+
+  // Versions : application, updater, dernière publiée, état du compagnon.
+  $('#vInstalled').textContent=d.installed_version||'—';
+  $('#vUpdater').innerHTML=u.version
+    ?'<span class="mono">'+esc(u.version)+'</span>'
+      +(d.installed_version&&u.version!==d.installed_version?' <span class="chip off">différente de l\'application</span>':'')
+    :'<span class="chip idle">non rapportée par un updater antérieur</span>';
+  $('#updPresence').innerHTML=u.present
+    ?'<span class="chip on">présent</span>'+(u.heartbeat_age_seconds==null?'':' · battement il y a '+u.heartbeat_age_seconds+' s')
+    :'<span class="chip off">absent</span>';
+  $('#updLive').innerHTML=u.present?`<dl class="kv">
+      <dt>État du compagnon</dt><dd>${esc(STATE_LABELS[u.state]||u.state||'—')}</dd>
       <dt>Étape</dt><dd class="mono">${esc(u.step||'—')}</dd>
       <dt>Dernière bascule</dt><dd class="mono">${esc(u.from||'—')} → ${esc(u.to||'—')}</dd>
       <dt>Message</dt><dd>${esc(u.message||'—')}</dd>
       <dt>Dernier battement</dt><dd>${u.heartbeat_age_seconds==null?'—':u.heartbeat_age_seconds+' s'}</dd>
-      <dt>Sauvegarde avant mise à jour</dt><dd class="mono">${esc(u.directory||'')}</dd></dl>`;
-  }
-  $('#updHistory').innerHTML=(u.history&&u.history.length)
-    ? '<div class="notes">'+u.history.map(h=>`<div class="note"><h3>${esc(h.at||'')} — ${esc(h.event||'')}</h3>`
-        +`<div class="body">${esc(h.message||h.reason||'')}${h.from?' '+esc(h.from)+' → '+esc(h.to):''}</div></div>`).join('')+'</div>'
-    : '<div class="empty">Aucune mise à jour demandée.</div>';
-  if(a.window){
-    $('#autoEnabled').checked=!!a.enabled;
-    $('#autoStart').value=a.window.start; $('#autoEnd').value=a.window.end;
-    $('#autoTz').value=a.window.timezone;
-  }
-  $('#autoHint').textContent=a.enabled
-    ? `Activée : demande déposée entre ${a.window.start} et ${a.window.end} (${a.window.timezone}) quand une version est disponible.`
-    : 'Désactivée par défaut : aucune demande automatique n\'est déposée.';
+      <dt>Sauvegarde avant mise à jour</dt><dd class="mono">${esc(u.directory||'—')}</dd></dl>`:'';
+
+  // Fréquence (réglage en base, plus de variable d'environnement) et auto.
+  $('#updInterval').value=String(s.check_interval_s==null?3600:s.check_interval_s);
+  $('#autoEnabled').checked=!!s.auto_apply;
+  const w=a.window||{start:'03:00',end:'05:00',timezone:'Europe/Paris'};
+  const restricted=!(w.start==='00:00'&&w.end==='00:00');
+  $('#autoWindowOn').checked=restricted;
+  $('#autoStart').value=w.start||'03:00'; $('#autoEnd').value=w.end||'05:00';
+  $('#autoTz').value=w.timezone||'Europe/Paris';
+  ['#autoStart','#autoEnd','#autoTz'].forEach(id=>{$(id).disabled=!restricted;});
+  const freq=INTERVAL_LABELS[s.check_interval_s]||'toutes les heures';
+  $('#autoHint').textContent=s.auto_apply
+    ?'Activée : vérification '+freq.toLowerCase()+(restricted?', demande déposée seulement entre '+w.start+' et '+w.end+' ('+w.timezone+').':', demande déposée dès qu\'une version est trouvée.')
+    :'Désactivée (défaut) : aucune demande automatique. Vérification '+freq.toLowerCase()+', plage et réglages conservés.';
+  const ign=s.ignorer_auto||'';
+  $('#ignoredWrap').style.display=ign?'block':'none';
+  $('#ignoredVersion').textContent=ign;
+
+  // Retour arrière et demande en attente.
+  $('#prevVersion').textContent=prev.version
+    ?prev.version+(prev.image?'':' (image absente du serveur)')
+    :'aucune';
+  $('#pendingReq').textContent=d.request_pending?'une demande en attente (non traitée)':'aucune';
+  $('#rollbackBtn').disabled=!(prev.version&&prev.image)||busy;
+  $('#forgetBtn').disabled=!(prev.version&&prev.image)||busy;
+  $('#rollbackBtn').textContent=prev.version?'Revenir à la version '+prev.version:'Revenir à la version précédente';
+  $('#cancelBtn').disabled=!d.request_pending;
+
+  // Liste des versions publiées : la dernière en tête, plus toute cible ancienne.
+  const sel=$('#targetVersion');
+  const current=sel.value;
+  const known=(d.known_versions||[]).slice().sort((x,y)=>x<y?1:(x>y?-1:0));
+  if(d.latest_version&&!known.includes(d.latest_version))known.unshift(d.latest_version);
+  const wanted=known.includes(current)?current:(known[0]||'');
+  sel.innerHTML=known.length?known.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('')
+    :'<option value="">aucune version connue</option>';
+  if(wanted)sel.value=wanted;
+  const target=updTarget();
+  const btn=$('#updateApplyBtn');
+  btn.disabled=!u.present||!target||busy;
+  btn.textContent=busy?'Mise à jour en cours…':(target?'Mettre à jour vers '+target:'Mettre à jour vers…');
+
+  $('#notesWrap').innerHTML=(d.notes&&d.notes.length)
+    ?'<h3>Notes de version manquantes</h3><div class="notes">'+d.notes.map(n=>
+      `<div class="note"><h3>${esc(n.version)} — ${esc(n.name)}</h3><div class="body">${esc(n.body||'(pas de notes)')}</div></div>`).join('')+'</div>'
+    :'<div class="empty">Aucune note de version manquante.</div>';
 };
 
 const loadUpdate=async()=>{
   const r=await fetch('/api/update/status',{credentials:'include'});
   if(r.status===401){location.href='/';return;}
   const d=await r.json();
-  $('#vInstalled').textContent=d.installed_version;
   $('#vLatest').textContent=d.latest_version||'inconnue';
   $('#vChecked').textContent=fmtDate(d.last_check_at);
   $('#vRate').textContent=d.rate_limit_remaining===null||d.rate_limit_remaining===undefined?'—':d.rate_limit_remaining;
-  $('#vInterval').textContent=d.check_enabled?(d.check_interval_seconds+' s'):'désactivée';
   if(d.update_available){
     $('#vState').innerHTML=`<span class="chip warn">Nouvelle version ${esc(d.latest_version)} disponible</span>`;
   }else if(d.latest_version){
@@ -413,36 +494,81 @@ const loadUpdate=async()=>{
     $('#vState').innerHTML='<span class="chip off">Jamais vérifié</span>';
   }
   renderUpdater(d);
-  $('#notesWrap').innerHTML=d.notes.length
-    ? '<div class="notes">'+d.notes.map(n=>`<div class="note"><h3>${esc(n.version)} — ${esc(n.name)}</h3><div class="body">${esc(n.body||'(pas de notes)')}</div></div>`).join('')+'</div>'
-    : '<div class="empty">Aucune note de version manquante.</div>';
+};
+
+$('#updInterval').onchange=async()=>{
+  try{
+    await updCall('PUT','/api/update/settings',{check_interval_s:parseInt($('#updInterval').value,10)});
+    toast('Fréquence de vérification enregistrée');
+    await loadUpdate();
+  }catch(e){toast(e.message,'err');}
+};
+$('#autoSave').onclick=async()=>{
+  const on=$('#autoEnabled').checked, restricted=$('#autoWindowOn').checked;
+  const window=restricted?{start:$('#autoStart').value,end:$('#autoEnd').value,
+      timezone:$('#autoTz').value.trim()||'Europe/Paris'}
+    :{start:'00:00',end:'00:00',timezone:$('#autoTz').value.trim()||'Europe/Paris'};
+  try{
+    await updCall('PUT','/api/update/settings',{auto_apply:on});
+    await updCall('PUT','/api/update/auto',{enabled:on,window:window});
+    toast('Réglages de mise à jour enregistrés');
+    await loadUpdate();
+  }catch(e){toast(e.message,'err');}
+};
+$('#unignoreBtn').onclick=async()=>{
+  try{
+    await updCall('PUT','/api/update/settings',{ignorer_auto:''});
+    toast('Version de nouveau autorisée en automatique');
+    await loadUpdate();
+  }catch(e){toast(e.message,'err');}
+};
+$('#rollbackBtn').onclick=async()=>{
+  const v=(UPD.u&&UPD.u.precedente&&UPD.u.precedente.version)||'';
+  if(!v)return;
+  if(!confirm(`Revenir à la version ${v} ?\n\nLa sauvegarde de base prise avant la mise à jour vers la version actuelle est restaurée ; la version ${v} devient ignorée par l'application automatique.`))return;
+  try{
+    await updCall('POST','/api/update/rollback',{});
+    toast(`Retour vers ${v} demandé`);
+    await loadUpdate();
+  }catch(e){toast(e.message,'err');}
+};
+$('#forgetBtn').onclick=async()=>{
+  const v=(UPD.u&&UPD.u.precedente&&UPD.u.precedente.version)||'';
+  if(!v)return;
+  if(!confirm(`Oublier la version ${v} ?\n\nL'image conservée est supprimée du serveur (libère de la place) ; le retour arrière vers ${v} ne sera plus possible.`))return;
+  try{
+    await updCall('POST','/api/update/forget-previous',{});
+    toast(`Version ${v} oubliée`);
+    await loadUpdate();
+  }catch(e){toast(e.message,'err');}
+};
+$('#cancelBtn').onclick=async()=>{
+  if(!confirm('Annuler la demande de mise à jour en attente ?\n\nSi le compagnon l\'a déjà prise, l\'annulation n\'aura aucun effet.'))return;
+  try{
+    const r=await updCall('DELETE','/api/update/request');
+    toast(r.cancelled?'Demande annulée':'Aucune demande à annuler');
+    await loadUpdate();
+  }catch(e){toast(e.message,'err');}
+};
+$('#targetVersion').onchange=()=>{
+  const target=updTarget(), btn=$('#updateApplyBtn');
+  btn.disabled=!(UPD.u&&UPD.u.present)||!target;
+  btn.textContent=target?'Mettre à jour vers '+target:'Mettre à jour vers…';
 };
 $('#updateApplyBtn').onclick=async()=>{
-  const d=await (await fetch('/api/update/status',{credentials:'include'})).json();
-  const target=d.latest_version;
+  const target=updTarget();
   if(!target)return;
   if(!confirm(`Mettre à jour vers ${target} ?\n\nUne sauvegarde de la base et de la configuration est prise avant la bascule ; en cas d'échec du contrôle de santé, l'ancienne version est restaurée automatiquement.`))return;
   $('#updateApplyBtn').disabled=true;
-  const r=await fetch('/api/update/apply',{method:'POST',credentials:'include',
-    headers:{'Content-Type':'application/json'},body:JSON.stringify({target})});
-  const body=await r.json().catch(()=>({}));
-  if(!r.ok){toast(body.detail||'Mise à jour refusée','err');await loadUpdate();return;}
-  toast(`Mise à jour vers ${target} demandée`);
-  await loadUpdate();
-};
-$('#autoSave').onclick=async()=>{
-  const r=await fetch('/api/update/auto',{method:'PUT',credentials:'include',
-    headers:{'Content-Type':'application/json'},body:JSON.stringify({
-      enabled:$('#autoEnabled').checked,
-      window:{start:$('#autoStart').value,end:$('#autoEnd').value,timezone:$('#autoTz').value.trim()||'Europe/Paris'}}) });
-  const body=await r.json().catch(()=>({}));
-  if(!r.ok){toast(body.detail||'Réglage refusé','err');return;}
-  toast('Mise à jour automatique enregistrée');
+  try{
+    await updCall('POST','/api/update/apply',{target});
+    toast(`Mise à jour vers ${target} demandée`);
+  }catch(e){toast(e.message,'err');}
   await loadUpdate();
 };
 $('#checkBtn').onclick=async()=>{
   $('#checkBtn').disabled=true;$('#checkBtn').textContent='Vérification…';
-  try{await fetch('/api/update/check',{method:'POST',credentials:'include'});await loadUpdate();toast('Vérification terminée');}
+  try{await updCall('POST','/api/update/check');await loadUpdate();toast('Vérification terminée');}
   catch(e){toast('Vérification impossible','err');}
   $('#checkBtn').disabled=false;$('#checkBtn').textContent='Vérifier maintenant';
 };

@@ -183,7 +183,7 @@ function tokenGroups(machines) {
       const coin = (g.coin || "").trim();
       const key = (coin || "?").toUpperCase();
       const entry = groups[key] || (groups[key] = {
-        coin: coin, algo: (g.algo || "").trim(), hs: 0, machines: 0, miners: 0, workers: 0
+        coin: coin, algo: (g.algo || "").trim() || "inconnu", hs: 0, machines: 0, miners: 0, workers: 0
       });
       entry.machines += 1;
       entry.miners += Number(g.miners || 0);
