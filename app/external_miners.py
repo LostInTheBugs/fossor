@@ -196,7 +196,7 @@ _RAW_WALLET_TOKEN = re.compile(
 )
 
 
-def mask_raw_collect(text: str, max_len: int = 20000) -> str:
+def mask_raw_collect(text: str, max_len: int = 40000) -> str:
     """Mask a whole raw collection output (diagnostic screen).
 
     Two layers: JSON keys that carry HiveOS secrets (``passwd``, ``rig_id``…)

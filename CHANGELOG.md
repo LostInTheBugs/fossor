@@ -1,5 +1,13 @@
 # Changelog
 
+## [2026.11.004-c4] — 2026-11-18
+
+### Corrigé
+- Le filtre `PS_MINERS` garde les scripts solo (`*-miner.sh`) même à 0 % de CPU : `korsh-miner.sh`, endormi dans `screen` entre deux scans, n'était plus vu, donc plus aucune sonde de log n'était planifiée et le solo KORSH du rig perdait son hashrate (6,25 kH/s en 2026.11.004).
+- La sonde lit le journal que le script déclare lui-même (`/proc/<pid>/fd/255`), chemin relatif résolu sur son `cwd` : `/root/korsh/mining.log` est retrouvé sans deviner de nom, et le hashrate revient par les scans (200 000 nonces / intervalle).
+- `raw_collections` conserve 40 000 caractères au lieu de 20 000 : la sonde CPU, placée en tête, tronquait `PS_MINERS`, `NODE` et `CHAIN` du rig.
+- `pyproject.toml` aligné sur la version de base (2026.11.4).
+
 ## 2026.11.004-c3 — 2026-11-18
 
 ### Correctif — le vrai défaut de la sonde `/proc/<pid>/fd`

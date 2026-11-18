@@ -94,7 +94,7 @@ WHITELISTED_COMMANDS: dict[str, str] = {
           nvidia-smi --query-gpu=index,pci.bus_id,temperature.gpu,power.draw,fan.speed,utilization.gpu --format=csv,noheader,nounits 2>/dev/null
         fi
         echo '### PS_MINERS'
-        ps -eo user:32,pid,pcpu,etimes,args 2>/dev/null | awk 'NR==1{print;next} substr($5,1,1)=="["{next} $3+0>0 || /stratum|srbminer|cpuminer|wam-miner|xmrig|generatetoaddress|mine[-_]|--api-port|--pool|--url|korshd|bitcoind|-cli /{print}'
+        ps -eo user:32,pid,pcpu,etimes,args 2>/dev/null | awk 'NR==1{print;next} substr($5,1,1)=="["{next} $3+0>0 || /stratum|srbminer|cpuminer|wam-miner|xmrig|generatetoaddress|mine[-_]|miner[.]sh|--api-port|--pool|--url|korshd|bitcoind|-cli /{print}'
         echo '### UPTIME'
         cat /proc/uptime 2>/dev/null
         exit 0
@@ -548,6 +548,21 @@ def _machine_secret(machine: Any) -> str:
     return ""
 
 
+def ps_miners_command() -> str:
+    """The ``PS_MINERS`` filter of ``collect_stats``, as executed on machines.
+
+    Extracted from the whitelisted command so a test exercises the *same*
+    string, never a copy that drifts.  2026.11.004-c4 : le filtre garde aussi
+    les scripts solo (``*-miner.sh``) même à 0 % de CPU — ``korsh-miner.sh``
+    dort entre deux scans et disparaissait, donc aucune sonde de log n'était
+    planifiée pour le solo KORSH.
+    """
+    for line in WHITELISTED_COMMANDS["collect_stats"].splitlines():
+        if line.strip().startswith("ps -eo user:32"):
+            return line.strip()
+    raise LookupError("commande PS_MINERS introuvable")
+
+
 async def ssh_test_machine(machine: Any, actor: str = "system") -> dict[str, Any]:
     """Test the SSH connection to a Machine ORM object."""
     # The caller passes the Machine row it just loaded: use its pinned key
@@ -810,6 +825,32 @@ def cpu_probe_command(probes: dict[str, Any]) -> str:
                 'RD stat -c %Y "$RL" 2>/dev/null',
                 'RD tail -n 80 "$RL" 2>/dev/null',
             ]
+        # 2026.11.004-c4 : le script solo déclare son propre journal.  Son
+        # ``/proc/<pid>/fd/255`` est le fichier de script ouvert par bash : on y
+        # lit les chemins ``*.log`` qu'il redirige, on résout les relatifs sur
+        # son cwd et on garde le plus récent.  Aucun nom de log n'est deviné.
+        solo = probe.get("solo_pids") or {}
+        script_pids = [
+            pid for pid in (solo.get("script") or []) + (solo.get("parent") or [])
+            if isinstance(pid, int) and pid > 0
+        ]
+        if script_pids and not probe.get("redirect"):
+            lines.append("SF=''")
+            lines.append("for sp in " + " ".join(str(pid) for pid in script_pids) + "; do")
+            lines.append("  SD=$(RD readlink -f /proc/$sp/cwd 2>/dev/null)")
+            lines.append(
+                "  for f in $(RD grep -hoE '[A-Za-z0-9_./-]+[.]log'"
+                " /proc/$sp/fd/255 2>/dev/null | sort -u); do"
+            )
+            lines.append('    case "$f" in /*) ;; *) f="$SD/$f";; esac')
+            lines.append('    [ -n "$(RD stat -c %Y "$f" 2>/dev/null)" ] && SF="$f"')
+            lines.append("  done")
+            lines.append("done")
+            lines.append(
+                f'[ -n "$SF" ] && {{ echo "### LOGI {script_pids[0]} $SF"; '
+                'RD stat -c %Y "$SF" 2>/dev/null; RD tail -n 80 "$SF" 2>/dev/null; }'
+            )
+
         log_path = str(probe.get("log") or "")
         if CPU_PROBE_PATH_RE.match(log_path):
             lines += [
