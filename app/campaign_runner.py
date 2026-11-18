@@ -446,6 +446,10 @@ async def _start(db: Any, campaign: Any, moment: datetime, backend: Any, simulat
         db.commit()
 
     balance = read_balance(db, campaign)
+    # Le délai de retour vient du réglage (§4.7 : 5 min par défaut), pas de la
+    # seule valeur de colonne : une campagne créée sans réglage explicite doit
+    # obéir au réglage courant.
+    campaign.restore_timeout_s = restore_timeout(db)
     campaign.start_balance = balance["total"]
     campaign.balance_unit = balance["unit"]
     campaign.balance_source = balance["source"]
