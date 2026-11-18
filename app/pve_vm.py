@@ -54,6 +54,9 @@ PUBKEY_PATH = f"{PVE_TMP_DIR}/fossor.pub"
 KEY_PATH = "/root/.ssh/fossor-vm"
 KNOWN_HOSTS = "/root/.ssh/known_hosts.fossor-vm"
 CHECKSUM_ALGOS = ("sha256", "sha512")
+GUEST_AGENT_PACKAGE = "qemu-guest-agent"
+LOCAL_SNIPPET_DIR = "/var/lib/vz/snippets"
+SNIPPET_PREFIX = "fossor-user"
 
 _RE_NODE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
 _RE_STORAGE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,31}$")
@@ -63,6 +66,7 @@ _RE_IMAGE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.(qcow2|img|raw)$
 _RE_SHA256 = re.compile(r"^[a-f0-9]{64}$")
 _RE_SHA512 = re.compile(r"^[a-f0-9]{128}$")
 _RE_MAC = re.compile(r"^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$")
+_RE_IPV6_LL = re.compile(r"^[fF][eE]80:[0-9A-Fa-f:]{2,39}$")
 _RE_IPV4 = re.compile(
     r"^((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$"
 )
@@ -349,6 +353,47 @@ def parse_ip_neigh(text: str, mac: str) -> str:
     return ""
 
 
+def parse_ipv6_neigh(text: str, mac: str) -> str:
+    """Table de voisins **IPv6** de l'hôte : MAC → adresse lien-local.
+
+    Relevé sur un hôte Proxmox juste après ``qm start`` (anonymisé) ::
+
+        fe80::be24:11ff:fe00:0001 dev vmbr0 lladdr bc:24:11:00:00:01 router STALE
+
+    C'est la seule trace d'une VM fraîche : aucun échange IPv4 n'a eu lieu,
+    donc la table ARP est vide.
+    """
+    wanted = (mac or "").strip().lower()
+    if not _RE_MAC.match(wanted):
+        return ""
+    for raw in (text or "").splitlines():
+        parts = raw.split()
+        if not parts or not _RE_IPV6_LL.match(parts[0]):
+            continue
+        lower = [part.lower() for part in parts]
+        if "lladdr" in lower and lower.index("lladdr") + 1 < len(lower):
+            if lower[lower.index("lladdr") + 1] == wanted:
+                return parts[0].lower()
+    return ""
+
+
+def parse_addr_ipv4(text: str) -> str:
+    """``ip -4 -o addr show scope global`` → première IPv4 de la VM.
+
+    Relevé réel (anonymisé) ::
+
+        2: ens18    inet 192.0.2.31/24 brd 192.0.2.255 scope global dynamic ens18\\       valid_lft 86390sec preferred_lft 86390sec
+    """
+    for match in re.finditer(r"\binet\s+([0-9]{1,3}(?:\.[0-9]{1,3}){3})/\d+", text or ""):
+        candidate = match.group(1)
+        if not _RE_IPV4.match(candidate):
+            continue
+        if candidate.startswith(("127.", "169.254.")):
+            continue
+        return candidate
+    return ""
+
+
 # ── Propriété et destruction ──────────────────────────────────────────
 def in_range(vmid: int, low: int, high: int) -> bool:
     try:
@@ -431,6 +476,96 @@ def _sh(script: str, *args: str) -> tuple[str, ...]:
     return ("sh", "-c", script, "fossor", *args)
 
 
+def userdata_yaml(name: str, ssh_public_key: str) -> str:
+    """cloud-config de la VM : compte, clé Fossor et **agent invité**.
+
+    ``--cicustom user=…`` remplace l'user-data que Proxmox génère : le compte,
+    sa clé et l'installation de ``qemu-guest-agent`` doivent donc être écrits
+    ici, sans quoi la VM n'a ni accès SSH ni agent (et son IP reste
+    introuvable).
+    """
+    validate_name(name)
+    key = (ssh_public_key or "").strip()
+    _require(bool(_RE_KEY.match(key)) and "\n" not in key,
+             "clé SSH de Fossor : ligne OpenSSH attendue")
+    return "\n".join(
+        [
+            "#cloud-config",
+            f"hostname: {name}",
+            "manage_etc_hosts: true",
+            "users:",
+            f"  - name: {VM_USER}",
+            "    shell: /bin/bash",
+            "    sudo: ALL=(ALL) NOPASSWD:ALL",
+            "    lock_passwd: true",
+            "    ssh_authorized_keys:",
+            f"      - {key}",
+            "package_update: true",
+            "packages:",
+            f"  - {GUEST_AGENT_PACKAGE}",
+            "runcmd:",
+            f"  - systemctl enable --now {GUEST_AGENT_PACKAGE}",
+            "",
+        ]
+    )
+
+
+def snippet_name(vmid: int) -> str:
+    return f"{SNIPPET_PREFIX}-{int(vmid)}.yaml"
+
+
+def cicustom_value(model: dict[str, Any], vmid: int) -> str:
+    """Référence ``<stockage>:snippets/<fichier>`` passée à ``qm set --cicustom``."""
+    return f"{model['ci_storage']}:snippets/{snippet_name(vmid)}"
+
+
+def userdata_plan(
+    model: dict[str, Any], name: str, vmid: int, ssh_public_key: str
+) -> list[VmStep]:
+    """Écrit le snippet cloud-init dans ``snippets/`` du stockage choisi.
+
+    Le dossier est résolu par ``pvesh`` (champ ``path`` du stockage) : un
+    stockage ``dir`` autre que ``local`` n'a pas ses snippets sous
+    ``/var/lib/vz``. Repli sur ``/var/lib/vz`` si ``pvesh`` ne répond pas.
+    """
+    script = (
+        's="$1"; f="$2"; b=""; '
+        'b=$(pvesh get "/storage/$s" --output-format json 2>/dev/null '
+        "| sed -n 's/.*\"path\":\"\\([^\"]*\\)\".*/\\1/p'); "
+        '[ -n "$b" ] || b="' + LOCAL_SNIPPET_DIR.rsplit("/snippets", 1)[0] + '"; '
+        '[ -d "$b" ] || { echo "SNIPPET:stockage introuvable $s" >&2; exit 6; }; '
+        'install -d -m 0755 "$b/snippets" || exit 6; '
+        'cat > "$b/snippets/$f" && echo "SNIPPET:$b/snippets/$f"'
+    )
+    return [
+        VmStep(
+            "snippet cloud-init (agent invité, compte et clé Fossor)",
+            _sh(script, model["ci_storage"], snippet_name(vmid)),
+            stdin=userdata_yaml(name, ssh_public_key),
+            timeout=60,
+        )
+    ]
+
+
+_DNS_FAILURES = (
+    "could not resolve host",
+    "temporary failure in name resolution",
+    "name or service not known",
+    "no address associated with hostname",
+)
+
+
+def image_error_is_dns(text: str) -> bool:
+    """Vrai quand l'échec de téléchargement vient de la **résolution** sur l'hôte."""
+    lower = (text or "").lower()
+    return any(marker in lower for marker in _DNS_FAILURES)
+
+
+def image_url_host(url: str) -> str:
+    match = re.match(r"^https?://([^/:]+)", url or "")
+    return match.group(1) if match else ""
+
+
 def image_plan(model: dict[str, Any]) -> list[VmStep]:
     """Téléchargement de l'image cloud sur l'hôte, somme de contrôle vérifiée."""
     path = image_path(model)
@@ -472,6 +607,7 @@ def create_plan(
     steps = image_plan(model)
     steps += [
         VmStep("clé publique de la VM (cloud-init)", ("tee", PUBKEY_PATH), stdin=key + "\n"),
+        *userdata_plan(model, name, vmid, key),
         VmStep(
             "création de la VM (qm create)",
             (
@@ -515,6 +651,7 @@ def create_plan(
                 "--ciuser", VM_USER,
                 "--sshkeys", PUBKEY_PATH,
                 "--ipconfig0", "ip=dhcp",
+                "--cicustom", f"user={cicustom_value(model, vmid)}",
             ),
             timeout=300,
         ),
@@ -544,6 +681,33 @@ def ip_plan(vmid: int) -> list[VmStep]:
         ),
         VmStep("adresse de la VM (table ARP de l'hôte)", ("ip", "neigh", "show"), allow_fail=True,
                timeout=30),
+        VmStep("adresse de la VM (voisins IPv6 de l'hôte)", ("ip", "-6", "neigh", "show"),
+               allow_fail=True, timeout=30),
+    ]
+
+
+def link_local_addr_step(link_local: str, bridge: str) -> list[VmStep]:
+    """Clé d'hôte scannée depuis l'hôte, puis IPv4 relevée par SSH (lecture seule).
+
+    Une adresse ``fe80::`` n'est joignable qu'avec son scope ``%<bridge>``. La
+    clé d'hôte est épinglée par un scan lancé **depuis l'hôte Proxmox** avant
+    tout envoi de secret, puis le SSH exige ``StrictHostKeyChecking=yes``.
+    """
+    _require(bool(_RE_IPV6_LL.match(link_local or "")), "adresse lien-local invalide")
+    _require(bool(_RE_BRIDGE.match(bridge or "")), "interface de l'hôte (bridge) requise")
+    scan = (
+        'f="$1"; h="$2"; '
+        'touch "$f" && chmod 600 "$f"; '
+        'ssh-keyscan -T 5 -t ed25519 "$h" >>"$f" 2>/dev/null '
+        '&& echo "HOSTKEY:ok $h"'
+    )
+    return [
+        VmStep("clé d'hôte de la VM (scan depuis l'hôte)",
+               _sh(scan, KNOWN_HOSTS, f"{link_local}%{bridge}"), allow_fail=True, timeout=60),
+        VmStep("IPv4 de la VM par SSH sur son adresse lien-local",
+               ssh_vm_argv(link_local, ("ip", "-4", "-o", "addr", "show", "scope", "global"),
+                           bridge),
+               allow_fail=True, timeout=60),
     ]
 
 
@@ -624,23 +788,39 @@ def parse_detect(text: str) -> dict[str, Any]:
     }
 
 
-def ssh_vm_argv(ip: str, argv: list[str] | tuple[str, ...]) -> tuple[str, ...]:
-    """Commande passée à l'hôte : SSH vers la VM, clé Fossor, hôte épinglé."""
-    _require(bool(_RE_IPV4.match(ip or "")), "adresse de la VM invalide")
+def ssh_vm_argv(
+    ip: str, argv: list[str] | tuple[str, ...], bridge: str = ""
+) -> tuple[str, ...]:
+    """Commande passée à l'hôte : SSH vers la VM, clé Fossor, hôte épinglé.
+
+    Une adresse IPv6 lien-local (``fe80::…``) exige ``-6`` et le scope
+    ``%<bridge>`` : elle n'est joignable que par l'interface qui la porte.
+    """
+    target = (ip or "").strip()
+    scope = ""
+    if _RE_IPV6_LL.match(target):
+        _require(bool(_RE_BRIDGE.match(bridge or "")),
+                 "adresse lien-local : interface de l'hôte (bridge) requise")
+        scope = f"%{bridge}"
+    else:
+        _require(bool(_RE_IPV4.match(target)), "adresse de la VM invalide")
     _require(bool(argv), "commande vide")
     return (
-        "ssh", "-i", KEY_PATH,
+        "ssh", *(("-6",) if scope else ()), "-i", KEY_PATH,
         "-o", "BatchMode=yes",
         "-o", "StrictHostKeyChecking=yes",
         "-o", f"UserKnownHostsFile={KNOWN_HOSTS}",
         "-o", "ConnectTimeout=10",
-        f"{VM_USER}@{ip}",
+        f"{VM_USER}@{target}{scope}",
         *argv,
     )
 
 
-def vm_step(title: str, ip: str, argv: list[str] | tuple[str, ...], **kwargs: Any) -> VmStep:
-    return VmStep(title, ssh_vm_argv(ip, argv), **kwargs)
+def vm_step(
+    title: str, ip: str, argv: list[str] | tuple[str, ...], **kwargs: Any
+) -> VmStep:
+    bridge = kwargs.pop("bridge", "")
+    return VmStep(title, ssh_vm_argv(ip, argv, bridge), **kwargs)
 
 
 __all__ = [
@@ -652,6 +832,9 @@ __all__ = [
     "ensure_owned", "image_path", "image_plan", "in_range", "inspect_plan", "ip_plan",
     "is_fossor_name", "is_owned", "parse_cluster_resources", "parse_detect",
     "parse_guest_ip", "parse_ip_neigh", "parse_pve_storages", "parse_pvesm_status",
+    "parse_ipv6_neigh", "parse_addr_ipv4", "userdata_yaml", "userdata_plan",
+    "cicustom_value", "snippet_name", "image_error_is_dns", "image_url_host",
+    "link_local_addr_step", "GUEST_AGENT_PACKAGE", "LOCAL_SNIPPET_DIR",
     "parse_qm_config", "parse_qm_list", "parse_qm_status", "shutdown_plan",
     "status_plan", "stop_plan", "validate_name", "validate_pve_model", "vm_step",
     "evaluate_backup", "parse_backup_stat", "validate_vm_node", "VmStep", "VmError",

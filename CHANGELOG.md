@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026.11.008 — 2026-11-18
+
+### 3d — énergie et disponibilité
+- Tarifs : plages horaires (jours ouvrés / week-end, plage traversant minuit) et Tempo avec
+  couleur du jour récupérée automatiquement, heures creuses réglables.
+- Règle « heures chères » par machine et coupure d'alimentation Shelly Gen1/Gen2 ou Home
+  Assistant ; un refus est journalisé et ne consomme ni quota ni délai.
+- Puissance à la prise : rendement des PSU, mesure réelle prioritaire, `power_source` et
+  `power_estimated` exposés (une estimation se déclare).
+- `vm_host` exige désormais `/dev/kvm` **et** `domain type='kvm'` : un hôte en émulation
+  seule n'est plus proposé pour les modes vm/hybrid.
+
+### Pilote Proxmox (§4.6)
+- `app/pve_vm.py` (pur), `app/pve_remote.py` (exécution) et `app/routers/pve.py` : modèle de
+  VM, inspection en lecture seule (`pvesm`, `pvesh`, `qm`), création, arrêt et destruction.
+- Propriété triple relue sur l'hôte : VMID dans la plage 9900-9999, tag `fossor` et
+  `fossor_vm=1` dans la description ; `pct` n'apparaît dans aucun plan et est refusé.
+
+### Correctif — adresse IP d'une VM fraîche
+- cloud-init installe et active `qemu-guest-agent` (snippet `snippets/` du stockage cloud-init
+  et `--cicustom`), et la VM est créée avec `--agent enabled=1`.
+- Repli IPv6 lien-local : MAC → `ip -6 neigh`, clé d'hôte scannée depuis l'hôte, puis
+  `ip -4 addr` par SSH sur cette adresse — tout est en lecture seule.
+- Image poussée depuis Fossor quand l'hôte ne résout pas le nom de l'image (somme de
+  contrôle vérifiée des deux côtés), avec le message « l'hôte ne résout pas <hôte> : image
+  envoyée par Fossor ».
+
 ## 2026.11.007 — 2026-11-18
 - Campagnes en mode `vm` et `hybrid` (§4.6) : modèle de VM jetable, pilote libvirt
   (création, démarrage, collecte, extinction), VM préfixée `fossor-` et marquée

@@ -12,7 +12,12 @@ L'hôte est joint en SSH avec le compte racine du préréglage ``os_kind=proxmox
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import os
 import time
+import urllib.request
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from app import pve_vm as P
@@ -69,6 +74,91 @@ def _simulated(plan: list[P.VmStep], extra: dict[str, Any] | None = None) -> dic
     if extra:
         payload.update(extra)
     return payload
+
+
+PUSH_CHUNK = 3 * 1024 * 1024
+
+
+def local_image_path(model: dict[str, Any]) -> Path:
+    """Cache local de l'image, côté Fossor (jamais dans un dossier partagé)."""
+    base = Path(os.environ.get("FOSSOR_DATA_DIR") or "/data") / "cache" / "pve-images"
+    return base / P.image_path(model).rsplit("/", 1)[-1]
+
+
+def _download_blocking(model: dict[str, Any], dest: Path) -> str:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    part = dest.with_name(dest.name + ".part")
+    with urllib.request.urlopen(model["image_url"], timeout=1800) as response, part.open("wb") as fh:
+        for block in iter(lambda: response.read(1024 * 1024), b""):
+            fh.write(block)
+    digest = hashlib.new(model["checksum_algo"])
+    with part.open("rb") as fh:
+        for block in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(block)
+    if digest.hexdigest().lower() != model["checksum"].lower():
+        part.unlink(missing_ok=True)
+        raise PveRemoteError(
+            f"image {model['image_url']} : somme {model['checksum_algo']} locale différente "
+            f"({digest.hexdigest()})"
+        )
+    part.replace(dest)
+    return str(dest)
+
+
+async def download_image(model: dict[str, Any]) -> str:
+    """Récupère l'image **côté Fossor**, somme vérifiée localement."""
+    return await asyncio.to_thread(_download_blocking, model, local_image_path(model))
+
+
+async def push_image(host: Any, model: dict[str, Any], path: str) -> dict[str, Any]:
+    """Copie l'image vers l'hôte par le canal SSH, somme vérifiée des deux côtés.
+
+    Utilisé seulement quand l'hôte ne résout pas le nom de l'image : le contenu
+    est encodé en base64 fragment par fragment, puis l'hôte recalcule la somme
+    demandée par le modèle avant tout ``qm set``.
+    """
+    dest = P.image_path(model)
+    algo = model["checksum_algo"]
+    await _run(
+        host,
+        P.VmStep(
+            "copie de l'image : fichier cible vidé",
+            ("sh", "-c",
+             'p="$1"; install -d -m 0700 "$(dirname "$p")" && rm -f "$p" && echo "PUSH:init $p"',
+             "fossor", dest),
+            timeout=60,
+        ),
+    )
+    sent = 0
+    with open(path, "rb") as fh:
+        while True:
+            chunk = fh.read(PUSH_CHUNK)
+            if not chunk:
+                break
+            await _run(
+                host,
+                P.VmStep(
+                    "copie de l'image (fragment)",
+                    ("sh", "-c", 'p="$1"; base64 -d >> "$p" && echo "PUSH:chunk"', "fossor", dest),
+                    stdin=base64.b64encode(chunk).decode("ascii"),
+                    timeout=600,
+                ),
+            )
+            sent += len(chunk)
+    check = await _run(
+        host,
+        P.VmStep(
+            "somme de contrôle de l'image reçue",
+            ("sh", "-c", 'p="$1"; s="$2"; a="$3"; echo "$s  $p" | "${a}sum" -c -',
+             "fossor", dest, model["checksum"], algo),
+            allow_fail=True,
+            timeout=600,
+        ),
+    )
+    if "OK" not in (check["stdout"] or ""):
+        raise PveRemoteError(f"copie de l'image : somme {algo} non confirmée par l'hôte")
+    return {"path": dest, "bytes": sent, "checksum": model["checksum"], "algo": algo,
+            "verified": True}
 
 
 def install_key_plan(private_key: str) -> list[P.VmStep]:
@@ -155,8 +245,23 @@ async def create(
     if simulated:
         return _simulated(key_steps + plan, {"name": name, "vmid": int(vmid), "state": "creating"})
     commands: list[str] = []
-    for step in key_steps + plan:
-        await _run(host, step)
+    image_source = "téléchargée par l'hôte"
+    note = ""
+    download_index = len(key_steps) + 1
+    for index, step in enumerate(key_steps + plan):
+        try:
+            await _run(host, step)
+        except PveRemoteError as exc:
+            if index != download_index or not P.image_error_is_dns(str(exc)):
+                raise
+            local = await download_image(model)
+            pushed = await push_image(host, model, local)
+            image_source = "envoyée par Fossor"
+            note = (
+                f"l'hôte ne résout pas {P.image_url_host(model['image_url'])} : "
+                f"image envoyée par Fossor ({pushed['bytes']} octets, "
+                f"{pushed['algo']} vérifiée sur l'hôte)"
+            )
         commands.append(step.command())
     return {
         "simulated": False,
@@ -164,6 +269,8 @@ async def create(
         "vmid": int(vmid),
         "state": "running",
         "image": P.image_path(model),
+        "image_source": image_source,
+        "note": note,
         "commands": commands,
     }
 
@@ -179,9 +286,20 @@ async def config(host: Any, vmid: int, *, simulated: bool) -> dict[str, Any]:
 
 
 async def wait_address(
-    host: Any, vmid: int, *, simulated: bool, attempts: int = 24, pause: float = 5.0
+    host: Any,
+    vmid: int,
+    *,
+    simulated: bool,
+    attempts: int = 24,
+    pause: float = 5.0,
+    bridge: str = P.DEFAULT_BRIDGE,
 ) -> dict[str, Any]:
-    """Agent invité, puis MAC → table ARP de l'hôte (lecture seule)."""
+    """Agent invité, ARP IPv4, puis IPv6 lien-local → ``ip -4 addr`` par SSH.
+
+    Tout est en lecture seule sur l'hôte ; le SSH vers la VM ne lit que ses
+    adresses. Une VM fraîche n'a souvent que son adresse lien-local dans la
+    table de voisins, l'ARP IPv4 étant vide faute d'échange.
+    """
     plan = P.ip_plan(vmid)
     if simulated:
         return _simulated(plan, {"ip": "", "mac": "", "source": ""})
@@ -196,10 +314,25 @@ async def wait_address(
         ip = P.parse_ip_neigh(neigh["stdout"], mac)
         if ip:
             return {"simulated": False, "ip": ip, "mac": mac, "source": "table ARP de l'hôte"}
+        if mac and bridge:
+            neighbours = await _run(host, plan[2])
+            link_local = P.parse_ipv6_neigh(neighbours["stdout"], mac)
+            if link_local:
+                scan, addr = P.link_local_addr_step(link_local, bridge)
+                await _run(host, scan)
+                ip = P.parse_addr_ipv4((await _run(host, addr))["stdout"])
+                if ip:
+                    return {
+                        "simulated": False,
+                        "ip": ip,
+                        "mac": mac,
+                        "link_local": link_local,
+                        "source": "SSH sur adresse lien-local",
+                    }
         await asyncio.sleep(pause)
     raise PveRemoteError(
-        f"La VM {vmid} n'a pas obtenu d'adresse IP (agent invité muet et MAC {mac or 'inconnue'} "
-        "absente de la table ARP)."
+        f"La VM {vmid} n'a pas obtenu d'adresse IP (agent invité muet, MAC "
+        f"{mac or 'inconnue'} absente de l'ARP IPv4 et des voisins IPv6)."
     )
 
 
