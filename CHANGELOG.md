@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026.11.004-c3 — 2026-11-18
+
+### Correctif — le vrai défaut de la sonde `/proc/<pid>/fd`
+
+- Les fragments de la sonde étaient écrits `\"$c\"` dans la chaîne Python : le shell
+  recevait un mot **entouré de guillemets littéraux**, donc `case "$c" in /home/*)`
+  ne matchait **jamais**. Toutes les sondes de mineurs CPU retombaient sur
+  `journalctl` — y compris le solo BIG, dont le log est le seul porteur du hashrate.
+- Les guillemets sont maintenant émis nus (`"$c"`), et le test d'existence passe par
+  `RD` (`[ -e ]` puis `sudo -n test -e`) : le home en 750 rend le fichier invisible au
+  compte `fossor` alors que `sudo -n` le lit.
+- Preuve sur la machine réelle : la sonde exécutée en `fossor` rend
+  `### LOGI 1104502 /home/administrator/bigcoin-mine/bigcoin/mine.log` et ses lignes
+  `~6996 total over 11 workers`.
+
 ## 2026.11.004-c2 — 2026-11-18
 
 ### Correctif — le log du solo BIG, seconde voie
