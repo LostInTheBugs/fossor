@@ -348,7 +348,7 @@ header h1{font-size:26px}
       </div>
       <div id="enRanges" style="display:none">
         <div class="sub">Chaque minute de la journée doit être couverte une seule fois ; une plage peut passer minuit (22:00 → 06:00).</div>
-        <table><thead><tr><th>Début</th><th>Fin</th><th>€ / kWh</th><th>Libellé</th><th></th></tr></thead>
+        <table><thead><tr><th>Début</th><th>Fin</th><th>€ / kWh</th><th>Jours</th><th>Libellé</th><th></th></tr></thead>
           <tbody id="enRangeBody"></tbody></table>
         <div class="actions"><button class="btn sm outline" id="enAddRange">Ajouter une plage</button></div>
       </div>
@@ -362,6 +362,7 @@ header h1{font-size:26px}
           </select></div>
         </div>
         <div class="row" id="enTempoGrid"></div>
+        <div class="actions"><button class="btn sm outline" id="enTempoFetch">Récupérer la couleur du jour (source publique)</button></div>
       </div>
       <div class="actions"><button class="btn" id="enSave">Enregistrer le tarif</button></div>
     </div>
@@ -372,6 +373,31 @@ header h1{font-size:26px}
       <table><thead><tr><th>Machine</th><th style="text-align:right">CPU (W)</th><th style="text-align:right">Plateforme (W)</th></tr></thead>
         <tbody id="enMachineBody"></tbody></table>
       <div class="actions"><button class="btn" id="enSaveMachines">Enregistrer les puissances</button></div>
+    </div>
+
+    <div class="card">
+      <h2>Heures chères</h2>
+      <div class="sub">Règle optionnelle (§4.15), désactivée par défaut ; elle n'agit que sur ce que Fossor a lancé.
+        <span id="enPriceNow">…</span></div>
+      <div class="row">
+        <div class="field"><label><input type="checkbox" id="enRuleEnabled"> Activer la règle</label></div>
+        <div class="field"><label><input type="checkbox" id="enRuleSim" checked> Simulation (aucune commande)</label></div>
+        <div class="field"><label><input type="checkbox" id="enRuleNegative" checked> Aussi si le net/jour est négatif</label></div>
+      </div>
+      <div class="row">
+        <div class="field narrow"><label>Seuil €/kWh</label><input type="number" id="enRuleThreshold" step="0.0001" min="0" value="0.3"></div>
+        <div class="field"><label>Action</label><select id="enRuleMode">
+          <option value="stop">Couper le minage</option>
+          <option value="reduce">Réduire (moins de devices)</option>
+          <option value="power_limit">Power limit GPU</option>
+        </select></div>
+        <div class="field narrow"><label>Devices conservés</label><input type="number" id="enRuleKeep" min="1" max="64" value="1"></div>
+        <div class="field narrow"><label>Power limit (W)</label><input type="number" id="enRuleWatts" min="1" max="1000" value="100"></div>
+      </div>
+      <div class="field"><label><input type="checkbox" id="enRuleProtect" checked> Ne pas interrompre les campagnes en cours</label></div>
+      <div class="actions"><button class="btn" id="enRuleSave">Enregistrer la règle</button>
+        <button class="btn outline" id="enRuleRun">Évaluer maintenant</button></div>
+      <div id="enRuleVerdict" class="sub"></div>
     </div>
   </div>
 
@@ -865,10 +891,14 @@ const enRangeRow=r=>`<tr>
   <td><input class="enStart" value="${r.start||''}" placeholder="22:00" style="width:90px"></td>
   <td><input class="enEnd" value="${r.end||''}" placeholder="06:00" style="width:90px"></td>
   <td><input class="enPrice" type="number" step="0.0001" min="0" value="${r.price!==undefined?r.price:0.2}" style="width:110px"></td>
+  <td><select class="enDays"><option value="all">Tous</option><option value="weekday">Ouvrés</option><option value="weekend">Week-end</option></select></td>
   <td><input class="enLabel" value="${r.label||''}" style="width:120px"></td>
   <td><button class="btn sm outline enDel" type="button">Retirer</button></td></tr>`;
 const renderRanges=ranges=>{
   $('#enRangeBody').innerHTML=ranges.map(enRangeRow).join('');
+  [...document.querySelectorAll('#enRangeBody tr')].forEach((tr,i)=>{
+    tr.querySelector('.enDays').value=(ranges[i]&&ranges[i].days)||'all';
+  });
   document.querySelectorAll('.enDel').forEach(btn=>btn.onclick=()=>btn.closest('tr').remove());
 };
 const renderTempo=tempo=>{
@@ -894,6 +924,7 @@ const readTariff=()=>{
       start:tr.querySelector('.enStart').value.trim(),
       end:tr.querySelector('.enEnd').value.trim(),
       price:Number(tr.querySelector('.enPrice').value),
+      days:tr.querySelector('.enDays').value,
       label:tr.querySelector('.enLabel').value.trim()
     }));
     return {mode,ranges};
@@ -920,6 +951,7 @@ const loadEnergy=async()=>{
     <td style="text-align:right"><input class="enPlat" type="number" min="0" step="1" value="${m.platform_power_w==null?50:m.platform_power_w}" style="width:110px"></td>
   </tr>`).join('')||'<tr><td colspan="3" class="empty">Aucune machine.</td></tr>';
   syncMode();
+  await loadRule();
 };
 $('#enMode').addEventListener('change',syncMode);
 $('#enAddRange').addEventListener('click',()=>{
@@ -945,6 +977,65 @@ $('#enSaveMachines').addEventListener('click',async()=>{
   const data=await r.json().catch(()=>({}));
   if(!r.ok){toast(data.detail||'Puissances refusées','err');return;}
   toast('Puissances enregistrées');
+});
+
+/* ── Règle heures chères et couleur Tempo automatique ─────────────── */
+let EN_RULE={};
+const readRule=()=>({
+  enabled:$('#enRuleEnabled').checked,
+  mode:$('#enRuleMode').value,
+  threshold_eur_kwh:Number($('#enRuleThreshold').value),
+  trigger_negative_net:$('#enRuleNegative').checked,
+  keep_devices:Number($('#enRuleKeep').value||1),
+  power_limit_w:Number($('#enRuleWatts').value||100),
+  protect_campaigns:$('#enRuleProtect').checked,
+  simulation:$('#enRuleSim').checked
+});
+const loadRule=async()=>{
+  const r=await fetch('/api/energy/rule',{credentials:'include'});
+  if(r.status===401){location.href='/';return;}
+  const d=await r.json();
+  EN_RULE=d.rule||{};
+  $('#enRuleEnabled').checked=!!EN_RULE.enabled;
+  $('#enRuleMode').value=EN_RULE.mode||'stop';
+  $('#enRuleThreshold').value=EN_RULE.threshold_eur_kwh!==undefined?EN_RULE.threshold_eur_kwh:0.3;
+  $('#enRuleNegative').checked=EN_RULE.trigger_negative_net!==false;
+  $('#enRuleKeep').value=EN_RULE.keep_devices||1;
+  $('#enRuleWatts').value=EN_RULE.power_limit_w||100;
+  $('#enRuleProtect').checked=EN_RULE.protect_campaigns!==false;
+  $('#enRuleSim').checked=EN_RULE.simulation!==false;
+  const c=d.current||{};
+  $('#enPriceNow').textContent=`Prix courant : ${Number(c.price_eur_kwh||0).toFixed(4)} €/kWh — ${c.label||''}${c.day_colour?' · jour '+c.day_colour:''}`;
+  $('#enRuleVerdict').innerHTML=(d.events||[]).map(e=>
+    `<div>${String(e.ts||'').slice(11,19)} · ${e.kind}${e.simulated?' (simulation)':''} · ${e.detail}</div>`
+  ).join('')||'Aucun événement de règle.';
+};
+$('#enRuleSave').addEventListener('click',async()=>{
+  const r=await fetch('/api/energy/rule',{method:'PUT',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({rule:readRule()})});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){toast(d.detail||'Règle refusée','err');return;}
+  toast('Règle enregistrée');
+  await loadRule();
+});
+$('#enRuleRun').addEventListener('click',async()=>{
+  const r=await fetch('/api/energy/rule/evaluate',{method:'POST',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:'{}'});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){toast(d.detail||'Évaluation refusée','err');return;}
+  const k=(d.decision&&d.decision.counts)||{};
+  toast(d.decision&&d.decision.active
+    ?`Règle active : ${k.stop||0} arrêt(s), ${k.power_limit||0} power limit(s)`
+    :'Règle inactive : rien à faire');
+  await loadRule();
+});
+$('#enTempoFetch').addEventListener('click',async()=>{
+  const r=await fetch('/api/energy/tariff/tempo-day',{method:'POST',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:'{}'});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){toast(d.detail||'Couleur indisponible','err');return;}
+  toast('Couleur du jour : '+d.auto.day+' ('+d.auto.source+')');
+  await loadEnergy();
 });
 
 document.querySelectorAll('.subtab').forEach(button=>{

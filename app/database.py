@@ -80,6 +80,17 @@ def init_db():
     _migrate_device_role_columns()
     _migrate_asic_columns()
     _migrate_campaign_execution_mode()
+    _migrate_machine_fossor_host_column()
+
+
+def _migrate_machine_fossor_host_column():
+    """§4.17 : marque la machine qui héberge Fossor (aucune coupure permise)."""
+    with engine.begin() as conn:
+        columns = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(machines)")}
+        if "fossor_host" not in columns:
+            conn.exec_driver_sql(
+                "ALTER TABLE machines ADD COLUMN fossor_host INTEGER NOT NULL DEFAULT 0"
+            )
 
 
 def _migrate_asic_columns():

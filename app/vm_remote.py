@@ -76,6 +76,46 @@ def create_plan(model: dict[str, Any], name: str, ssh_public_key: str, private_k
     return key_plan(private_key) + V.create_plan(model, name, ssh_public_key)
 
 
+KVM_PROBE_SCRIPT = (
+    "test -e /dev/kvm && echo KVM=1; "
+    "command -v virsh >/dev/null 2>&1 && echo VIRSH=1; "
+    "echo \"KVM_DOMAIN=$(virsh --connect qemu:///system capabilities 2>/dev/null "
+    "| grep -c \"domain type='kvm'\")\"; exit 0"
+)
+KVM_MISSING_MESSAGE = (
+    "libvirt sans KVM (émulation seule) : modes vm/hybrid indisponibles sur cet hôte"
+)
+
+
+async def probe_kvm(host: Any, *, simulated: bool) -> dict[str, Any]:
+    """``/dev/kvm`` **et** ``domain type='kvm'`` dans ``virsh capabilities``.
+
+    Lecture seule. Sans les deux, ``virt-install --cpu max`` échoue à la
+    dernière étape : le refus arrive donc avant toute écriture.
+    """
+    if simulated:
+        return {
+            "simulated": True, "kvm": None, "kvm_device": None, "kvm_domain": None,
+            "message": "simulation : contrôle KVM non exécuté",
+        }
+    result = await _run(
+        host, V.VmStep("contrôle KVM", ("bash", "-lc", KVM_PROBE_SCRIPT), allow_fail=True)
+    )
+    from app.hw_parser import parse_virt
+
+    flags = parse_virt(result["stdout"])
+    capable = bool(flags.get("vm_capable"))
+    return {
+        "simulated": False,
+        "kvm": capable,
+        "kvm_device": bool(flags.get("kvm")),
+        "kvm_domain": int(flags.get("kvm_domain") or 0),
+        "pveversion": bool(flags.get("pveversion")),
+        "message": "" if capable else KVM_MISSING_MESSAGE,
+        "stdout": result["stdout"].strip()[:400],
+    }
+
+
 async def create(
     host: Any,
     model: dict[str, Any],
@@ -88,6 +128,9 @@ async def create(
     plan = create_plan(model, name, ssh_public_key, private_key)
     if simulated:
         return _simulated(plan, {"name": name, "state": "creating"})
+    probe = await probe_kvm(host, simulated=False)
+    if not probe["kvm"]:
+        raise VmRemoteError(probe["message"] or KVM_MISSING_MESSAGE)
     for step in plan:
         await _run(host, step)
     return {"simulated": False, "name": name, "state": "running", "commands": [s.command() for s in plan]}

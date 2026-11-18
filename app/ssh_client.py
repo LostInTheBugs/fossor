@@ -73,6 +73,7 @@ WHITELISTED_COMMANDS: dict[str, str] = {
         echo '### VIRT'
         test -e /dev/kvm && echo KVM=1
         command -v virsh >/dev/null 2>&1 && echo VIRSH=1
+        echo "KVM_DOMAIN=$(virsh --connect qemu:///system capabilities 2>/dev/null | grep -c \"domain type='kvm'\")"
         command -v pveversion >/dev/null 2>&1 && echo PVERSION=1
         echo '### OS'
         hostname 2>/dev/null
@@ -561,6 +562,82 @@ def ps_miners_command() -> str:
         if line.strip().startswith("ps -eo user:32"):
             return line.strip()
     raise LookupError("commande PS_MINERS introuvable")
+
+
+GPU_POWER_INFO_COMMAND = textwrap.dedent("""\
+    echo '### LIMITS'
+    if command -v nvidia-smi >/dev/null 2>&1; then
+      nvidia-smi --query-gpu=index,power.min_limit,power.max_limit,power.default_limit --format=csv,noheader,nounits 2>/dev/null
+    fi
+    exit 0
+""").strip()
+
+
+async def ssh_gpu_power_limits(machine: Any, actor: str = "system") -> dict[str, Any]:
+    """Bornes min/max/défaut du power limit, **lecture seule** (nvidia-smi)."""
+    from app.hw_parser import parse_gpu_power_limits
+
+    raw = await _run_whitelisted(
+        host=machine.host,
+        port=machine.ssh_port,
+        username=machine.ssh_user,
+        secret=_machine_secret(machine),
+        auth_type=machine.auth_type,
+        pinned_fp=(getattr(machine, "host_key", None) or "").strip() or None,
+        pinned_public_key=(getattr(machine, "host_key_public", None) or "").strip() or None,
+        command=GPU_POWER_INFO_COMMAND,
+        machine_id=machine.id,
+        audit_kind="gpu-power-limits",
+        actor=actor,
+    )
+    if not raw.get("ok"):
+        return raw
+    return {"ok": True, "limits": parse_gpu_power_limits(raw.get("stdout", "")),
+            "stdout": raw.get("stdout", "")}
+
+
+async def ssh_set_gpu_power_limit(
+    machine: Any, index: int, watts: float, actor: str = "system"
+) -> dict[str, Any]:
+    """Applique ``nvidia-smi -i <index> -pl <watts>`` puis relit la valeur.
+
+    Seuls deux entiers validés entrent dans la commande : aucune valeur libre.
+    """
+    try:
+        gpu_index, limit_w = int(index), int(round(float(watts)))
+    except (TypeError, ValueError):
+        raise ValueError("power limit : index et watts entiers attendus")
+    if not 0 <= gpu_index <= 63:
+        raise ValueError("power limit : index GPU hors bornes")
+    if not 1 <= limit_w <= 1000:
+        raise ValueError("power limit : valeur hors bornes (1 à 1000 W)")
+    command = textwrap.dedent(f"""\
+        echo '### SET'
+        if ! command -v nvidia-smi >/dev/null 2>&1; then
+          echo 'nvidia-smi absent'; exit 0
+        fi
+        sudo -n nvidia-smi -i {gpu_index} -pl {limit_w} 2>&1
+        echo '### READ'
+        nvidia-smi -i {gpu_index} --query-gpu=power.limit --format=csv,noheader,nounits 2>/dev/null
+        exit 0
+    """).strip()
+    raw = await _run_whitelisted(
+        host=machine.host,
+        port=machine.ssh_port,
+        username=machine.ssh_user,
+        secret=_machine_secret(machine),
+        auth_type=machine.auth_type,
+        pinned_fp=(getattr(machine, "host_key", None) or "").strip() or None,
+        pinned_public_key=(getattr(machine, "host_key_public", None) or "").strip() or None,
+        command=command,
+        machine_id=machine.id,
+        audit_kind="gpu-power-limit",
+        actor=actor,
+    )
+    if not raw.get("ok"):
+        return raw
+    return {"ok": True, "index": gpu_index, "requested_w": limit_w,
+            "stdout": raw.get("stdout", "")}
 
 
 async def ssh_test_machine(machine: Any, actor: str = "system") -> dict[str, Any]:

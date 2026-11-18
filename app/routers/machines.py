@@ -29,6 +29,7 @@ def _mask_secret(machine: Machine) -> dict:
         "host_key": machine.host_key,
         "usage": machine.usage,
         "vm_host": machine.vm_host,
+        "fossor_host": bool(machine.fossor_host),
         "enabled": machine.enabled,
         "cpu_power_w": machine.cpu_power_w,
         "platform_power_w": machine.platform_power_w,

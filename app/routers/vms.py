@@ -200,6 +200,15 @@ async def host_check(data: dict, db: Session = Depends(get_db), _user=Depends(re
     if result.get("driver") == "proxmox":
         # Détection uniquement : aucun pilote Proxmox n'est branché à cette étape.
         result["message"] = "Proxmox : pilote à venir."
+    if not simulated:
+        # §4.6 : « vm_host » suppose /dev/kvm **et** domain type='kvm'.
+        probe = await VR.probe_kvm(machine, simulated=False)
+        result["kvm"] = probe.get("kvm")
+        result["kvm_device"] = probe.get("kvm_device")
+        result["kvm_domain"] = probe.get("kvm_domain")
+        result["vm_host_possible"] = bool(probe.get("kvm"))
+        if probe.get("message"):
+            result["message"] = probe["message"]
     return result
 
 

@@ -1,27 +1,29 @@
 """Électricité et rentabilité réelle (§4.15).
 
-Three tariff modes, all in Europe/Paris:
+Trois modes de tarif, tous en Europe/Paris :
 
-* ``fixed``  — one price per kWh (default 0,20 €/kWh);
-* ``ranges`` — time ranges (heures creuses / pleines); a range may cross
-  midnight (``22:00`` → ``06:00``) and the whole day must be covered once;
-* ``tempo``  — coloured days (bleu / blanc / rouge) × HC / HP. The colour of the
-  day is typed in by the operator; ``unknown`` is priced as blue.
+* ``fixed``  — un prix au kWh (défaut 0,20 €/kWh) ;
+* ``ranges`` — plages horaires (heures creuses / pleines), plusieurs plages,
+  chacune applicable aux jours ouvrés, au week-end ou aux deux ; une plage peut
+  passer minuit (``22:00`` → ``06:00``) et les deux types de journée doivent être
+  couverts minute par minute ;
+* ``tempo``  — jours colorés (bleu / blanc / rouge) × heures creuses / pleines,
+  les fenêtres HC étant réglables. La couleur du jour est saisie à la main ou
+  récupérée d'une source publique (voir ``TEMPO_SOURCES``) puis mise en cache
+  dans le tarif ; le repli manuel reste toujours possible.
 
-Energy is integrated from the ``metrics`` rows (one per device per round):
-trapezoid between consecutive points, and a gap longer than five minutes is
-skipped instead of being filled with a made-up value. The CPU has no power
-sensor, so its wattage is typed in per machine; the platform (motherboard,
-PSU losses) is a second per-machine constant (default 50 W).
+L'énergie est intégrée depuis les lignes ``metrics`` : trapèze entre deux points
+consécutifs, un trou de plus de cinq minutes est ignoré plutôt que comblé. Le CPU
+n'a pas de capteur : sa puissance est saisie par machine, la plateforme aussi.
 
-Revenue starts simple (§4.15): the 24 h delta of the pool balance of the coin's
-wallets, times the coin price. It is split between the machines mining that coin
-by their latest hashrate share.
+Depuis §4.17, une **puissance mesurée à la prise** (Shelly ou Home Assistant,
+table ``power_samples``) remplace l'estimation dans le coût, avec sa source
+affichée « mesurée à la prise ».
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -29,30 +31,62 @@ from sqlalchemy.orm import Session
 
 try:
     PARIS = ZoneInfo("Europe/Paris")
-except ZoneInfoNotFoundError:  # minimal image without tzdata: never crash at import
+except ZoneInfoNotFoundError:  # image minimale sans tzdata : jamais de crash à l'import
     PARIS = timezone(timedelta(hours=1))
 MAX_GAP_S = 300.0
 TARIFF_KEY = "energy_tariff"
 PERIODS = {"1h": 1, "24h": 24, "7d": 24 * 7}
 DEFAULT_PLATFORM_W = 50.0
 TEMPO_COLORS = ("blue", "white", "red")
+DAY_TYPES = ("all", "weekday", "weekend")
+MEASURED_MAX_AGE_S = 900.0
+
+# Source publique documentée pour la couleur Tempo du jour. Deux sources sont
+# essayées dans l'ordre ; la première qui répond est retenue et citée dans le
+# tarif (champ ``tempo.auto.source``). Aucun appel n'est fait sans action
+# explicite de l'opérateur, et l'échec laisse la couleur saisie à la main.
+TEMPO_SOURCES: tuple[dict[str, str], ...] = (
+    {
+        "name": "api-couleur-tempo.fr",
+        "url": "https://www.api-couleur-tempo.fr/api/jourTempo/today",
+    },
+    {
+        "name": "EDF searchTempoStore",
+        "url": (
+            "https://particulier.edf.fr/services/rest/referentiel/searchTempoStore"
+            "?dateRelevant={date}"
+        ),
+    },
+)
+TEMPO_PAYLOAD_KEYS = (
+    "couleurJourJ", "couleur_jour_j", "couleurJour", "couleur", "today", "day",
+)
+TEMPO_COLOUR_MAP = {
+    "bleu": "blue", "blue": "blue",
+    "blanc": "white", "white": "white",
+    "rouge": "red", "red": "red",
+}
 
 DEFAULT_TARIFF: dict[str, Any] = {
     "mode": "fixed",
     "timezone": "Europe/Paris",
     "fixed_price": 0.20,
-    "ranges": [{"start": "00:00", "end": "24:00", "price": 0.20, "label": "base"}],
+    "ranges": [
+        {"start": "00:00", "end": "24:00", "price": 0.20, "label": "base", "days": "all"}
+    ],
     "tempo": {
         "day": "unknown",
-        # EDF Tempo grid (editable) — unknown day is priced as blue.
+        # Grille EDF Tempo (modifiable) — jour inconnu facturé bleu.
         "blue": {"hc": 0.1296, "hp": 0.1609},
         "white": {"hc": 0.1486, "hp": 0.1894},
         "red": {"hc": 0.1568, "hp": 0.7562},
+        "hc_windows": [{"start": "22:00", "end": "06:00"}],
+        "auto": {"enabled": False, "date": "", "day": "", "source": "", "fetched_at": ""},
     },
 }
 
 
-# ── Tariff validation ────────────────────────────────────────────────
+# ── Validation du tarif ──────────────────────────────────────────────
 def _number(value: Any, field: str) -> float:
     if isinstance(value, bool) or value is None:
         raise ValueError(f"{field} : nombre attendu")
@@ -88,8 +122,21 @@ def _range_minutes(start: int, end: int) -> list[int]:
     return list(range(start, 1440)) + list(range(0, end))
 
 
+def _in_window(minute: int, start: int, end: int) -> bool:
+    if start < end:
+        return start <= minute < end
+    return minute >= start or minute < end
+
+
+def _days(value: Any, field: str) -> str:
+    days = str(value or "all").strip().lower()
+    if days not in DAY_TYPES:
+        raise ValueError(f"{field} : jours inconnus (all, weekday ou weekend attendu)")
+    return days
+
+
 def normalize_tariff(raw: Any) -> dict[str, Any]:
-    """Validate a tariff; raise ``ValueError`` with a French message."""
+    """Valide un tarif ; lève ``ValueError`` avec un message en français."""
     if not isinstance(raw, dict):
         raise ValueError("tarif : objet attendu")
     mode = str(raw.get("mode") or "fixed").strip().lower()
@@ -106,7 +153,9 @@ def normalize_tariff(raw: Any) -> dict[str, Any]:
         ranges = raw.get("ranges")
         if not isinstance(ranges, list) or not ranges:
             raise ValueError("plages : au moins une plage est requise")
-        coverage = [0] * 1440
+        # Chaque type de journée doit être couvert exactement une fois : une
+        # plage « jours ouvrés » ne couvre pas le week-end, et réciproquement.
+        coverage = {"weekday": [0] * 1440, "weekend": [0] * 1440}
         clean: list[dict[str, Any]] = []
         for index, item in enumerate(ranges):
             if not isinstance(item, dict):
@@ -114,21 +163,25 @@ def normalize_tariff(raw: Any) -> dict[str, Any]:
             start = _hhmm(item.get("start"), f"plage {index + 1} début")
             end = _hhmm(item.get("end"), f"plage {index + 1} fin")
             price = _number(item.get("price"), f"plage {index + 1} prix")
+            days = _days(item.get("days"), f"plage {index + 1} jours")
             minutes = _range_minutes(start, end)
             if not minutes:
                 raise ValueError(f"plage {index + 1} : début et fin identiques")
-            for minute in minutes:
-                coverage[minute] += 1
+            for day_type in ("weekday", "weekend"):
+                if days in ("all", day_type):
+                    for minute in minutes:
+                        coverage[day_type][minute] += 1
             clean.append({
                 "start": item.get("start"),
                 "end": item.get("end"),
                 "price": price,
                 "label": str(item.get("label") or ""),
+                "days": days,
             })
-        if any(count != 1 for count in coverage):
+        if any(count != 1 for grid in coverage.values() for count in grid):
             raise ValueError(
                 "les plages doivent couvrir 24 h sans chevauchement "
-                "(chaque minute exactement une fois)"
+                "(chaque minute exactement une fois, jours ouvrés et week-end)"
             )
         out["ranges"] = clean
         return out
@@ -148,17 +201,57 @@ def normalize_tariff(raw: Any) -> dict[str, Any]:
             "hc": _number(values.get("hc", fallback["hc"]), f"tempo {color} HC"),
             "hp": _number(values.get("hp", fallback["hp"]), f"tempo {color} HP"),
         }
+
+    windows_raw = tempo.get("hc_windows")
+    windows: list[dict[str, str]] = []
+    if isinstance(windows_raw, list) and windows_raw:
+        used = [0] * 1440
+        for index, item in enumerate(windows_raw):
+            if not isinstance(item, dict):
+                raise ValueError(f"fenêtre HC {index + 1} : objet attendu")
+            start = _hhmm(item.get("start"), f"fenêtre HC {index + 1} début")
+            end = _hhmm(item.get("end"), f"fenêtre HC {index + 1} fin")
+            minutes = _range_minutes(start, end)
+            if not minutes:
+                raise ValueError(f"fenêtre HC {index + 1} : début et fin identiques")
+            for minute in minutes:
+                used[minute] += 1
+            windows.append({"start": str(item.get("start")), "end": str(item.get("end"))})
+        if any(count > 1 for count in used):
+            raise ValueError("fenêtres HC : chevauchement refusé")
+    else:
+        windows = [dict(item) for item in defaults["hc_windows"]]
+    clean_tempo["hc_windows"] = windows
+
+    auto_raw = tempo.get("auto")
+    auto: dict[str, Any] = auto_raw if isinstance(auto_raw, dict) else {}
+    auto_day = str(auto.get("day") or "").strip().lower()
+    if auto_day not in TEMPO_COLORS:
+        auto_day = ""
+    auto_date = str(auto.get("date") or "").strip()
+    if auto_date:
+        try:
+            date.fromisoformat(auto_date)
+        except ValueError:
+            auto_date = ""
+    clean_tempo["auto"] = {
+        "enabled": bool(auto.get("enabled")),
+        "date": auto_date,
+        "day": auto_day,
+        "source": str(auto.get("source") or ""),
+        "fetched_at": str(auto.get("fetched_at") or ""),
+    }
     out["tempo"] = clean_tempo
     return out
 
 
 def default_tariff() -> dict[str, Any]:
-    """Deep-ish copy of the default tariff (safe to hand to the API)."""
+    """Copie du tarif par défaut (sûre à remettre à l'API)."""
     return normalize_tariff(DEFAULT_TARIFF)
 
 
 def get_tariff(db: Session) -> dict[str, Any]:
-    """Stored tariff, normalised; a corrupt row falls back to the default."""
+    """Tarif stocké, normalisé ; une ligne corrompue retombe sur le défaut."""
     from app.ai_config import get_setting
 
     raw = get_setting(db, TARIFF_KEY, None)
@@ -179,41 +272,100 @@ def set_tariff(db: Session, raw: Any) -> dict[str, Any]:
     return tariff
 
 
-# ── Price of an instant ──────────────────────────────────────────────
+# ── Prix d'un instant ────────────────────────────────────────────────
 def _local(moment: datetime) -> datetime:
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
     return moment.astimezone(PARIS)
 
 
-def price_at(moment: datetime, tariff: dict[str, Any]) -> float:
-    """€/kWh at *moment* (UTC or aware), in Europe/Paris local time."""
+def day_type(moment: datetime) -> str:
+    """``weekday`` du lundi au vendredi, ``weekend`` le samedi et le dimanche."""
+    return "weekend" if _local(moment).weekday() >= 5 else "weekday"
+
+
+def effective_tempo_day(tariff: dict[str, Any], moment: datetime) -> tuple[str, str]:
+    """Couleur retenue et son origine : couleur auto du jour, sinon saisie."""
+    tempo = tariff.get("tempo") or {}
+    auto = tempo.get("auto") or {}
+    local_day = _local(moment).date().isoformat()
+    if auto.get("enabled") and auto.get("date") == local_day and auto.get("day") in TEMPO_COLORS:
+        return str(auto["day"]), f"auto ({auto.get('source') or 'source non citée'})"
+    day = str(tempo.get("day") or "unknown")
+    if day in TEMPO_COLORS:
+        return day, "saisie"
+    return "blue", "défaut (jour inconnu = bleu)"
+
+
+def price_info(moment: datetime, tariff: dict[str, Any]) -> dict[str, Any]:
+    """Prix courant et son origine pour un instant donné."""
     local = _local(moment)
     minute = local.hour * 60 + local.minute
     mode = tariff.get("mode", "fixed")
+    key = day_type(local)
+    info: dict[str, Any] = {
+        "mode": mode,
+        "day_type": key,
+        "local_time": local.strftime("%H:%M"),
+        "date": local.date().isoformat(),
+    }
 
     if mode == "fixed":
-        return float(tariff.get("fixed_price", 0.20))
+        info.update({
+            "price_eur_kwh": float(tariff.get("fixed_price", 0.20)),
+            "period": "fixe",
+            "label": "prix fixe",
+            "source": "tarif fixe",
+            "day_colour": "",
+            "day_source": "",
+        })
+        return info
 
     if mode == "ranges":
         for item in tariff.get("ranges") or []:
+            days = item.get("days") or "all"
+            if days not in ("all", key):
+                continue
             start = _hhmm(item.get("start"), "plage début")
             end = _hhmm(item.get("end"), "plage fin")
-            if start < end:
-                hit = start <= minute < end
-            else:
-                hit = minute >= start or minute < end
-            if hit:
-                return float(item.get("price", 0.0))
-        return 0.0
+            if _in_window(minute, start, end):
+                label = str(item.get("label") or "")
+                info.update({
+                    "price_eur_kwh": float(item.get("price", 0.0)),
+                    "period": label or f"{item.get('start')}-{item.get('end')}",
+                    "label": label or "plage horaire",
+                    "source": f"plage horaire ({key})",
+                    "day_colour": "",
+                    "day_source": "",
+                })
+                return info
+        info.update({
+            "price_eur_kwh": 0.0, "period": "hors plage", "label": "hors plage",
+            "source": "aucune plage ne couvre cette minute", "day_colour": "", "day_source": "",
+        })
+        return info
 
-    tempo = tariff.get("tempo") or {}
-    day = str(tempo.get("day") or "unknown")
-    if day not in TEMPO_COLORS:
-        day = "blue"
-    peak = 6 * 60 <= minute < 22 * 60
-    grid = tempo.get(day) or {}
-    return float(grid.get("hp" if peak else "hc", 0.0))
+    colour, origin = effective_tempo_day(tariff, local)
+    hc = False
+    for window in (tariff.get("tempo") or {}).get("hc_windows") or []:
+        if _in_window(minute, _hhmm(window.get("start"), "HC début"), _hhmm(window.get("end"), "HC fin")):
+            hc = True
+            break
+    grid = (tariff.get("tempo") or {}).get(colour) or {}
+    info.update({
+        "price_eur_kwh": float(grid.get("hc" if hc else "hp", 0.0)),
+        "period": "HC" if hc else "HP",
+        "label": f"Tempo {colour} {'HC' if hc else 'HP'}",
+        "source": f"Tempo (couleur {origin})",
+        "day_colour": colour,
+        "day_source": origin,
+    })
+    return info
+
+
+def price_at(moment: datetime, tariff: dict[str, Any]) -> float:
+    """€/kWh à *moment* (UTC ou aware), en heure locale Europe/Paris."""
+    return float(price_info(moment, tariff)["price_eur_kwh"])
 
 
 def tariff_label(tariff: dict[str, Any]) -> str:
@@ -227,11 +379,107 @@ def tariff_label(tariff: dict[str, Any]) -> str:
             for r in tariff.get("ranges") or []
         ]
         return "plages : " + " / ".join(parts)
-    day = str((tariff.get("tempo") or {}).get("day") or "unknown")
+    tempo = tariff.get("tempo") or {}
+    day = str(tempo.get("day") or "unknown")
+    auto = tempo.get("auto") or {}
+    if auto.get("enabled") and auto.get("day"):
+        day = f"{auto['day']} (auto {auto.get('date')})"
     return f"tempo jour {day} (HC/HP, Europe/Paris)"
 
 
-# ── Integration ──────────────────────────────────────────────────────
+def current_price(db: Session, now: datetime | None = None) -> dict[str, Any]:
+    """Prix courant affiché et utilisé par tous les calculs de coût."""
+    moment = now or datetime.now(timezone.utc)
+    tariff = get_tariff(db)
+    info = price_info(moment, tariff)
+    info["tariff_label"] = tariff_label(tariff)
+    info["as_of"] = _local(moment).isoformat()
+    return info
+
+
+# ── Source publique Tempo (cache + repli manuel) ─────────────────────
+def parse_tempo_payload(payload: Any) -> str:
+    """Couleur Tempo d'un corps JSON, ou ``""`` si elle est illisible."""
+    if isinstance(payload, dict):
+        for key in TEMPO_PAYLOAD_KEYS:
+            value = payload.get(key)
+            if isinstance(value, dict):
+                value = value.get("couleur") or value.get("color") or value.get("day")
+            if isinstance(value, str) and value.strip().lower() in TEMPO_COLOUR_MAP:
+                return TEMPO_COLOUR_MAP[value.strip().lower()]
+    if isinstance(payload, str) and payload.strip().lower() in TEMPO_COLOUR_MAP:
+        return TEMPO_COLOUR_MAP[payload.strip().lower()]
+    return ""
+
+
+async def fetch_tempo_colour(
+    day: date | None = None,
+    *,
+    sources: tuple[dict[str, str], ...] | None = None,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """Couleur du jour lue sur une source publique **documentée**.
+
+    Les sources sont essayées dans l'ordre ; la réponse est mise en cache dans
+    le tarif par :func:`record_tempo_day`. En cas d'échec, rien n'est écrit : la
+    couleur saisie à la main reste celle qui compte.
+    """
+    import httpx
+
+    day = day or datetime.now(PARIS).date()
+    errors: list[str] = []
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        for source in sources or TEMPO_SOURCES:
+            url = source["url"].replace("{date}", day.isoformat())
+            try:
+                response = await client.get(url, headers={"User-Agent": "fossor"})
+                if response.status_code != 200:
+                    errors.append(f"{source['name']} : HTTP {response.status_code}")
+                    continue
+                try:
+                    payload = response.json()
+                except ValueError:
+                    errors.append(f"{source['name']} : réponse illisible")
+                    continue
+                colour = parse_tempo_payload(payload)
+                if not colour:
+                    errors.append(f"{source['name']} : couleur absente")
+                    continue
+                return {
+                    "ok": True,
+                    "day": colour,
+                    "date": day.isoformat(),
+                    "source": source["name"],
+                    "error": "",
+                }
+            except Exception as exc:  # réseau, DNS, délai : on essaie la suivante
+                errors.append(f"{source['name']} : {type(exc).__name__}")
+    return {
+        "ok": False, "day": "", "date": day.isoformat(), "source": "",
+        "error": " ; ".join(errors) or "aucune source disponible",
+    }
+
+
+def record_tempo_day(
+    db: Session, day: str, colour: str, source: str, now: datetime | None = None
+) -> dict[str, Any]:
+    """Met la couleur en cache dans le tarif (repli manuel intact)."""
+    if colour not in TEMPO_COLORS:
+        raise ValueError("couleur Tempo inconnue")
+    tariff = get_tariff(db)
+    if tariff.get("mode") != "tempo":
+        raise ValueError("le tarif courant n'est pas un tarif Tempo")
+    tariff["tempo"]["auto"] = {
+        "enabled": True,
+        "date": day,
+        "day": colour,
+        "source": source,
+        "fetched_at": (now or datetime.now(timezone.utc)).isoformat(),
+    }
+    return set_tariff(db, tariff)
+
+
+# ── Intégration ──────────────────────────────────────────────────────
 def _ts(value: Any) -> datetime | None:
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
@@ -249,7 +497,7 @@ def integrate_energy(
     tariff: dict[str, Any],
     max_gap_s: float = MAX_GAP_S,
 ) -> dict[str, Any]:
-    """Integrate a power series: kWh and €, skipping gaps longer than *max_gap_s*."""
+    """Intègre une série de puissance : kWh et €, trous > *max_gap_s* ignorés."""
     clean = sorted(
         ((moment, watts) for moment, watts in points if moment is not None),
         key=lambda item: item[0],
@@ -264,7 +512,7 @@ def integrate_energy(
         if gap <= 0 or gap > max_gap_s:
             continue
         if start_w is None or end_w is None:
-            continue  # a missing reading breaks the series, it is not filled
+            continue  # une mesure manquante coupe la série, elle n'est pas comblée
         watts = (start_w + end_w) / 2
         energy = max(0.0, watts) / 1000.0 * gap / 3600.0
         middle = start + timedelta(seconds=gap / 2)
@@ -287,7 +535,7 @@ def constant_energy(
     end: datetime,
     tariff: dict[str, Any],
 ) -> dict[str, Any]:
-    """Energy of a constant load between two instants, priced minute by minute."""
+    """Énergie d'une charge constante entre deux instants, prix minute par minute."""
     if watts is None or watts <= 0 or end <= start:
         return {"kwh": 0.0, "cost_eur": 0.0, "covered_s": 0.0, "segments": 0}
 
@@ -310,7 +558,7 @@ def constant_energy(
     }
 
 
-# ── Report ───────────────────────────────────────────────────────────
+# ── Rapport ──────────────────────────────────────────────────────────
 def _period_hours(period: str) -> int:
     key = (period or "24h").strip().lower()
     if key not in PERIODS:
@@ -327,7 +575,7 @@ def _sum(results: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _pool_delta(db: Session, ticker: str, now: datetime) -> dict[str, Any]:
-    """24 h change of the summed pool balance of every wallet of *ticker*."""
+    """Variation 24 h du solde de pool cumulé des wallets de *ticker*."""
     from app.models import PoolBalanceSample, Wallet
 
     wallet_ids = [
@@ -381,13 +629,31 @@ def _pool_delta(db: Session, ticker: str, now: datetime) -> dict[str, Any]:
     }
 
 
+def _fresh_power_sample(db: Session, machine_id: int, now: datetime) -> Any:
+    """Dernière mesure à la prise, si elle a moins de quinze minutes."""
+    from app.models import PowerSample
+
+    sample = (
+        db.query(PowerSample)
+        .filter(PowerSample.machine_id == machine_id)
+        .order_by(PowerSample.ts.desc())
+        .first()
+    )
+    if sample is None or not sample.power_w:
+        return None
+    moment = _ts(sample.ts)
+    if moment is None or (now - moment).total_seconds() > MEASURED_MAX_AGE_S:
+        return None
+    return sample
+
+
 def build_report(
     db: Session,
     period: str = "24h",
     quotes: dict[str, dict[str, Any]] | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Cost (period), 24 h cost, revenue/day and net/day for every machine."""
+    """Coût (période), coût 24 h, revenu/jour et net/jour de chaque machine."""
     from app.models import Coin, Device, Machine, MachineStatus, Metric
 
     hours = _period_hours(period)
@@ -403,7 +669,6 @@ def build_report(
     coins = {row.ticker: row for row in db.query(Coin).all()}
     machines = db.query(Machine).order_by(Machine.name.asc()).all()
 
-    # Machine rows + their device labels.
     devices_by_machine: dict[int, dict[str, Device]] = {}
     for device in db.query(Device).all():
         devices_by_machine.setdefault(device.machine_id, {})[device.uuid] = device
@@ -455,7 +720,7 @@ def build_report(
 
         for device_uuid, series in by_device.items():
             device = devices_by_machine.get(machine.id, {}).get(device_uuid or "")
-            kind = device.kind if device else ("gpu" if device_uuid is None else "gpu")
+            kind = device.kind if device else "gpu"
             model = (device.model if device else "") or (
                 "GPU non apparié" if device_uuid is None else "Device")
             if kind == "cpu" and machine.cpu_power_w and not any(w is not None for _, w in series):
@@ -486,7 +751,7 @@ def build_report(
                 "source": source,
             })
 
-        # CPU load: a machine-level wattage is used when no CPU power was measured.
+        # CPU : la puissance saisie de la machine sert quand aucun CPU n'est mesuré.
         cpu_present = any(row["kind"] == "cpu" for row in device_reports)
         if machine.cpu_power_w and not cpu_present and window_start and window_end:
             cpu = constant_energy(machine.cpu_power_w, window_start, window_end, tariff)
@@ -505,7 +770,7 @@ def build_report(
                 "source": "saisie",
             })
 
-        # Platform load: constant over the collected window.
+        # Plateforme : charge constante sur la fenêtre collectée.
         if window_start and window_end and machine.platform_power_w:
             platform = constant_energy(machine.platform_power_w, window_start, window_end, tariff)
             platform_day = constant_energy(
@@ -525,11 +790,21 @@ def build_report(
 
         total = _sum(device_results)
         day_total = _sum(day_device_results)
-        # Puissance moyenne de la machine, tous postes confondus : elle sert au
-        # prorata de l'électricité entre les mineurs d'un même coin (§4.15).
         avg_power_w = round(
             sum(float(d["power_w"]) for d in device_reports if d.get("power_w")), 2
         ) or None
+        power_source = "estimée (mesures devices, rendement des alimentations)"
+
+        # §4.17 : une prise qui mesure remplace l'estimation, et le dit.
+        sample = _fresh_power_sample(db, machine.id, now)
+        if sample is not None:
+            measured_w = float(sample.power_w)
+            period_start = max(window_start or start, start)
+            total = constant_energy(measured_w, period_start, now, tariff)
+            day_total = constant_energy(measured_w, max(window_start or day_start, day_start), now, tariff)
+            avg_power_w = measured_w
+            power_source = "mesurée à la prise"
+
         entry = {
             "uuid": machine.uuid,
             "name": machine.name,
@@ -545,6 +820,9 @@ def build_report(
             # €/mois affiché à côté du €/jour (jour × 30), même base à la prise.
             "cost_eur_month": round(day_total["cost_eur"] * 30, 9),
             "avg_power_w": avg_power_w,
+            "power_source": power_source,
+            "measured_power_w": float(sample.power_w) if sample is not None else None,
+            "power_controller": sample.source if sample is not None else "",
             "covered_s": total["covered_s"],
             "revenue_eur_day": None,
             "net_eur_day": None,
@@ -554,9 +832,8 @@ def build_report(
         if coin and collected:
             coin_machines.setdefault(coin, []).append(entry)
 
-    # Revenue per coin, split by latest hashrate share; l'électricité du coin est
-    # répartie au prorata de la puissance de chaque machine, et le coût net par
-    # coin = revenu estimé − cette part (§4.15).
+    # Revenu par coin, réparti au prorata du hashrate ; l'électricité du coin est
+    # répartie au prorata de la puissance de chaque machine (§4.15).
     coin_report: list[dict[str, Any]] = []
     for ticker, entries in coin_machines.items():
         electricity = round(sum(float(e["cost_eur_day"] or 0.0) for e in entries), 9)
@@ -627,8 +904,7 @@ def build_report(
     priced = [m for m in report_machines if m["revenue_eur_day"] is not None]
     total_revenue = round(sum(m["revenue_eur_day"] for m in priced), 9) if priced else None
 
-    # §4.19 : un tiret muet n'apprend rien à l'exploitant — la raison voyage
-    # avec la valeur, le tableau de bord l'affiche sous la tuile.
+    # §4.19 : un tiret muet n'apprend rien — la raison voyage avec la valeur.
     from app.ai_config import get_setting
 
     if not report_machines:
@@ -651,6 +927,7 @@ def build_report(
         "hours": hours,
         "timezone": "Europe/Paris",
         "tariff": {**tariff, "label": tariff_label(tariff)},
+        "current": current_price(db, now),
         "total": {
             "kwh": total_kwh,
             "cost_eur": total_cost,
@@ -662,6 +939,7 @@ def build_report(
             "net_eur_day": round(total_revenue - total_cost_day, 9) if total_revenue is not None else None,
             "machines": len(report_machines),
             "priced_machines": len(priced),
+            "measured_machines": sum(1 for m in report_machines if m["power_source"] == "mesurée à la prise"),
         },
         "coins": coin_report,
         "machines": report_machines,

@@ -361,8 +361,15 @@ def parse_gpu_compute(section: str, ps_section: str = "") -> list[dict[str, Any]
     return detect_external_miners(section, ps_section)
 
 
-def parse_virt(section: str) -> dict[str, bool]:
-    flags = {"kvm": False, "virsh": False, "pveversion": False}
+def parse_virt(section: str) -> dict[str, Any]:
+    """Drapeaux de virtualisation.
+
+    ``vm_capable`` exige **``/dev/kvm``** : une sonde qui ne voit que ``qemu``
+    dans ``virsh capabilities`` (machine sans virtualisation imbriquée) ne peut
+    pas héberger de VM minière — ``--cpu max`` y échoue. Proxmox garde sa
+    branche ``pveversion``, mais toujours avec ``/dev/kvm``.
+    """
+    flags: dict[str, Any] = {"kvm": False, "virsh": False, "pveversion": False, "kvm_domain": 0}
     for line in (section or "").splitlines():
         stripped = line.strip()
         if stripped == "KVM=1":
@@ -371,7 +378,32 @@ def parse_virt(section: str) -> dict[str, bool]:
             flags["virsh"] = True
         elif stripped == "PVERSION=1":
             flags["pveversion"] = True
+        elif stripped.startswith("KVM_DOMAIN="):
+            try:
+                flags["kvm_domain"] = int(stripped.split("=", 1)[1] or 0)
+            except ValueError:
+                flags["kvm_domain"] = 0
+    flags["libvirt_kvm"] = bool(flags["kvm"] and flags["kvm_domain"] > 0)
+    flags["vm_capable"] = bool(flags["kvm"] and (flags["kvm_domain"] > 0 or flags["pveversion"]))
     return flags
+
+
+def parse_gpu_power_limits(text: str) -> dict[int, dict[str, float]]:
+    """Bornes de power limit par GPU : ``index,min,max,default`` (W, CSV)."""
+    out: dict[int, dict[str, float]] = {}
+    for line in (text or "").splitlines():
+        parts = [part.strip() for part in line.split(",")]
+        if len(parts) < 4:
+            continue
+        try:
+            index = int(parts[0])
+            values = [float(part) for part in parts[1:4]]
+        except ValueError:
+            continue
+        if any(value <= 0 for value in values):
+            continue  # « N/A » sur les cartes sans capteur : borne inconnue
+        out[index] = {"min": values[0], "max": values[1], "default": values[2]}
+    return out
 
 
 # ── Entry point ───────────────────────────────────────────────────────

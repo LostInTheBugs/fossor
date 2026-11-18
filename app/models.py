@@ -82,6 +82,8 @@ class Machine(Base):
     external_miners: Mapped[str | None] = mapped_column(Text, nullable=True)
     usage: Mapped[UsageEnum] = mapped_column(String(10), default=UsageEnum.both)
     vm_host: Mapped[bool] = mapped_column(Boolean, default=False)
+    # §4.17 : machine qui héberge Fossor — aucune coupure d'alimentation permise.
+    fossor_host: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     # §4.15: CPU and platform power are typed in by the operator (no sensor).
     cpu_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -580,3 +582,77 @@ class SpecVm(Base):
     created_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
     destroyed_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+
+class PowerController(Base):
+    """§4.17 : contrôleur d'alimentation optionnel d'une machine ou d'un ASIC.
+
+    ``token_ref`` porte le jeton Home Assistant **chiffré** (Fernet de la clé
+    maître) ; il n'est jamais renvoyé par l'API ni exporté en clair.
+    """
+
+    __tablename__ = "power_controllers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    uuid: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    machine_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("machines.id"), nullable=False, unique=True
+    )
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    url: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    token_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    entity: Mapped[str] = mapped_column(String(120), default="", server_default="")
+    power_entity: Mapped[str] = mapped_column(String(120), default="", server_default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    max_per_day: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
+    min_delay_s: Mapped[int] = mapped_column(Integer, default=60, server_default="60")
+    created_at: Mapped[str] = mapped_column(
+        String(30), default=lambda: datetime.now(timezone.utc).isoformat()
+    )
+    updated_at: Mapped[str] = mapped_column(
+        String(30), default=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+
+class PowerAction(Base):
+    """Journal d'une action d'alimentation (on / off / cycle) et base du quota."""
+
+    __tablename__ = "power_actions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    machine_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(10), nullable=False)
+    result: Mapped[str] = mapped_column(String(12), default="ok", server_default="ok")
+    detail: Mapped[str] = mapped_column(Text, default="", server_default="")
+    simulated: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    actor: Mapped[str] = mapped_column(String(50), default="system", server_default="system")
+    at: Mapped[str] = mapped_column(
+        String(40), default=lambda: datetime.now(timezone.utc).isoformat(), index=True
+    )
+
+
+class PowerSample(Base):
+    """Puissance mesurée à la prise (Shelly / Home Assistant)."""
+
+    __tablename__ = "power_samples"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    machine_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    ts: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    power_w: Mapped[float] = mapped_column(Float, nullable=False)
+    source: Mapped[str] = mapped_column(String(60), default="", server_default="")
+    controller_kind: Mapped[str] = mapped_column(String(20), default="", server_default="")
+
+
+class EnergyRuleEvent(Base):
+    """Journal de la règle « heures chères » (§4.15)."""
+
+    __tablename__ = "energy_rule_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    machine_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    device_uuid: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    detail: Mapped[str] = mapped_column(Text, default="", server_default="")
+    simulated: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")

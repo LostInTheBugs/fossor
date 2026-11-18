@@ -229,6 +229,74 @@ const toast=(msg,type='ok')=>{
   const t=$('#toast');t.textContent=msg;t.className='toast '+type;t.style.display='block';
   setTimeout(()=>t.style.display='none',3000);
 };
+/* ── Contrôleur d'alimentation (§4.17) — boutons protégés ─────────── */
+const powerControlHTML=(m)=>`<div class="dev-head" style="margin-top:10px">
+    <span><b>Alimentation à distance</b> <span class="masked">· §4.17${m.fossor_host?' · machine Fossor (coupure interdite)':''}</span></span>
+    <button class="btn sm outline" onclick="openPower(${m.id})">⚡ Contrôleur d'alimentation</button>
+  </div>
+  <div id="pcBody-${m.id}" style="display:none;margin-top:6px"></div>`;
+const openPower=async(id)=>{
+  const box=$('#pcBody-'+id);
+  const d=await api('/api/machines/'+id+'/power-controller');
+  if(!d)return;
+  const c=d.controller||{};
+  const kinds=(d.kinds||[]).map(k=>`<option value="${k.value}"${c.kind===k.value?' selected':''}>${k.label}${k.supported?'':' — non pris en charge'}</option>`).join('');
+  box.innerHTML=`<div class="row">
+    <div class="field"><label>Type</label><select id="pcKind-${id}">${kinds}</select></div>
+    <div class="field"><label>URL</label><input id="pcUrl-${id}" value="${c.url||''}" placeholder="http://192.0.2.50" style="width:210px"></div>
+    <div class="field"><label>Entité switch (HA)</label><input id="pcEntity-${id}" value="${c.entity||''}" style="width:160px"></div>
+    <div class="field"><label>Capteur de puissance (HA)</label><input id="pcPowerEntity-${id}" value="${c.power_entity||''}" style="width:160px"></div>
+  </div>
+  <div class="row">
+    <div class="field"><label>Jeton HA ${c.has_token?'(conservé)':''}</label><input id="pcToken-${id}" type="password" placeholder="laisser vide pour conserver" style="width:200px"></div>
+    <div class="field narrow"><label>Max / 24 h</label><input id="pcMax-${id}" type="number" min="1" max="50" value="${c.max_per_day||3}" style="width:90px"></div>
+    <div class="field narrow"><label>Délai min (s)</label><input id="pcDelay-${id}" type="number" min="5" max="3600" value="${c.min_delay_s||60}" style="width:90px"></div>
+    <div class="field"><label><input type="checkbox" id="pcFossorHost-${id}"${d.fossor_host?' checked':''}> Machine qui héberge Fossor</label></div>
+  </div>
+  <div class="actions">
+    <button class="btn sm" id="pcSave-${id}" onclick="savePower(${id})">Enregistrer</button>
+    <button class="btn sm outline" id="pcRead-${id}" onclick="pcRead(${id})">Lire la puissance</button>
+    <button class="btn sm outline" id="pcOn-${id}" onclick="pcAct(${id},'on')">Allumer</button>
+    <button class="btn sm outline" id="pcOff-${id}" onclick="pcAct(${id},'off')">Éteindre</button>
+    <button class="btn sm outline" id="pcCycle-${id}" onclick="pcAct(${id},'cycle')">Power cycle</button>
+  </div>
+  <div id="pcState-${id}" class="sub">${d.counted_today||0} coupure(s) comptée(s) sur 24 h.</div>`;
+  box.style.display='block';
+};
+const savePower=async(id)=>{
+  const body={kind:$('#pcKind-'+id).value,url:$('#pcUrl-'+id).value.trim(),
+    entity:$('#pcEntity-'+id).value.trim(),power_entity:$('#pcPowerEntity-'+id).value.trim(),
+    max_per_day:Number($('#pcMax-'+id).value||3),min_delay_s:Number($('#pcDelay-'+id).value||60),
+    fossor_host:$('#pcFossorHost-'+id).checked};
+  if($('#pcToken-'+id).value)body.token=$('#pcToken-'+id).value;
+  const r=await fetch('/api/machines/'+id+'/power-controller',{method:'PUT',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){toast(d.detail||'Contrôleur refusé','err');return;}
+  toast('Contrôleur enregistré');
+};
+const pcRead=async(id)=>{
+  const r=await fetch('/api/machines/'+id+'/power/read',{method:'POST',credentials:'include'});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){toast(d.detail||'Lecture impossible','err');return;}
+  $('#pcState-'+id).textContent=`${d.state} · ${d.power_w==null?'puissance inconnue':Number(d.power_w).toFixed(1)+' W'} · ${d.source} (${d.controller})`;
+};
+const pcAct=async(id,action)=>{
+  const body={};
+  if(action==='off'||action==='cycle'){
+    // Double confirmation explicite pour une extinction (§4.17).
+    if(!confirm(`Éteindre ${action==='cycle'?'(power cycle) ':''}cette machine ?`))return;
+    if(!confirm('Confirmer : la machine va perdre son alimentation.'))return;
+    body.confirm=true;
+  }
+  const r=await fetch(`/api/machines/${id}/power/${action}`,{method:'POST',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){toast(d.detail||'Action refusée','err');return;}
+  toast(d.simulated?('Simulation : '+action):('Action envoyée : '+action));
+  const h=await api('/api/machines/'+id+'/power/history');
+  if(h&&h.length)$('#pcState-'+id).textContent=h.map(e=>`${String(e.at).slice(11,19)} ${e.action} ${e.result}${e.simulated?' (simu)':''}`).join(' · ');
+};
 const MACHINES={},DEVICES={},POWER={};
 let HIDE_IGPU=true;
 const USAGE_LABEL={both:'CPU+GPU',cpu:'CPU seul',gpu:'GPU seul',none:'Aucun'};
@@ -433,6 +501,7 @@ const detailRow=(m)=>{
     ${extraHtml}
     ${deviceRows(m)}
     ${powerPanelHTML(m)}
+    ${powerControlHTML(m)}
   </div></td></tr>`;
 };
 // ── Mineur (§4.5, §4.6) : profil, GPU cochés, démarrer/arrêter, statut ──

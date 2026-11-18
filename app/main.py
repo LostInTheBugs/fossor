@@ -14,6 +14,7 @@ from app.routers.metrics import router as metrics_router
 from app.routers.coins import router as coins_router
 from app.routers.mined import router as mined_router
 from app.routers.energy import router as energy_router
+from app.routers.power import router as power_router
 from app.routers.ssh import router as ssh_router
 from app.routers.notifications import router as notifications_router
 from app.routers.miners import router as miners_router
@@ -49,6 +50,7 @@ app.include_router(metrics_router)
 app.include_router(coins_router)
 app.include_router(mined_router)
 app.include_router(energy_router)
+app.include_router(power_router)
 app.include_router(ssh_router)
 app.include_router(notifications_router)
 app.include_router(miners_router)

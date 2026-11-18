@@ -44,6 +44,7 @@ Swap:     2147483648           0  2147483648
 ### VIRT
 KVM=1
 VIRSH=1
+KVM_DOMAIN=1
 ### OS
 ryzen-desktop
 Linux 6.8.0-45-generic x86_64

@@ -192,7 +192,7 @@ def apply_detection(db: Session, machine: Machine, detected: dict[str, Any], gpu
         machine.external_miners = _external_miners_json(gpu_compute)
 
     virt = detected.get("virt") or {}
-    machine.vm_host = bool(virt.get("kvm") or virt.get("pveversion"))
+    machine.vm_host = bool(virt.get("vm_capable", virt.get("kvm") or virt.get("pveversion")))
     os_kind = detected.get("os_kind")
     if os_kind:
         # §4.1 ter : le type choisi fait foi, l'OS réel est conservé à part et
