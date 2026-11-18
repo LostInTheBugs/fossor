@@ -71,11 +71,29 @@ async def test_psu_section_two_psus_split_gpu_and_orange_alert(e2e_server):
         assert len(psus) == 2
 
         # 2. GPU réparti : 75 W slot/riser sur PSU 1, le reste sur PSU 2.
+        #
+        # 004-a/c1 : chaque ajout d'alimentation relance ``loadMachines()``, qui
+        # reconstruit la liste. Un select rempli pendant ce rendu est recréé
+        # sans valeur, et « Affecter » envoyait alors ``psu_id: null`` (le toast
+        # disait « enregistrée » et le GPU restait sans PSU). On repart donc d'un
+        # document stable, puis on vérifie que les deux selects portent bien
+        # leur valeur avant de cliquer.
+        await page.reload(wait_until="domcontentloaded")
+        await page.wait_for_selector(f'[data-assign-primary="{device_id}"]', timeout=15000)
         await page.select_option(f'[data-assign-primary="{device_id}"]', str(psus[0]))
         await page.select_option(f'[data-assign-second="{device_id}"]', str(psus[1]))
         await page.fill(f'[data-assign-split="{device_id}"]', "75")
-        await page.locator("button:has-text('Affecter')").first.click()
-        # Attente explicite du retour d'écran : la requête est partie.
+        await page.wait_for_function(
+            """(ids) => {
+                const first = document.querySelector('[data-assign-primary="' + ids[0] + '"]');
+                const second = document.querySelector('[data-assign-second="' + ids[0] + '"]');
+                return first && second && first.value === ids[1] && second.value === ids[2];
+            }""",
+            arg=[device_id, str(psus[0]), str(psus[1])],
+            timeout=15000,
+        )
+        await page.locator(f'[data-gpu="{device_id}"] button:has-text("Affecter")').click()
+        # Attente explicite du retour d'écran, puis de l'état réel côté API.
         await page.wait_for_function(
             "() => /Affectation/.test((document.querySelector('#toast') || {}).textContent || '')",
             timeout=15000,
@@ -86,6 +104,8 @@ async def test_psu_section_two_psus_split_gpu_and_orange_alert(e2e_server):
         )
         print("PSU_TOAST:", await page.inner_text("#toast"))
         print("PSU_POWER:", json.dumps(power, ensure_ascii=False))
+        assert power["gpus_without_psu"] == [], power["gpus_without_psu"]
+        assert power["psus"][1]["load_dc_w"] == 145.0, power["psus"]
         await page.wait_for_selector('[data-psu-status="orange"]', timeout=15000)
 
         # 3. Les barres existent, l'alerte orange est visible.
