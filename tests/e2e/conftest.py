@@ -29,24 +29,25 @@ def e2e_server():
     shutil.rmtree(E2E_DATA_DIR, ignore_errors=True)
     os.makedirs(E2E_DATA_DIR, exist_ok=True)
 
+    log_path = Path(E2E_DATA_DIR) / "server.log"
+    log_file = open(log_path, "wb", buffering=0)
     proc = subprocess.Popen(
         ["python", "-m", "uvicorn", "app.main:app",
          "--host", "127.0.0.1", "--port", str(E2E_PORT)],
         cwd=str(sources_dir),
         env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        # Fichier, jamais un PIPE : un PIPE que personne ne vide se remplit
+        # (~64 Kio d'access log) et l'écriture synchrone du log fige la boucle
+        # asyncio du serveur au milieu de la suite.
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
     )
     # Wait for server to be ready
     for _ in range(40):
         time.sleep(0.3)
         if proc.poll() is not None:
-            try:
-                out = proc.stdout.read().decode()
-                err = proc.stderr.read().decode()
-            except Exception:
-                out, err = "", "process exited"
-            raise RuntimeError(f"Server failed to start:\nstdout={out}\nstderr={err}")
+            out = log_path.read_text(errors="replace") if log_path.exists() else ""
+            raise RuntimeError(f"Server failed to start:\n{out}")
         try:
             import urllib.request
             urllib.request.urlopen(f"{E2E_URL}/health", timeout=1)
@@ -60,4 +61,9 @@ def e2e_server():
     yield E2E_URL
 
     proc.terminate()
-    proc.wait()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+    log_file.close()

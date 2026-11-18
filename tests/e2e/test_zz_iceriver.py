@@ -76,6 +76,7 @@ async def _login(page) -> None:
     await page.wait_for_url("**/dashboard", timeout=15000)
 
 
+@pytest.mark.e2e
 async def test_iceriver_asic_added_through_the_panel(e2e_server, fake_iceriver):
     console_errors: list[str] = []
     async with async_playwright() as pw:
@@ -134,6 +135,7 @@ async def test_iceriver_asic_added_through_the_panel(e2e_server, fake_iceriver):
     assert all("/api/overview" not in item["path"] for item in _IceRiverHandler.seen)
 
 
+@pytest.mark.e2e
 async def test_iceriver_password_stored_but_never_returned(e2e_server, fake_iceriver):
     """Un mot de passe enregistré est utilisé pour la sonde, jamais renvoyé par l'API."""
     secret = "s3cret-pool-pass"

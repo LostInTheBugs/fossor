@@ -199,8 +199,13 @@ class _Session:
                     data=body if current_method == method else None,
                     **kwargs,
                 )
-            except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, OSError) as exc:
-                raise AsicError(f"{_origin_text(url)} injoignable : {exc}") from exc
+            except (httpx.HTTPError, OSError) as exc:
+                # HTTPError couvre ConnectError/Timeout, mais aussi
+                # RemoteProtocolError, ReadError, WriteTimeout et PoolTimeout :
+                # sans cette capture, l'exception sortait brute de la sonde.
+                raise AsicError(
+                    f"{_origin_text(url)} injoignable : {type(exc).__name__}: {exc}"
+                ) from exc
             if response.status_code not in (301, 302, 303, 307, 308):
                 return response
             location = response.headers.get("location") or ""
