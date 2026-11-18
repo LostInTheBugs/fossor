@@ -244,6 +244,9 @@ class TestAttach:
         assert cpu["miners"][0]["coin"] == "KSH"
 
     def test_power_absence_is_stated(self):
+        # 2026.11.004-c5 : sans mesure ni saisie, l'estimation par TDP remplace
+        # l'absence — et elle s'annonce comme estimée, avec sa source.
         cpu = cs.cpu_state_with({"state": {}}, cpu_miners=[])
-        assert cpu["power_source"] == "non mesurée"
-        assert cpu["power_w"] is None
+        assert cpu["power_source"] == "estimation générique 65 W"
+        assert cpu["power_w"] == 65.0
+        assert cpu["power_estimated"] is True

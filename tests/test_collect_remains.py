@@ -34,10 +34,12 @@ def test_api_power_zero_means_not_measured():
     )
     assert state["power_w"] == 44.0
     assert state["power_source"] == "rapl"
-    # Aucune autre source : « non mesurée », jamais 0,0 W.
+    # Aucune autre source : 0,0 W de l'API n'est pas une mesure — l'estimation
+    # par TDP (2026.11.004-c5) prend le relais et se déclare estimée.
     state = cpu_state_with({"state": {}}, api_power_w=0.0)
-    assert state["power_w"] is None
-    assert state["power_source"] == "non mesurée"
+    assert state["power_w"] == 65.0
+    assert state["power_source"] == "estimation générique 65 W"
+    assert state["power_estimated"] is True
     # Une vraie valeur de l'API garde la priorité.
     state = cpu_state_with({"state": {"power_w": 44.0}}, api_power_w=88.6)
     assert state["power_w"] == 88.6
