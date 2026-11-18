@@ -730,7 +730,11 @@ def cpu_probe_command(probes: dict[str, Any]) -> str:
             "k=0; for c in \"$f\" \"$g\"; do "
             "case \"$c\" in "
             "/var/log/*|/var/lib/*|/root/*|/home/*|/opt/*|/srv/*|/tmp/*) "
-            "[ -f \"$c\" ] && k=1 && echo \"### LOGI $p $c\" && "
+            # 2026.11.004-c3 : un « \" » échappé dans la chaîne Python donnait
+            # un mot entouré de guillemets littéraux → le `case` ne matchait
+            # jamais et la sonde retombait toujours sur journald.
+            "{ [ -e \"$c\" ] || RD test -e \"$c\"; } && k=1 && "
+            "echo \"### LOGI $p $c\" && "
             "RD stat -c %Y \"$c\" 2>/dev/null && "
             "RD tail -n 80 \"$c\" 2>/dev/null;; esac; done; "
             "[ $k = 0 ] && { echo \"### JLOG $p\"; "

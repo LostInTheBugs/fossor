@@ -79,6 +79,9 @@ def test_commande_de_sonde_suit_les_fd_dans_l_ordre():
     assert "RL='~/bigcoin-mine/bigcoin/mine.log'" in command
     assert 'case "$RL" in "~/"*)' in command
     assert 'echo "### LOGS bigcoin $RL"' in command
+    # c3 : le test d'existence passe par RD (home en 750 → root seul voit le log).
+    assert '{ [ -e "$c" ] || RD test -e "$c"; }' in command
+    assert '[ -f "$c" ]' not in command
     assert "mining.log" not in command
     assert "miner.log" not in command
 
