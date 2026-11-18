@@ -92,7 +92,6 @@ def ux1c_server():
         "DATABASE_URL": f"sqlite:///{DATA_DIR}/fossor.db",
         "FOSSOR_ADMIN_PASSWORD": ADMIN_PASSWORD,
         "FOSSOR_MASTER_KEY": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v=",
-        "FOSSOR_UPDATE_CHECK_INTERVAL": "0",
         "FOSSOR_RELEASES_URL": f"http://127.0.0.1:{MOCK_GITHUB_PORT}/releases",
         "FOSSOR_IMAGE": "ghcr.io/lostinthebugs/fossor",
     }

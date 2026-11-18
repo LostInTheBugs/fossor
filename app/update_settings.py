@@ -17,6 +17,7 @@ Docker — c'est toujours ``updater_client`` qui écrit ``request.json``.
 
 from __future__ import annotations
 
+import os
 import time
 from datetime import datetime, timezone
 
@@ -39,12 +40,30 @@ def _cache() -> dict:
     return {"last_at": 0.0}
 
 
+def env_default_interval() -> int:
+    """``FOSSOR_UPDATE_CHECK_INTERVAL`` : valeur par défaut du premier démarrage.
+
+    La variable ne décide plus de la cadence une fois un réglage enregistré :
+    elle ne sert qu'à amorcer une installation neuve (§4.19).
+    """
+    raw = os.environ.get("FOSSOR_UPDATE_CHECK_INTERVAL", "").strip()
+    if raw == "":
+        return DEFAULTS["check_interval_s"]
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULTS["check_interval_s"]
+    return value if value in INTERVALS else DEFAULTS["check_interval_s"]
+
+
 def read(db: Session) -> dict:
     from app.ai_config import get_setting
     from app.updater_client import is_valid_tag
 
     out = {
-        "check_interval_s": get_setting(db, KEYS["check_interval_s"], DEFAULTS["check_interval_s"]),
+        "check_interval_s": get_setting(
+            db, KEYS["check_interval_s"], env_default_interval()
+        ),
         "auto_apply": bool(get_setting(db, KEYS["auto_apply"], DEFAULTS["auto_apply"])),
         "ignorer_auto": str(get_setting(db, KEYS["ignorer_auto"], "") or ""),
     }

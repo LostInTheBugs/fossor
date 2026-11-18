@@ -140,6 +140,12 @@ def should_trigger(db: Session, now: datetime, update_status: dict) -> tuple[boo
     latest = update_status.get("latest_version")
     if not is_valid_version(latest or ""):
         return False, "dernière version inconnue"
+    from app import update_settings
+
+    # §4.19 : la version quittée par un retour arrière n'est pas réinstallée
+    # automatiquement, même si elle redevient « la dernière ».
+    if update_settings.read(db)["ignorer_auto"] == str(latest):
+        return False, "version ignorée par l'application automatique"
     target = str(latest)
     installed = update_status.get("installed_version") or ""
     if is_valid_version(installed) and compare_versions(target, installed) <= 0:
