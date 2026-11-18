@@ -422,6 +422,12 @@ def health(state: dict[str, Any] | None, settings: dict[str, Any] | None = None)
         return {"status": "orange", "reason": "ASIC non interrogé"}
     if not state.get("online"):
         return {"status": "red", "reason": "hors ligne", "detail": state.get("error") or ""}
+    if state.get("requires_login"):
+        return {
+            "status": "orange",
+            "reason": "identifiants requis pour lire le panneau",
+            "detail": state.get("error") or "",
+        }
     if state.get("fans_zero"):
         return {
             "status": "orange",

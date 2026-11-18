@@ -60,7 +60,28 @@ def get_db():
         db.close()
 
 
+
+def _migrate_asic_login() -> None:
+    """Colonnes de connexion IceRiver (§4.20, 2026.11.008)."""
+    wanted = {
+        "asic_user": "VARCHAR(80)",
+        "asic_password_ref": "TEXT",
+        "asic_cert_sha256": "VARCHAR(80)",
+        "asic_scheme": "VARCHAR(10)",
+    }
+    with engine.begin() as conn:
+        rows = conn.exec_driver_sql("PRAGMA table_info(machines)").fetchall()
+        if not rows:
+            # Première base : ``create_all`` crée la table complète ensuite.
+            return
+        existing = {row[1] for row in rows}
+        for name, ddl in wanted.items():
+            if name not in existing:
+                conn.exec_driver_sql(f"ALTER TABLE machines ADD COLUMN {name} {ddl}")
+
+
 def init_db():
+    _migrate_asic_login()
     Base.metadata.create_all(bind=engine)
     _ensure_admin()
     _migrate_host_key_public_column()

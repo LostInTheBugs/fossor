@@ -402,8 +402,66 @@ def _latest_power(db: Session, machine: Machine) -> dict[str, float]:
     return latest
 
 
+def _asic_machine_power(db: Session, machine: Machine) -> dict[str, Any]:
+    """Puissance d'un ASIC (§4.20) : prise, sinon mesure de l'ASIC, sinon saisie.
+
+    Aucun composant par défaut n'est ajouté : une carte mère de PC et ses
+    ventilateurs n'existent pas dans un ASIC — c'est de là que venait le
+    « 34 W » affiché sur les Bitaxe alors que l'ASIC mesure 17,85 W.  Une prise
+    Shelly/HA configurée reste prioritaire (règle 3d).
+    """
+    from app.models import MachineStatus
+
+    state: dict[str, Any] = {}
+    row = (
+        db.query(MachineStatus)
+        .filter(MachineStatus.machine_uuid == machine.uuid)
+        .first()
+    )
+    raw = getattr(row, "asic_json", None) if row else None
+    if raw:
+        try:
+            decoded = json.loads(raw)
+        except (TypeError, ValueError):
+            decoded = None
+        if isinstance(decoded, dict):
+            state = decoded
+    try:
+        samples = _latest_power(db, machine) or {}
+    except Exception:  # pragma: no cover - une prise absente ne casse rien
+        samples = {}
+    plugs = [float(value) for value in samples.values() if isinstance(value, (int, float)) and value > 0]
+    measured_asic = state.get("power_w")
+    typed = machine.asic_power_w
+    if plugs:
+        watts, source = max(plugs), "mesurée à la prise"
+    elif isinstance(measured_asic, (int, float)) and measured_asic > 0:
+        watts, source = float(measured_asic), "mesurée par l'ASIC"
+    elif isinstance(typed, (int, float)) and typed > 0:
+        watts, source = float(typed), "saisie"
+    else:
+        watts, source = None, "non mesurée"
+    return {
+        "machine_id": machine.id,
+        "psus": [],
+        "rows": [],
+        "components_w": 0.0,
+        "devices_w": 0.0,
+        "total_dc_w": watts or 0.0,
+        "total_wall_w": watts,
+        "measured_w": max(plugs) if plugs else None,
+        "power_source": source,
+        "wall_factor": 1.0,
+        "worst_load_pct": 0.0,
+        "alerts": [],
+        "gpus_without_psu": [],
+    }
+
+
 def evaluate_machine_power(db: Session, machine: Machine, notify: bool = False) -> dict[str, Any]:
     """Charge, puissance à la prise et alertes d'une machine (§4.2 / §4.2 bis)."""
+    if getattr(machine, "machine_kind", "host") == "asic":
+        return _asic_machine_power(db, machine)
     from app.devices import integrated_hidden
 
     psus = db.query(Psu).filter(Psu.machine_id == machine.id).order_by(Psu.id.asc()).all()

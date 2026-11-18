@@ -102,7 +102,11 @@ tr.absent td{opacity:.5}
       <label>Modèle<input id="aModel" style="width:150px" placeholder="Bitaxe Gamma 602"></label>
       <label>Nominal GH/s<input id="aExpected" type="number" step="any" style="width:110px"></label>
       <label>Conso saisie W<input id="aPower" type="number" step="any" style="width:110px"></label>
-      <button class="btn" type="submit">Ajouter l'ASIC</button>
+      <label>Identifiant<input id="aUser" autocomplete="off" style="width:130px" placeholder="optionnel"></label>
+      <label>Mot de passe<input id="aPass" type="password" autocomplete="new-password" style="width:130px" placeholder="inchangé si vide"></label>
+      <input type="hidden" id="aEditId" value="">
+      <button class="btn" type="submit" id="aSubmit">Ajouter l'ASIC</button>
+      <button class="btn sm outline" type="button" onclick="cancelAsicEdit()">Annuler</button>
     </form>
     <div class="card pad0" style="margin-top:10px">
       <table>
@@ -923,23 +927,63 @@ async function loadAsics() {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const data = await r.json();
     const list = data.asics || [];
+    window.ASICS = list;
     if (!list.length) { body.innerHTML = '<tr><td colspan="9" class="sub">Aucun ASIC déclaré.</td></tr>'; return; }
     body.innerHTML = list.map(a => {
       const s = a.asic || {}, h = a.health || {};
       const dot = h.status === 'green' ? '🟢' : (h.status === 'red' ? '🔴' : '🟠');
+      const cert = a.cert_sha256 ? ' title="certificat épinglé : ' + esc(a.cert_sha256) + '"' : '';
+      const label = [s.model, s.firmware].filter(Boolean).join(' · ');
       return `<tr data-asic="${a.id}">
-        <td>${esc(a.name)}</td><td class="mono">${esc(a.host)}</td><td>${esc(a.driver)}</td>
+        <td>${esc(a.name)}${label ? '<div class="sub">' + esc(label) + '</div>' : ''}</td><td class="mono"${cert}>${esc(a.host)}</td><td>${esc(a.driver)}</td>
         <td class="num">${fmtHs(s.hashrate_hs)}</td>
         <td class="num">${s.nominal_pct === null || s.nominal_pct === undefined ? '—' : s.nominal_pct.toFixed(0) + ' %'}</td>
         <td class="num">${s.domains_total ? (s.domains_total - (s.domains_inactive || 0)) + '/' + s.domains_total : '—'}</td>
         <td class="num">${s.power_w ? Math.round(s.power_w) + ' W' : (a.power_w ? a.power_w + ' W' : '—')}</td>
         <td>${dot} ${esc(h.reason || '')}</td>
-        <td><button class="btn sm outline" onclick="probeAsic(${a.id})">Relire</button></td>
+        <td><button class="btn sm outline" onclick="probeAsic(${a.id})">Relire</button>
+          <button class="btn sm outline" onclick="editAsic(${a.id})">Modifier</button>
+          ${a.cert_sha256 ? '<button class="btn sm outline" onclick="repinAsic(' + a.id + ')">Ré-épingler</button>' : ''}</td>
       </tr>`;
     }).join('');
   } catch (e) {
     body.innerHTML = '<tr><td colspan="9" class="sub">Lecture impossible : ' + esc(e.message) + '</td></tr>';
   }
+}
+
+function editAsic(id) {
+  const a = (window.ASICS || []).find(x => x.id === id);
+  if (!a) return;
+  document.getElementById('aEditId').value = a.id;
+  document.getElementById('aName').value = a.name || '';
+  document.getElementById('aHost').value = a.host || '';
+  document.getElementById('aDriver').value = a.driver || 'auto';
+  document.getElementById('aModel').value = a.model || '';
+  document.getElementById('aExpected').value = a.expected_hashrate_hs ? (a.expected_hashrate_hs / 1e9) : '';
+  document.getElementById('aPower').value = a.power_w || '';
+  document.getElementById('aUser').value = a.username || '';
+  document.getElementById('aPass').value = '';
+  document.getElementById('aSubmit').textContent = 'Enregistrer';
+}
+
+function cancelAsicEdit() {
+  document.getElementById('aEditId').value = '';
+  document.getElementById('aSubmit').textContent = "Ajouter l'ASIC";
+  document.getElementById('aPass').value = '';
+}
+
+async function repinAsic(id) {
+  if (!confirm('Épingler le certificat actuellement présenté par cet ASIC ?')) return;
+  try {
+    const r = await fetch('/api/asics/' + id + '/repin', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({confirm: true}),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || ('HTTP ' + r.status));
+    toast('Certificat épinglé');
+    loadAsics();
+  } catch (e) { toast('Refus : ' + e.message, true); }
 }
 
 async function probeAsic(id) {
@@ -965,12 +1009,22 @@ document.addEventListener('DOMContentLoaded', () => {
       model: document.getElementById('aModel').value.trim(),
       expected_hashrate_hs: document.getElementById('aExpected').value ? Number(document.getElementById('aExpected').value) * 1e9 : null,
       power_w: document.getElementById('aPower').value ? Number(document.getElementById('aPower').value) : null,
+      username: document.getElementById('aUser').value.trim(),
+      // Vide = inchangé en édition ; jamais relu ni réaffiché par l'API.
+      password: document.getElementById('aPass').value,
     };
+    const editId = document.getElementById('aEditId').value;
+    if (editId) delete payload.driver;
     try {
-      const r = await fetch('/api/asics', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+      const r = await fetch(editId ? '/api/asics/' + editId : '/api/asics', {
+        method: editId ? 'PATCH' : 'POST',
+        headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+      });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.detail || ('HTTP ' + r.status));
-      toast('ASIC ajouté (' + (d.driver || '') + ')');
+      const shown = d.cert_sha256 ? ' · certificat ' + d.cert_sha256 : '';
+      toast((editId ? 'ASIC modifié' : 'ASIC ajouté (' + (d.driver || '') + ')') + shown);
+      cancelAsicEdit();
       form.reset();
       loadAsics();
     } catch (e) { toast('Refus : ' + e.message, true); }

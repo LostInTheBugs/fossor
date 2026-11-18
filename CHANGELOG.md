@@ -2,6 +2,34 @@
 
 ## 2026.11.008 — 2026-11-18
 
+### ASIC — IceRiver en HTTPS avec connexion, affichage, puissance mesurée
+
+- **IceRiver `ICM168_3_2_14`** : le firmware sert son panneau en HTTPS avec un
+  certificat auto-signé et exige une connexion (`301` http → https, `302`
+  `/user/loginpage`, cookie `esp-app`, `POST /user/login`). Le pilote gère les deux
+  modes — panneau nu des anciens firmwares, HTTPS + login — avec l'empreinte SHA-256
+  du certificat **épinglée à l'ajout** comme une clé d'hôte SSH : affichée, refusée
+  si elle change, ré-épinglable sur confirmation. Identifiants facultatifs dans le
+  formulaire, chiffrés comme les autres secrets, jamais renvoyés par l'API, journalisés
+  ni exportés. « Identifiants refusés » est distinct de « hôte injoignable », et une
+  session perdue fait **une seule** reconnexion avant l'erreur.
+- **`detect()`** suit jusqu'à trois redirections de même hôte (http → https compris) ;
+  l'échec d'un pilote passe au suivant et IceRiver est reconnu avant AxeOS.
+- **Affichage** : la carte d'un ASIC montre modèle et firmware (« Bitaxe 601 · AxeOS
+  v2.12.2 ») et le % du nominal, plus jamais « 0 device(s) » ; la santé vient des
+  données ASIC et sa raison s'affiche au survol.
+- **Puissance** : celle mesurée par l'ASIC (`power` d'AxeOS, champ IceRiver), source
+  « mesurée par l'ASIC » ; aucun composant par défaut n'est ajouté (le « 34 W » des
+  Bitaxe venait de la carte mère et des ventilateurs d'une machine à GPU). Une prise
+  Shelly/HA configurée reste prioritaire, et la même valeur alimente la conso totale,
+  le coût et le net.
+
+### Proxmox — stockage cloud-init sans `snippets`
+
+- L'inspection **refuse le modèle** quand le stockage cloud-init n'accepte pas
+  `snippets` (message nommant les contenus acceptés) : plus de repli silencieux vers
+  `/var/lib/vz`.
+
 ### 3d — énergie et disponibilité
 - Tarifs : plages horaires (jours ouvrés / week-end, plage traversant minuit) et Tempo avec
   couleur du jour récupérée automatiquement, heures creuses réglables.

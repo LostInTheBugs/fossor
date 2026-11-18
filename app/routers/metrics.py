@@ -209,12 +209,14 @@ def metrics_live(
                     status.algo if status else ""
                 )
         wall_w, worst_pct = total_w, 0.0
+        power_source = ""
         try:
             from app.routers.psu import evaluate_machine_power
 
             psu_power = evaluate_machine_power(db, machine)
             wall_w = psu_power["total_wall_w"]
             worst_pct = psu_power["worst_load_pct"]
+            power_source = str(psu_power.get("power_source") or "")
         except Exception:  # pragma: no cover - la conso ne casse jamais le live
             pass
         payload.append({
@@ -242,6 +244,7 @@ def metrics_live(
             "total_hashrate_human": format_hashrate(total_hs),
             "total_power_w": total_w,
             "wall_power_w": wall_w,
+            "power_source": power_source,
             "worst_psu_load_pct": worst_pct,
             "last_ts": status.ts if status else None,
             "age_s": _age_seconds(status.ts if status else None, now),

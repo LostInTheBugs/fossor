@@ -197,6 +197,9 @@ async def inspect(host: Any, *, simulated: bool, model: dict[str, Any] | None = 
         "commands": [step.command() for step in plan],
     }
     if model:
+        problem = P.ci_storage_problem(storages, model.get("ci_storage") or "")
+        if problem:
+            raise PveRemoteError(problem)
         need = int(model.get("disk_gb") or 0)
         eligible = P.eligible_storages(statuses, storages, need)
         payload["eligible"] = eligible

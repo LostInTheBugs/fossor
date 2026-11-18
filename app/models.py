@@ -74,6 +74,13 @@ class Machine(Base):
     asic_model: Mapped[str | None] = mapped_column(String(80), nullable=True)
     asic_expected_hashrate_hs: Mapped[float | None] = mapped_column(Float, nullable=True)
     asic_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # 2026.11.008 : connexion au panneau IceRiver (firmware ICM168 en HTTPS).
+    # Le mot de passe est chiffré comme les autres secrets ; le certificat
+    # auto-signé est épinglé par son empreinte SHA-256, comme une clé d'hôte SSH.
+    asic_user: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    asic_password_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    asic_cert_sha256: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    asic_scheme: Mapped[str | None] = mapped_column(String(10), nullable=True)
     # §4.1 ter : type choisi à l'ajout (os_kind) vs OS réellement détecté.
     os_kind_detected: Mapped[str | None] = mapped_column(String(20), nullable=True)
     host_key: Mapped[str | None] = mapped_column(String(255), nullable=True)

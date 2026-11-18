@@ -63,6 +63,13 @@ def health_status(db: Session = Depends(get_db), _user=Depends(require_login)):
                 "total_hashrate_hs": machine.get("total_hashrate_hs"),
                 "wall_power_w": machine.get("wall_power_w"),
                 "devices": len(machine.get("devices") or []),
+                # 2026.11.008 : un ASIC n'a aucun device — la carte affiche son
+                # modèle, son firmware et, si le nominal est connu, son %.
+                "kind": machine.get("kind") or "host",
+                "model": (machine.get("asic") or {}).get("model") or "",
+                "firmware": (machine.get("asic") or {}).get("firmware") or "",
+                "nominal_pct": (machine.get("asic") or {}).get("nominal_pct"),
+                "power_source": machine.get("power_source") or "",
             }
         )
     totals = {

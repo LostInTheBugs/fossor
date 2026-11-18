@@ -37,6 +37,7 @@ header h1{font-size:26px}
 .pill[data-status="orange"] .dot{background:var(--yellow);box-shadow:0 0 8px var(--yellow)}
 .pill[data-status="red"] .dot{background:var(--red);box-shadow:0 0 8px var(--red)}
 .pill .name{font-size:16px;font-weight:700}
+.pill .src{color:var(--muted);font-size:11px}
 .pill .meta{color:var(--muted);font-size:12px;margin-top:2px}
 .pill .reason{font-size:12.5px;margin-top:5px}
 .pill[data-status="orange"] .reason{color:var(--yellow)}
@@ -117,15 +118,35 @@ function fmtAge(s) {
   return "il y a " + Math.round(s / 3600) + " h";
 }
 
+function asicMeta(machine) {
+  const model = (machine.model || "").trim();
+  const firmware = (machine.firmware || "").trim();
+  const parts = [model, firmware].filter(Boolean);
+  let text = parts.join(" · ");
+  const pct = machine.nominal_pct;
+  if (pct !== null && pct !== undefined && !isNaN(pct)) {
+    text += (text ? " · " : "") + Math.round(Number(pct)) + " % du nominal";
+  }
+  return text || "ASIC";
+}
+
 function pill(machine) {
   const href = "/followup?machine=" + encodeURIComponent(machine.uuid || "");
   const reason = machine.reason ? '<div class="reason">' + esc(machine.reason) + "</div>" : "";
+  // Un ASIC n'a aucun device : le détail de la carte est son modèle et son
+  // firmware, jamais « 0 device(s) » (2026.11.008).
+  const isAsic = (machine.kind || "") === "asic" || !!machine.asic;
+  const detail = isAsic ? asicMeta(machine) : machine.devices + " device(s)";
+  const power = isAsic && machine.power_source
+    ? fmtW(machine.wall_power_w) + ' <span class="src">(' + esc(machine.power_source) + ")</span>"
+    : fmtW(machine.wall_power_w);
   return '<a class="pill" data-status="' + esc(machine.status) + '" data-machine="' +
-    esc(machine.name) + '" href="' + href + '" title="Ouvrir le suivi détaillé">' +
+    esc(machine.name) + '" href="' + href + '" title="' +
+    esc(machine.reason || "Ouvrir le suivi détaillé") + '">' +
     '<span class="dot"></span><div><div class="name">' + esc(machine.name) + "</div>" +
     '<div class="meta">' + (machine.online ? "en ligne" : "hors ligne") + " · " +
-    fmtHs(machine.total_hashrate_hs) + " · " + fmtW(machine.wall_power_w) +
-    " · " + machine.devices + " device(s)</div>" + reason + "</div>" +
+    fmtHs(machine.total_hashrate_hs) + " · " + power +
+    " · " + detail + "</div>" + reason + "</div>" +
     '<span class="go">Suivi →</span></a>';
 }
 

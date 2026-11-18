@@ -213,9 +213,38 @@ def parse_pve_storages(text: str) -> list[dict[str, Any]]:
                 "type": str(item.get("type") or ""),
                 "content": content,
                 "images": "images" in content,
+                "snippets": "snippets" in content,
             }
         )
     return out
+
+
+def ci_storage_problem(
+    storages: list[dict[str, Any]], name: str
+) -> str:
+    """Refus net quand le stockage cloud-init n'accepte pas ``snippets``.
+
+    2026.11.008 : le snippet user-data est écrit dans ``<stockage>:snippets/``.
+    Un stockage ``dir``/``lvm`` sans ``snippets`` dans ses contenus ne peut pas
+    le recevoir : le modèle est refusé dès l'inspection, sans repli silencieux
+    vers un autre dossier.  Un stockage **inconnu** de l'hôte ne déclenche rien
+    (l'inspection ne l'a pas listé, ce n'est pas une preuve d'absence).
+    """
+    target = str(name or "").strip()
+    if not target:
+        return ""
+    for item in storages or []:
+        if item.get("name") != target:
+            continue
+        if item.get("snippets") or "snippets" in (item.get("content") or []):
+            return ""
+        accepted = ", ".join(item.get("content") or []) or "aucun"
+        return (
+            f"stockage cloud-init « {target} » sans snippets (contenus acceptés : "
+            f"{accepted}) — choisissez un stockage qui accepte « snippets » : "
+            "modèle refusé, aucun repli"
+        )
+    return ""
 
 
 def eligible_storages(
