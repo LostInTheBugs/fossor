@@ -82,7 +82,7 @@ class TestHiveosRig:
         assert sorted(buses) == ["01:00.0", "02:00.0", "03:00.0", "04:00.0", "05:00.0"]
 
     def test_no_virtualisation(self):
-        assert self.d["virt"] == {"kvm": False, "virsh": False, "pveversion": False}
+        assert self.d["virt"]["kvm"] is False and self.d["virt"]["vm_capable"] is False
 
 
 class TestUbuntuKvm:
@@ -111,7 +111,8 @@ class TestUbuntuKvm:
         assert gpu["index"] == 0
 
     def test_virtualisation_detected(self):
-        assert self.d["virt"] == {"kvm": True, "virsh": True, "pveversion": False}
+        assert self.d["virt"]["kvm"] is True and self.d["virt"]["virsh"] is True
+        assert self.d["virt"]["kvm_domain"] == 1 and self.d["virt"]["vm_capable"] is True
 
 
 class TestAmdWithoutNvidiaSmi:
@@ -169,7 +170,7 @@ class TestNoGpuNoLspci:
         assert self.d["gpus"] == []
 
     def test_no_virtualisation(self):
-        assert self.d["virt"] == {"kvm": False, "virsh": False, "pveversion": False}
+        assert self.d["virt"]["kvm"] is False and self.d["virt"]["vm_capable"] is False
 
 
 class TestDegradedOutput:
@@ -178,7 +179,8 @@ class TestDegradedOutput:
         assert d["cpu"] is None
         assert d["gpus"] == []
         assert d["os_kind"] == "other"
-        assert d["virt"] == {"kvm": False, "virsh": False, "pveversion": False}
+        assert d["virt"]["kvm"] is False and d["virt"]["vm_capable"] is False
+        assert d["virt"]["kvm_domain"] == 0
 
     def test_sections_missing_from_output(self):
         d = parse_detect_hw("### MEM\nMem: 1048576000 0 1048576000\n")

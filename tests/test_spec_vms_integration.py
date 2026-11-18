@@ -124,6 +124,14 @@ def stubbed(tmp_path, monkeypatch):
     log = tmp_path / "stub.log"
     log.write_text("")
     _write_stubs(stubs, log)
+
+    # La sonde KVM est simulée : le conteneur de test n'a pas /dev/kvm. La
+    # détection elle-même est couverte par tests/test_energy_3d.py.
+    async def fake_probe(host, *, simulated):
+        return {"simulated": simulated, "kvm": True, "kvm_device": True,
+                "kvm_domain": 1, "pveversion": False, "message": "", "stdout": ""}
+
+    monkeypatch.setattr(VR, "probe_kvm", fake_probe)
     monkeypatch.setenv("PATH", f"{stubs}:{os.environ.get('PATH', '/usr/bin:/bin')}")
     monkeypatch.setenv("FOSSOR_STUB_LOG", str(log))
     monkeypatch.setattr(V, "IMAGE_ROOT", str(tmp_path / "libvirt"))
