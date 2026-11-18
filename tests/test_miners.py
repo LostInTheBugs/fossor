@@ -130,10 +130,32 @@ def test_binary_path_cannot_escape_its_directory():
             profile(binary_path=value)
 
 
-def test_vm_mode_refused_until_step_3c():
+def test_vm_and_hybrid_modes_accepted_since_3c():
+    """§4.6 (3c) : ``vm`` et ``hybrid`` remplacent la liste « plus tard »."""
+    assert profile(execution_mode="vm")["execution_mode"] == "vm"
+    hybrid = profile(
+        execution_mode="hybrid",
+        cmdline=(
+            "/opt/fossor/miners/srbminer/2.4.7/SRBMiner-MULTI "
+            "--algorithm pearl --wallet {wallet} --pool {vm_node} --gpu-id={gpus}"
+        ),
+    )
+    assert hybrid["execution_mode"] == "hybrid"
+
+
+def test_vm_node_only_in_hybrid_mode():
+    """``{vm_node}`` n'a de sens qu'en hybride, et y est obligatoire."""
     with pytest.raises(M.ProfileError) as exc:
-        profile(execution_mode="vm")
-    assert "3c" in str(exc.value)
+        profile(
+            execution_mode="host",
+            cmdline=(
+                "/opt/fossor/miners/srbminer/2.4.7/SRBMiner-MULTI "
+                "--wallet {wallet} --pool {vm_node} --gpu-id={gpus}"
+            ),
+        )
+    assert "hybride" in str(exc.value)
+    with pytest.raises(M.ProfileError):
+        profile(execution_mode="hybrid")
 
 
 # ── 2. shlex puis substitution : argv, jamais une chaîne ─────────────

@@ -86,6 +86,10 @@ tr:last-child td{border-bottom:none}
         <input id="fOverload" type="checkbox" style="width:auto"> confirmer une charge PSU &gt; 80 %
       </label>
     </div>
+    <div class="row" style="grid-template-columns:1fr 2fr">
+      <div><label for="fMode">Mode d'exécution (§4.6)</label><select id="fMode"></select></div>
+      <div><label for="fModeNote">&nbsp;</label><span class="muted" id="fModeNote" style="font-size:12px"></span></div>
+    </div>
     <label>Devices engagés</label>
     <div class="machines" id="fDevices"></div>
     <div style="margin-top:14px"><button class="btn" id="createBtn">Créer la campagne</button>
@@ -164,7 +168,9 @@ tr:last-child td{border-bottom:none}
         '<td class="mono">' + c.coin + "</td>" +
         '<td><span class="chip ' + c.status + '">' + c.status_label + "</span>" +
           (c.verified === true ? ' <span class="sim">retour vérifié</span>' : "") + "</td>" +
-        "<td>" + (c.profile_name || "—") + "</td>" +
+        "<td>" + (c.profile_name || "—") +
+          '<div class="muted" style="font-size:10.5px">mode ' + (c.execution_mode || "host") +
+          (c.vm ? " · VM " + c.vm.name + " (" + (c.vm.ip || "sans IP") + ")" : "") + "</div></td>" +
         '<td class="muted">' + devicesText(c) + "</td>" +
         "<td>" + fmtDate(c.start_at) + "</td>" +
         "<td>" + (c.end_at ? fmtDate(c.end_at) : "sans limite") + "</td>" +
@@ -190,6 +196,18 @@ tr:last-child td{border-bottom:none}
       return '<option value="' + p.id + '" data-coin="' + p.coin + '">' + p.name + " — " + p.coin + "</option>";
     }).join("");
     if (options.profiles.length) { $("#fCoin").value = options.profiles[0].coin; }
+    var modeSelect = $("#fMode");
+    var modes = options.modes || [{ value: "host", label: "Hôte" }];
+    modeSelect.innerHTML = modes.map(function (m) {
+      return '<option value="' + m.value + '">' + m.label + "</option>";
+    }).join("");
+    modeSelect.value = options.default_mode || "host";
+    var note = $("#fModeNote");
+    if (modes.length > 1) {
+      note.textContent = options.vm_ready
+        ? "vm / hybrid : VM jetable créée depuis le modèle de la Configuration."
+        : "vm / hybrid exigent un modèle de VM (Configuration → Spec mining) : sans lui, la campagne échouera au démarrage.";
+    }
     $("#fDevices").innerHTML = options.machines.map(function (m) {
       var rows = m.devices.map(function (d) {
         var disabled = (!d.enabled || d.occupied_external) ? " disabled" : "";
@@ -253,7 +271,8 @@ tr:last-child td{border-bottom:none}
       devices: picked,
       start_at: start.toISOString(),
       end_at: end ? end.toISOString() : null,
-      confirm_overload: $("#fOverload").checked
+      confirm_overload: $("#fOverload").checked,
+      execution_mode: $("#fMode").value
     };
     fetch("/api/campaigns", {
       method: "POST",
@@ -284,6 +303,14 @@ tr:last-child td{border-bottom:none}
   $("#fNoEnd").addEventListener("change", function () {
     $("#fEnd").disabled = this.checked;
     if (this.checked) { $("#fEnd").value = ""; }
+  });
+  $("#fMode").addEventListener("change", function () {
+    var vm = this.value === "vm" || this.value === "hybrid";
+    $("#fModeNote").textContent = vm
+      ? (state.options && state.options.vm_ready
+          ? "VM jetable : créée, provisionnée, puis éteinte et conservée en fin de campagne."
+          : "Modèle de VM absent : la campagne échouera au démarrage (Configuration → Spec mining).")
+      : "Mineur directement sur la machine.";
   });
   $("#fProfile").addEventListener("change", function () {
     var option = this.options[this.selectedIndex];

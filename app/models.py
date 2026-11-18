@@ -483,6 +483,8 @@ class Campaign(Base):
     end_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="proposed", server_default="proposed", index=True)
     origin: Mapped[str] = mapped_column(String(10), default="manual", server_default="manual")
+    # §4.6 : mode d'exécution de la campagne (host, vm ou hybrid).
+    execution_mode: Mapped[str] = mapped_column(String(10), default="host", server_default="host")
     # Arrêt demandé à la main avant l'heure de fin.
     stop_requested: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     # §4.2 bis : démarrage au-delà de 80 % de charge PSU accepté explicitement.
@@ -539,3 +541,42 @@ class CampaignEvent(Base):
     result: Mapped[str] = mapped_column(String(10), default="ok", server_default="ok")
     simulated: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class SpecVm(Base):
+    """VM jetable du spec mining (§4.6) — créée par Fossor, jamais adoptée.
+
+    Une VM n'est touchée que si son nom porte le préfixe ``fossor-`` **et** si
+    libvirt porte la métadonnée ``fossor_vm=1`` (voir :mod:`app.spec_vm`). Le
+    wallet vit dans la VM : seule son **adresse** et le **chemin** de sa
+    sauvegarde sont enregistrés ici — jamais une seed, jamais un mot de passe.
+    """
+
+    __tablename__ = "spec_vms"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    uuid: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    campaign_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("campaigns.id"), nullable=True, index=True)
+    host_machine_id: Mapped[int] = mapped_column(Integer, ForeignKey("machines.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    mode: Mapped[str] = mapped_column(String(10), default="vm", server_default="vm")
+    base_image: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    overlay_path: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    seed_path: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    vcpus: Mapped[int] = mapped_column(Integer, default=2, server_default="2")
+    memory_mb: Mapped[int] = mapped_column(Integer, default=2048, server_default="2048")
+    disk_gb: Mapped[int] = mapped_column(Integer, default=20, server_default="20")
+    network: Mapped[str] = mapped_column(String(40), default="default", server_default="default")
+    node_port: Mapped[int] = mapped_column(Integer, default=19333, server_default="19333")
+    ip: Mapped[str] = mapped_column(String(40), default="", server_default="")
+    host_key: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    state: Mapped[str] = mapped_column(String(16), default="creating", server_default="creating")
+    wallet_address: Mapped[str] = mapped_column(String(255), default="", server_default="")
+    backup_path: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    # Verdict du §10.11 (taille et date seulement, jamais le contenu).
+    backup_state: Mapped[str | None] = mapped_column(Text, nullable=True)
+    backup_checked_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+    destroyed_at: Mapped[str | None] = mapped_column(String(40), nullable=True)

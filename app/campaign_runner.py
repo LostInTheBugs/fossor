@@ -88,7 +88,8 @@ def _profile_dict(profile: Any) -> dict[str, Any]:
     return profile_to_dict(profile)
 
 
-def render_argv(profile: dict[str, Any], machine: Any, target: Target) -> list[str]:
+def render_argv(profile: dict[str, Any], machine: Any, target: Target,
+                vm_node: str | None = None) -> list[str]:
     from app import miners as M
 
     values = M.build_values(
@@ -97,8 +98,282 @@ def render_argv(profile: dict[str, Any], machine: Any, target: Target) -> list[s
         gpus=target.gpus,
         threads=target.threads,
         api_port=profile.get("api_port") or None,
+        vm_node=vm_node,
     )
     return M.render_argv(profile, values)
+
+
+#: Adresse de simulation (TEST-NET-1) : jamais routable, jamais une vraie VM.
+SIMULATION_IP = "192.0.2.10"
+
+
+def campaign_mode(db: Any, campaign: Any, profile: dict[str, Any] | None) -> str:
+    """Mode effectif de la campagne : colonne, sinon mode du profil, sinon host."""
+    from app import spec_vm as V
+
+    raw = getattr(campaign, "execution_mode", "") or (profile or {}).get("execution_mode") or ""
+    try:
+        return V.normalize_mode(raw, "host")
+    except V.VmError:
+        return "host"
+
+
+def _spec_host(db: Any, model: dict[str, Any]):
+    from app.models import Machine
+
+    try:
+        machine_id = int(model.get("host_id") or 0)
+    except (TypeError, ValueError):
+        return None
+    machine = db.query(Machine).filter(Machine.id == machine_id).first()
+    if machine is None or not machine.vm_host:
+        return None
+    return machine
+
+
+def _spec_vm_row(db: Any, campaign: Any):
+    from app.models import SpecVm
+
+    return (
+        db.query(SpecVm)
+        .filter(SpecVm.campaign_id == campaign.id)
+        .order_by(SpecVm.id.desc())
+        .first()
+    )
+
+
+def _register_wallet(db: Any, coin: str, address: str, vm_row: Any, backup_path: str) -> None:
+    """§4.4 : seule l'adresse et le chemin de sauvegarde sont enregistrés."""
+    from app.models import Wallet
+
+    address = (address or "").strip()
+    if not address:
+        return
+    wallet = (
+        db.query(Wallet)
+        .filter(Wallet.coin_ticker == coin.upper(), Wallet.address == address)
+        .first()
+    )
+    if wallet is None:
+        wallet = Wallet(coin_ticker=coin.upper(), address=address)
+        db.add(wallet)
+    wallet.location = f"VM {vm_row.name}"
+    wallet.backup_path = backup_path
+    db.commit()
+
+
+async def _spec_start_steps(
+    db: Any,
+    campaign: Any,
+    moment: datetime,
+    backend: Any,
+    simulated: bool,
+    mode: str,
+    profile: dict[str, Any],
+    targets: list[Target],
+) -> dict[str, Any] | None:
+    """Création → adresse → provisionnement → mineur. ``None`` si tout va bien."""
+    import uuid as uuid_lib
+
+    from app import spec_vm as V
+    from app.routers.vms import record_vm, stored_model
+
+    model_raw = stored_model(db)
+    if not model_raw:
+        return _fail(
+            db, campaign, "vm-model-missing",
+            "Aucun modèle de VM configuré (Configuration → Spec mining)", simulated,
+        )
+    try:
+        model = V.validate_vm_model(model_raw)
+    except V.VmError as exc:
+        return _fail(db, campaign, "vm-model-invalid", f"Modèle de VM invalide : {exc}", simulated)
+    host = _spec_host(db, model)
+    if host is None:
+        return _fail(
+            db, campaign, "vm-host-missing",
+            "Machine hôte de VM introuvable ou non marquée vm_host", simulated,
+        )
+
+    row = _spec_vm_row(db, campaign)
+    if row is None:
+        name = V.vm_name(campaign.id, campaign.coin, uuid_lib.uuid4().hex[:6])
+        row = record_vm(
+            db,
+            campaign_id=campaign.id,
+            host_machine_id=host.id,
+            name=name,
+            mode=mode,
+            model=model,
+            wallet_address=str(profile.get("wallet") or ""),
+        )
+    db.commit()
+
+    # 1. Création et démarrage de la VM.
+    if not _step_done(db, campaign, "vm-created"):
+        try:
+            result = await backend.vm_create(host, model, row.name, simulated)
+        except Exception as exc:
+            row.state = "failed"
+            row.note = str(exc)[:800]
+            db.commit()
+            log_event(db, campaign, "vm-created", str(exc)[:800], result="fail", simulated=simulated)
+            return _fail(db, campaign, "vm-create-failed", f"Création de la VM impossible : {exc}",
+                         simulated)
+        if not simulated:
+            row.state = "running"
+        db.commit()
+        log_event(
+            db, campaign, "vm-created",
+            f"VM {row.name} créée et démarrée sur {host.name}",
+            simulated=simulated,
+            detail={"commands": result.get("commands") or [], "vm": row.name, "mode": mode},
+        )
+        db.commit()
+
+    # 2. Adresse de la VM (bail ARP puis lease).
+    if not _step_done(db, campaign, "vm-addressed"):
+        ip = SIMULATION_IP if simulated else ""
+        if not simulated:
+            try:
+                result = await backend.vm_address(host, row.name, simulated=False)
+                ip = str(result.get("ip") or "")
+                if ip:
+                    try:
+                        await backend.vm_pin(host, ip, False)
+                    except Exception as exc:  # clé d'hôte indisponible : on continue, noté
+                        log_event(db, campaign, "vm-pin-failed", str(exc)[:300], result="warn",
+                                  simulated=simulated)
+            except Exception as exc:
+                log_event(db, campaign, "vm-addressed", str(exc)[:400], result="fail",
+                          simulated=simulated)
+                return _fail(db, campaign, "vm-no-address", f"Adresse de la VM introuvable : {exc}",
+                             simulated)
+        row.ip = ip
+        db.commit()
+        log_event(db, campaign, "vm-addressed", f"adresse de la VM : {ip or 'inconnue'}",
+                  simulated=simulated, detail={"ip": ip})
+
+    # 3. Provisionnement dans la VM (binaires vérifiés par SHA256 dans la VM).
+    if not _step_done(db, campaign, "vm-provisioned"):
+        try:
+            result = await backend.vm_provision(
+                host, model, profile, row.ip, campaign.coin,
+                str(profile.get("wallet") or ""), simulated,
+            )
+        except Exception as exc:
+            log_event(db, campaign, "vm-provisioned", str(exc)[:800], result="fail",
+                      simulated=simulated)
+            return _fail(db, campaign, "vm-provision-failed", f"Provisionnement impossible : {exc}",
+                         simulated)
+        address = str(result.get("address") or profile.get("wallet") or "")
+        if not simulated and address:
+            row.wallet_address = address
+        db.commit()
+        if not simulated:
+            _register_wallet(db, campaign.coin, address, row, str(model.get("wallet_backup_path") or ""))
+        log_event(
+            db, campaign, "vm-provisioned",
+            "nœud, wallet et mineur installés dans la VM (adresse seule remontée)",
+            simulated=simulated,
+            detail={"commands": result.get("commands") or [], "address": address},
+        )
+        db.commit()
+
+    # 4. Mineur : dans la VM (mode vm) ou sur l'hôte (mode hybrid).
+    if not _step_done(db, campaign, "campaign-started"):
+        commands: list[str] = []
+        try:
+            if mode == "vm":
+                target = targets[0] if targets else Target(machine=host)
+                argv = render_argv(profile, host, target)
+                result = await backend.vm_start_miner(host, profile, argv, row.ip, simulated)
+                commands.extend(result.get("commands") or [])
+            else:
+                node = V.node_address(row.ip, row.node_port)
+                for target in targets:
+                    argv = render_argv(profile, target.machine, target, vm_node=node)
+                    result = await backend.start(target.machine, profile, argv, simulated)
+                    commands.extend(result.get("commands") or [])
+        except Exception as exc:
+            log_event(db, campaign, "campaign-started", str(exc)[:800], result="fail",
+                      simulated=simulated)
+            return _fail(db, campaign, "campaign-start-failed", f"Démarrage impossible : {exc}",
+                         simulated)
+        where = "dans la VM" if mode == "vm" else f"sur l'hôte (nœud {row.ip}:{row.node_port})"
+        log_event(
+            db, campaign, "campaign-started",
+            f"profil « {profile['name']} » démarré {where}",
+            simulated=simulated,
+            detail={"commands": commands, "mode": mode, "vm": row.name},
+        )
+        db.commit()
+    return None
+
+
+async def _spec_stop_steps(
+    db: Any,
+    campaign: Any,
+    backend: Any,
+    simulated: bool,
+    mode: str,
+    profile: dict[str, Any] | None,
+    targets: list[Target],
+) -> None:
+    """Arrêt du mineur, puis **VM éteinte et conservée** (destruction séparée)."""
+    row = _spec_vm_row(db, campaign)
+    model = None
+    if row is not None:
+        from app.routers.vms import stored_model
+
+        try:
+            from app import spec_vm as V
+
+            model = V.validate_vm_model(stored_model(db) or {})
+        except Exception:
+            model = None
+    host = _spec_host(db, model) if model else None
+    if row is None or host is None or profile is None:
+        log_event(db, campaign, "campaign-stopped",
+                  "VM de campagne introuvable : arrêt du mineur non nécessaire",
+                  simulated=simulated)
+        return
+
+    commands: list[str] = []
+    try:
+        if mode == "vm":
+            result = await backend.vm_stop_miner(host, profile, row.ip, simulated)
+            commands.extend(result.get("commands") or [])
+        else:
+            for target in targets:
+                result = await backend.stop(target.machine, profile, simulated)
+                commands.extend(result.get("commands") or [])
+    except Exception as exc:
+        log_event(db, campaign, "campaign-stopped", str(exc)[:400], result="fail",
+                  simulated=simulated)
+    log_event(
+        db, campaign, "campaign-stopped",
+        f"mineur de campagne « {profile['name']} » arrêté ({mode})",
+        simulated=simulated, detail={"commands": commands},
+    )
+    db.commit()
+
+    if not _step_done(db, campaign, "vm-stopped"):
+        try:
+            await backend.vm_shutdown(host, row.name, simulated)
+            if not simulated:
+                row.state = "shut off"
+            db.commit()
+        except Exception as exc:
+            log_event(db, campaign, "vm-stopped", str(exc)[:400], result="fail", simulated=simulated)
+        log_event(
+            db, campaign, "vm-stopped",
+            f"VM {row.name} éteinte et conservée (le wallet y est) — "
+            "sa destruction est une action séparée, après contrôle de sauvegarde",
+            simulated=simulated,
+            detail={"vm": row.name, "kept": True},
+        )
+        db.commit()
 
 
 def default_profile_for(db: Any, machine: Any):
@@ -133,6 +408,56 @@ class MinerBackend:
         except Exception:  # machine muette : la vérification échouera par échéance
             return None
         return (result.get("status") or {}).get("hashrate_hs")
+
+    # ── Modes `vm` et `hybrid` (§4.6, étape 3c) ───────────────────────
+    async def vm_create(self, host, model: dict, name: str, simulated: bool) -> dict:
+        from app import vm_remote as VMR
+        from app.fossor_keys import private_key_text, public_key_text
+
+        return await VMR.create(
+            host,
+            model,
+            name,
+            ssh_public_key=public_key_text(),
+            private_key=private_key_text(),
+            simulated=simulated,
+        )
+
+    async def vm_address(self, host, name: str, simulated: bool) -> dict:
+        from app import vm_remote as VMR
+
+        return await VMR.wait_address(host, name, simulated=simulated)
+
+    async def vm_pin(self, host, ip: str, simulated: bool) -> dict:
+        from app import vm_remote as VMR
+
+        return await VMR.pin_host_key(host, ip, simulated=simulated)
+
+    async def vm_provision(self, host, model: dict, profile: dict, ip: str, coin: str,
+                           expected_address: str, simulated: bool) -> dict:
+        from app import vm_remote as VMR
+
+        return await VMR.provision(
+            host, model, profile, ip, coin=coin, simulated=simulated,
+            expected_address=expected_address,
+        )
+
+    async def vm_start_miner(self, host, profile: dict, argv: list[str], ip: str,
+                            simulated: bool) -> dict:
+        from app import vm_remote as VMR
+
+        return await VMR.start_miner(host, profile, argv, ip, simulated=simulated)
+
+    async def vm_stop_miner(self, host, profile: dict, ip: str, simulated: bool) -> dict:
+        from app import vm_remote as VMR
+
+        return await VMR.stop_miner(host, profile, ip, simulated=simulated)
+
+    async def vm_shutdown(self, host, name: str, simulated: bool) -> dict:
+        """Fin de campagne : VM éteinte et **conservée** (le wallet y est)."""
+        from app import vm_remote as VMR
+
+        return await VMR.shutdown(host, name, simulated=simulated)
 
 
 # ── Réglages et journal ───────────────────────────────────────────────
@@ -424,8 +749,13 @@ async def _start(db: Any, campaign: Any, moment: datetime, backend: Any, simulat
         )
         db.commit()
 
-    # 2. Démarrage du profil de la campagne.
-    if not _step_done(db, campaign, "campaign-started"):
+    # 2. Démarrage du profil de la campagne (§4.6 : vm / hybrid / host).
+    mode = campaign_mode(db, campaign, profile)
+    if mode in ("vm", "hybrid"):
+        failure = await _spec_start_steps(db, campaign, moment, backend, simulated, mode, profile, targets)
+        if failure is not None:
+            return failure
+    elif not _step_done(db, campaign, "campaign-started"):
         commands = []
         try:
             for target in targets:
@@ -472,7 +802,11 @@ async def _stop(db: Any, campaign: Any, moment: datetime, backend: Any, simulate
     profile_row = db.query(MinerProfile).filter(MinerProfile.id == campaign.profile_id).first()
     profile = _profile_dict(profile_row) if profile_row is not None else None
 
-    if not _step_done(db, campaign, "campaign-stopped"):
+    mode = campaign_mode(db, campaign, profile) if profile is not None else "host"
+    if mode in ("vm", "hybrid"):
+        if not _step_done(db, campaign, "campaign-stopped"):
+            await _spec_stop_steps(db, campaign, backend, simulated, mode, profile, targets)
+    elif not _step_done(db, campaign, "campaign-stopped"):
         commands: list[str] = []
         if profile is not None:
             for target in targets:

@@ -79,6 +79,7 @@ def init_db():
     _migrate_machine_os_detected_column()
     _migrate_device_role_columns()
     _migrate_asic_columns()
+    _migrate_campaign_execution_mode()
 
 
 def _migrate_asic_columns():
@@ -157,6 +158,15 @@ def _migrate_coin_pool_hosts_column():
         conn.commit()
     finally:
         conn.close()
+
+
+def _migrate_campaign_execution_mode():
+    """Add campaigns.execution_mode (§4.6, étape 3c) — défaut « host »."""
+    _add_column_if_missing(
+        "campaigns",
+        "execution_mode",
+        "execution_mode VARCHAR(10) NOT NULL DEFAULT 'host'",
+    )
 
 
 def _migrate_machine_status_api_error_column():

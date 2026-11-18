@@ -76,6 +76,7 @@ header h1{font-size:26px}
 
   <div class="subtabs">
     <button class="subtab active" id="tabGeneral" data-panel="panel-general">Général</button>
+    <button class="subtab" id="tabSpec" data-panel="panel-spec">Spec mining</button>
     <button class="subtab" id="tabAi" data-panel="panel-ai">Analyse IA</button>
     <button class="subtab" id="tabEnergy" data-panel="panel-energy">Électricité</button>
     <button class="subtab" id="tabNotifications" data-panel="panel-notifications">Notifications</button>
@@ -216,6 +217,53 @@ header h1{font-size:26px}
         <button class="btn" id="importApplyBtn" disabled>Appliquer</button>
       </div>
       <div class="diff" id="diffBox"></div>
+    </div>
+  </div>
+
+  <div id="panel-spec" style="display:none">
+    <div class="card">
+      <h2>Mode par défaut du spec mining</h2>
+      <div class="sub">Ce que mine un device hors campagne : <b>vm</b> (nœud, wallet et mineur dans une VM jetable), <b>hybrid</b> (nœud et wallet dans la VM, mineur sur l'hôte) ou <b>host</b> (mineur directement sur la machine).</div>
+      <div class="field narrow"><label for="specMode">Mode par défaut</label><select id="specMode"></select></div>
+      <div class="actions"><button class="btn" id="specModeSave">Enregistrer</button><span id="specModeState" class="chip">—</span></div>
+    </div>
+
+    <div class="card" id="vmModelCard">
+      <h2>Modèle de VM jetable (§4.6)</h2>
+      <div class="sub">Image de base cloud (Debian/Ubuntu) avec <b>SHA256 obligatoire</b>, disque en surcouche qcow2, utilisateur <code>specminer</code> et clé SSH de Fossor posés par cloud-init. Le contenu du wallet ne sort jamais de la VM.</div>
+      <div class="field"><label for="vmHost">Machine hôte (vm_host)</label><select id="vmHost"></select></div>
+      <div class="field"><label for="vmImageUrl">Image de base (URL qcow2)</label><input id="vmImageUrl" placeholder="https://cloud.debian.org/images/cloud/…/debian-12-genericcloud-amd64.qcow2"></div>
+      <div class="field"><label for="vmImageSha">SHA256 de l'image (obligatoire, vérifié sur l'hôte et à chaque démarrage)</label><input id="vmImageSha" placeholder="64 caractères hexadécimaux" maxlength="64"></div>
+      <div class="row" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+        <div class="field"><label for="vmVcpus">vCPU</label><input id="vmVcpus" type="number" min="1" max="32"></div>
+        <div class="field"><label for="vmMem">RAM (Mo)</label><input id="vmMem" type="number" min="256" max="65536" step="256"></div>
+        <div class="field"><label for="vmDisk">Disque (Go)</label><input id="vmDisk" type="number" min="2" max="2048"></div>
+        <div class="field"><label for="vmNet">Réseau libvirt</label><input id="vmNet" value="default" maxlength="32"></div>
+      </div>
+      <div class="row" style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px">
+        <div class="field"><label for="vmNodePort">Port du nœud dans la VM ({vm_node})</label><input id="vmNodePort" type="number" min="1024" max="65535"></div>
+        <div class="field"><label for="vmBackupPath">Sauvegarde du wallet (chemin dans la VM)</label><input id="vmBackupPath" placeholder="/home/specminer/data/wallet.dat"></div>
+      </div>
+      <hr style="border:none;border-top:1px solid var(--border);margin:14px 0">
+      <div class="sub">Nœud (facultatif) : binaire téléchargé <b>dans la VM</b> et vérifié par SHA256 avant extraction. Aucun mot de passe, aucune seed n'est transmis par Fossor.</div>
+      <div class="field"><label for="vmNodeUrl">Archive du nœud (URL)</label><input id="vmNodeUrl" placeholder="https://…/noeud.tar.gz"></div>
+      <div class="field"><label for="vmNodeSha">SHA256 du nœud</label><input id="vmNodeSha" maxlength="64"></div>
+      <div class="field"><label for="vmNodeBin">Binaire du nœud (chemin relatif dans l'archive)</label><input id="vmNodeBin" placeholder="bin/noeudd"></div>
+      <div class="field"><label for="vmNodeStart">Démarrage du nœud (gabarit, variables {datadir} {port} {coin})</label><input id="vmNodeStart" placeholder="/home/specminer/opt/node/bin/noeudd -daemon -datadir={datadir} -port={port}"></div>
+      <div class="field"><label for="vmWalletCmd">Création du wallet (gabarit, variables {datadir} {coin} ; n'imprime que l'adresse)</label><input id="vmWalletCmd" placeholder="/home/specminer/opt/node/bin/noeud-cli -datadir={datadir} getnewaddress"></div>
+      <div class="actions">
+        <button class="btn" id="vmSave">Enregistrer le modèle</button>
+        <button class="btn outline" id="vmHostCheck">Vérifier l'hôte (libvirt / Proxmox)</button>
+        <span id="vmState" class="chip off">—</span>
+      </div>
+      <div class="sub" id="vmHostReport" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card">
+      <h2>VM du spec mining</h2>
+      <div class="sub">Une VM n'est pilotée que si son nom porte le préfixe <code>fossor-</code> <b>et</b> si libvirt porte la métadonnée <code>fossor_vm=1</code>. Fin de campagne : la VM est éteinte et conservée ; sa destruction est une action séparée, refusée tant que la sauvegarde du wallet n'a pas été vérifiée (§10.11).</div>
+      <div id="vmListWrap"><table><thead><tr><th>VM</th><th>Campagne</th><th>État</th><th>IP / nœud</th><th>vCPU / RAM</th><th>Sauvegarde</th><th>Actions</th></tr></thead><tbody id="vmRows"></tbody></table></div>
+      <div class="empty" id="vmEmpty" style="display:none">Aucune VM créée par Fossor.</div>
     </div>
   </div>
 
@@ -902,9 +950,10 @@ $('#enSaveMachines').addEventListener('click',async()=>{
 document.querySelectorAll('.subtab').forEach(button=>{
   button.addEventListener('click',()=>{
     document.querySelectorAll('.subtab').forEach(b=>b.classList.toggle('active',b===button));
-    ['panel-general','panel-ai','panel-energy','panel-notifications','panel-update'].forEach(id=>{
+    ['panel-general','panel-spec','panel-ai','panel-energy','panel-notifications','panel-update'].forEach(id=>{
       $('#'+id).style.display=(id===button.dataset.panel)?'block':'none';
     });
+    if(button.dataset.panel==='panel-spec')loadSpec();
     if(button.dataset.panel==='panel-ai')loadAI();
     if(button.dataset.panel==='panel-energy')loadEnergy();
     if(button.dataset.panel==='panel-notifications')loadNotifications();
@@ -1102,6 +1151,118 @@ $('#patSave').onclick=async()=>{
   await loadPatterns();
 };
 loadPatterns();
+
+/* ── Spec mining (§4.6, étape 3c) ───────────────────────────────────── */
+let specInfo={vm_model:null,defaults:{}};
+const vmField=(id)=>document.getElementById(id);
+function vmPayload(){
+  const num=(id,def)=>{const v=parseInt(vmField(id).value,10);return isNaN(v)?def:v;};
+  return {
+    host_id: parseInt(vmField('vmHost').value,10)||0,
+    base_image_url: vmField('vmImageUrl').value.trim(),
+    base_image_sha256: vmField('vmImageSha').value.trim().toLowerCase(),
+    vcpus: num('vmVcpus',2), memory_mb: num('vmMem',2048), disk_gb: num('vmDisk',20),
+    network: vmField('vmNet').value.trim()||'default',
+    node_port: num('vmNodePort',19333),
+    wallet_backup_path: vmField('vmBackupPath').value.trim(),
+    node_url: vmField('vmNodeUrl').value.trim(),
+    node_sha256: vmField('vmNodeSha').value.trim().toLowerCase(),
+    node_binary: vmField('vmNodeBin').value.trim(),
+    node_start_cmd: vmField('vmNodeStart').value.trim(),
+    wallet_create_cmd: vmField('vmWalletCmd').value.trim()
+  };
+}
+async function loadSpec(){
+  const r=await fetch('/api/spec/settings',{credentials:'include'});
+  if(!r.ok){vmField('vmState').textContent='lecture impossible';return;}
+  const d=await r.json(); specInfo=d;
+  vmField('specMode').innerHTML=(d.modes||[]).map(m=>'<option value="'+m.value+'">'+m.label+'</option>').join('');
+  vmField('specMode').value=d.default_mode||'vm';
+  vmField('specModeState').textContent='défaut : '+(d.default_mode||'vm');
+  vmField('vmHost').innerHTML=(d.hosts||[]).length
+    ? d.hosts.map(h=>'<option value="'+h.id+'">'+h.name+' — '+h.host+'</option>').join('')
+    : '<option value="0">aucune machine marquée vm_host</option>';
+  const m=d.vm_model||{};
+  if(m.host_id){vmField('vmHost').value=String(m.host_id);}
+  vmField('vmImageUrl').value=m.base_image_url||'';
+  vmField('vmImageSha').value=m.base_image_sha256||'';
+  vmField('vmVcpus').value=m.vcpus||d.defaults.vcpus;
+  vmField('vmMem').value=m.memory_mb||d.defaults.memory_mb;
+  vmField('vmDisk').value=m.disk_gb||d.defaults.disk_gb;
+  vmField('vmNet').value=m.network||d.defaults.network;
+  vmField('vmNodePort').value=m.node_port||d.defaults.node_port;
+  vmField('vmBackupPath').value=m.wallet_backup_path||d.defaults.wallet_backup_path;
+  vmField('vmNodeUrl').value=m.node_url||'';
+  vmField('vmNodeSha').value=m.node_sha256||'';
+  vmField('vmNodeBin').value=m.node_binary||'';
+  vmField('vmNodeStart').value=m.node_start_cmd||'';
+  vmField('vmWalletCmd').value=m.wallet_create_cmd||'';
+  vmField('vmState').textContent=m.base_image_name?('modèle : '+m.base_image_name):'aucun modèle enregistré';
+  loadVmList();
+}
+async function saveSpecMode(){
+  const r=await fetch('/api/spec/settings',{method:'PUT',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({default_mode:vmField('specMode').value})});
+  const d=await r.json();
+  if(!r.ok){vmField('specModeState').textContent=d.detail||'refusé';return;}
+  vmField('specModeState').textContent='défaut : '+d.default_mode;
+}
+async function saveVmModel(){
+  const r=await fetch('/api/spec/settings',{method:'PUT',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({vm_model:vmPayload()})});
+  const d=await r.json();
+  if(!r.ok){vmField('vmState').textContent=d.detail||'modèle refusé';return;}
+  vmField('vmState').textContent='modèle : '+((d.vm_model||{}).base_image_name||'enregistré');
+}
+async function checkVmHost(){
+  const id=parseInt(vmField('vmHost').value,10)||0;
+  if(!id){vmField('vmHostReport').textContent='Aucune machine hôte à vérifier.';return;}
+  const r=await fetch('/api/spec/host-check',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({machine_id:id})});
+  const d=await r.json();
+  vmField('vmHostReport').textContent=r.ok?(d.message||''):(d.detail||'contrôle impossible');
+}
+function vmChip(state){return '<span class="chip '+(state==='running'?'running':(state==='destroyed'?'failed':'off'))+'">'+state+'</span>';}
+async function loadVmList(){
+  let rows=[];
+  try{const r=await fetch('/api/vms',{credentials:'include'});if(r.ok){const d=await r.json();rows=Array.isArray(d)?d:(d.vms||[]);}}catch(e){rows=[];}
+  const body=vmField('vmRows');
+  body.innerHTML=rows.map(v=>{
+    const camp=v.campaign?('#'+v.campaign.id+' '+v.campaign.coin):'—';
+    const backup=v.backup?('<span class="chip '+(v.backup.verified?'running':'failed')+'">'+(v.backup.verified?'vérifiée':'refusée')+'</span> <span class="muted" style="font-size:10.5px">'+v.backup.reason+'</span>'):'<span class="muted">jamais contrôlée</span>';
+    return '<tr><td class="mono">'+v.name+'</td><td>'+camp+'</td><td>'+vmChip(v.state)+'</td>'+
+      '<td class="mono">'+(v.ip||'—')+(v.node_address?'<br>'+v.node_address:'')+'</td>'+
+      '<td class="mono">'+v.vcpus+' / '+v.memory_mb+' Mo</td><td>'+backup+'</td>'+
+      '<td><div class="acts">'+
+      '<button class="btn sm ghost" data-vm="'+v.id+'" data-vmact="backup">Contrôle sauvegarde</button>'+
+      '<button class="btn sm" data-vm="'+v.id+'" data-vmact="stop">Éteindre</button>'+
+      '<input id="vmConfirm'+v.id+'" placeholder="DETRUIRE" style="width:92px;font-size:10.5px" autocomplete="off">'+
+      '<button class="btn sm danger" id="vmDestroy'+v.id+'" data-vm="'+v.id+'" data-vmact="destroy" disabled>Détruire</button>'+
+      '</div></td></tr>';
+  }).join('');
+  vmField('vmListWrap').style.display=rows.length?'':'none';
+  vmField('vmEmpty').style.display=rows.length?'none':'';
+  rows.forEach(v=>{
+    const input=document.getElementById('vmConfirm'+v.id);
+    if(input){input.addEventListener('input',()=>{
+      document.getElementById('vmDestroy'+v.id).disabled=input.value.trim().toUpperCase()!=='DETRUIRE';
+    });}
+  });
+}
+async function vmAction(id,verb){
+  const path=verb==='destroy'?'/api/vms/'+id+'/destroy':('/api/vms/'+id+'/'+verb);
+  const body=verb==='destroy'?JSON.stringify({confirm:(document.getElementById('vmConfirm'+id)||{}).value||''}):'{}';
+  const r=await fetch(path,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:body});
+  const d=await r.json();
+  if(!r.ok){alert(d.detail||'action refusée');return;}
+  if(verb==='backup'){alert(d.verified?'Sauvegarde vérifiée : '+(d.reason||''):'Sauvegarde refusée : '+(d.reason||''));}
+  loadVmList();
+}
+document.addEventListener('click',(e)=>{
+  const b=e.target.closest('button[data-vmact]');
+  if(b){vmAction(Number(b.getAttribute('data-vm')),b.getAttribute('data-vmact'));return;}
+  if(e.target.id==='specModeSave'){saveSpecMode();return;}
+  if(e.target.id==='vmSave'){saveVmModel();return;}
+  if(e.target.id==='vmHostCheck'){checkVmHost();return;}
+});
+
 const loadIgpu=async()=>{try{const r=await fetch('/api/power/settings',{credentials:'include'});if(!r.ok)return;const d=await r.json();$('#igpuToggle').checked=!!d.hide_integrated_gpus;$('#igpuState').textContent=d.hide_integrated_gpus?'masqués':'visibles';}catch(e){}};
 $('#igpuSave').addEventListener('click',async()=>{
   const r=await fetch('/api/power/settings',{method:'PUT',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({hide_integrated_gpus:$('#igpuToggle').checked})});

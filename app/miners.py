@@ -26,11 +26,11 @@ LOG_DIR = "/opt/fossor/logs"
 UNIT_DIR = "/etc/systemd/system"
 
 SOFTWARES = ("srbminer", "lolminer", "bzminer", "xmrig", "custom")
-# §4.6: only ``host`` is implemented at step 3a; ``vm``/``hybrid`` come later.
-EXECUTION_MODES = ("host",)
-LATER_MODES = ("vm", "hybrid")
+# §4.6: trois modes depuis 3c — ``host``, ``vm`` et ``hybrid``.
+EXECUTION_MODES = ("host", "vm", "hybrid")
+LATER_MODES: tuple[str, ...] = ()
 
-TEMPLATE_VARS = ("wallet", "pool", "worker", "gpus", "threads", "api_port")
+TEMPLATE_VARS = ("wallet", "pool", "worker", "gpus", "threads", "api_port", "vm_node")
 
 PATTERNS: dict[str, str] = {
     "wallet": r"^[A-Za-z0-9:._-]{8,128}$",
@@ -39,6 +39,8 @@ PATTERNS: dict[str, str] = {
     "gpus": r"^\d+(,\d+)*$",
     "threads": r"^[1-9]\d{0,3}$",
     "api_port": r"^\d{2,5}$",
+    # §4.6 hybride : adresse du nœud de la VM, ``ip:port`` (port 1024-65535).
+    "vm_node": r"^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d):(?:102[4-9]|10[3-9]\d|1[1-9]\d{2}|[2-9]\d{3}|[1-5]\d{4}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5])$",
 }
 
 _RE_URL = re.compile(r"^https?://[A-Za-z0-9._~:/?#@!$&'()*+,;=%-]+$")
@@ -138,11 +140,18 @@ def validate_profile(data: dict[str, Any]) -> dict[str, Any]:
     )
 
     mode = str(data.get("execution_mode") or "host").strip().lower()
-    _require(mode in EXECUTION_MODES or mode in LATER_MODES, "mode d'exécution : host, vm ou hybrid")
-    _require(
-        mode in EXECUTION_MODES,
-        f"mode « {mode} » disponible à l'étape 3c — seul « host » pilote un mineur aujourd'hui",
-    )
+    _require(mode in EXECUTION_MODES, "mode d'exécution : host, vm ou hybrid")
+    uses_vm_node = "vm_node" in template_vars(cmdline)
+    if mode == "hybrid":
+        _require(
+            uses_vm_node,
+            "mode hybride : le gabarit doit se connecter au nœud de la VM avec {vm_node}",
+        )
+    else:
+        _require(
+            not uses_vm_node,
+            f"{{vm_node}} n'a de sens qu'en mode hybride (mode demandé : {mode})",
+        )
 
     api_port = data.get("api_port", 0)
     try:
@@ -230,6 +239,7 @@ def build_values(
     gpus: Iterable[int] = (),
     threads: int | None = None,
     api_port: int | None = None,
+    vm_node: str | None = None,
 ) -> dict[str, str]:
     """Values for the variables a template uses, each one already validated."""
     used = template_vars(profile["cmdline"])
@@ -241,11 +251,14 @@ def build_values(
         "gpus": ",".join(gpu_list),
         "threads": str(threads or profile.get("threads") or 0),
         "api_port": str(api_port if api_port is not None else profile.get("api_port") or 0),
+        "vm_node": str(vm_node or ""),
     }
     values = {k: str(v) for k, v in values.items()}
     for var in sorted(used):
         if var == "gpus" and not gpu_list:
             raise ProfileError("gabarit : {gpus} mais aucun GPU coché sur cette machine")
+        if var == "vm_node" and not values[var]:
+            raise ProfileError("gabarit : {vm_node} requis mais aucun nœud de VM disponible")
         if var in ("threads", "api_port") and values[var] in ("", "0"):
             raise ProfileError(f"gabarit : {{{var}}} requis mais aucune valeur réglée")
         _validated(var, values[var])

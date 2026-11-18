@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app import campaigns as C
 from app import campaign_runner as RUN
+from app import spec_vm as V
 from app.database import get_db
 from app.dependencies import require_login
 from app.models import (
@@ -78,8 +79,38 @@ def _devices(db: Session, campaign_id: int) -> list[dict]:
     ]
 
 
+def _vm_of(db: Session, campaign: Campaign) -> dict | None:
+    """VM jetable rattachée à la campagne — visible dans le Suivi (§4.6)."""
+    from app.models import SpecVm
+
+    row = (
+        db.query(SpecVm)
+        .filter(SpecVm.campaign_id == campaign.id)
+        .order_by(SpecVm.id.desc())
+        .first()
+    )
+    if row is None:
+        return None
+    return {
+        "id": row.id,
+        "name": row.name,
+        "state": row.state,
+        "ip": row.ip,
+        "node_address": f"{row.ip}:{row.node_port}" if row.ip else "",
+        "mode": row.mode,
+        "vcpus": row.vcpus,
+        "memory_mb": row.memory_mb,
+        "disk_gb": row.disk_gb,
+        "wallet_address": row.wallet_address,
+        "backup_path": row.backup_path,
+        "backup_checked_at": row.backup_checked_at,
+        "destroyed_at": row.destroyed_at,
+    }
+
+
 def campaign_to_dict(db: Session, campaign: Campaign) -> dict:
     devices = _devices(db, campaign.id)
+    mode = V.normalize_mode(getattr(campaign, "execution_mode", "") or "", "host")
     profile = db.query(MinerProfile).filter(MinerProfile.id == campaign.profile_id).first()
     hashrate = None
     live_power = None
@@ -122,6 +153,9 @@ def campaign_to_dict(db: Session, campaign: Campaign) -> dict:
         "status": campaign.status,
         "status_label": C.STATUS_LABELS.get(campaign.status, campaign.status),
         "origin": campaign.origin,
+        "execution_mode": mode,
+        "execution_mode_label": V.MODE_LABELS.get(mode, mode),
+        "vm": _vm_of(db, campaign),
         "devices": devices,
         "started_at": campaign.started_at,
         "ended_at": campaign.ended_at,
@@ -194,6 +228,7 @@ def campaign_options(db: Session = Depends(get_db), _user=Depends(require_login)
     """Machines et devices proposables à la création (GPU intégrés masqués)."""
     from app.devices import integrated_hidden
     from app.routers.miners import default_profile_id
+    from app.routers.vms import spec_mode, stored_model as stored_vm_model
 
     hide = integrated_hidden(db)
     machines = db.query(Machine).filter(Machine.enabled == True).order_by(Machine.name.asc()).all()  # noqa: E712
@@ -247,6 +282,10 @@ def campaign_options(db: Session = Depends(get_db), _user=Depends(require_login)
     )
     return {
         "simulation": RUN.simulation_enabled(db),
+        # §4.6 : mode par défaut du spec mining et modes proposés à la création.
+        "default_mode": spec_mode(db),
+        "modes": [{"value": mode, "label": V.MODE_LABELS[mode]} for mode in V.SPEC_MODES],
+        "vm_ready": bool(stored_vm_model(db)),
         "machines": payload,
         "profiles": [
             {
@@ -349,6 +388,10 @@ def create_campaign(data: dict, db: Session = Depends(get_db), _user=Depends(req
     except C.CampaignError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     devices = _clean_devices(db, data.get("devices") or [])
+    try:
+        mode = V.normalize_mode(data.get("execution_mode") or profile.execution_mode, "host")
+    except V.VmError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     campaign = Campaign(
         uuid=str(uuid_lib.uuid4()),
         coin=coin,
@@ -357,6 +400,7 @@ def create_campaign(data: dict, db: Session = Depends(get_db), _user=Depends(req
         end_at=end_at,
         status="proposed",
         origin=str(data.get("origin") or "manual"),
+        execution_mode=mode,
         confirm_overload=bool(data.get("confirm_overload")),
         note=str(data.get("note") or "") or None,
     )
@@ -414,6 +458,12 @@ def update_campaign(
         for item in devices:
             db.add(CampaignDevice(campaign_id=campaign.id, **item))
         changed.append(f"{len(devices)} device(s)")
+    if "execution_mode" in data:
+        try:
+            campaign.execution_mode = V.normalize_mode(data.get("execution_mode"), "host")
+        except V.VmError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        changed.append("mode " + campaign.execution_mode)
     if "confirm_overload" in data:
         campaign.confirm_overload = bool(data["confirm_overload"])
         changed.append("confirmation PSU")

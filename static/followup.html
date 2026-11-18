@@ -63,6 +63,9 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
   <div class="card"><h2>Mineurs GPU / CPU</h2><div id="miners"></div></div>
   <div class="card"><h2>Sondes CPU</h2><div id="cpu"></div></div>
   <div class="card"><h2>Alimentations</h2><div id="psu"></div></div>
+  <div class="card"><h2>VM de la campagne (§4.6)</h2>
+    <div class="sub" style="color:var(--muted);font-size:12px;margin-bottom:8px">VM jetable rattachée à la campagne de cette machine : état, IP, nœud <code>{vm_node}</code>, CPU/RAM. Elle est éteinte et conservée en fin de campagne ; sa destruction reste une action séparée.</div>
+    <div id="vmCards"></div></div>
   <div class="card"><h2>Collecte</h2><div id="collect"></div></div>
 </div>
 <script>
@@ -89,6 +92,32 @@ const fmtT = (t) => (t === null || t === undefined || isNaN(t)) ? "—" : Math.r
 const fmtP = (p) => (p === null || p === undefined || isNaN(p)) ? "—" : Math.round(Number(p)) + " %";
 const fmtAge = (s) => (s === null || s === undefined) ? "jamais" : (s < 90 ? s + " s" : (s < 3600 ? Math.round(s / 60) + " min" : Math.round(s / 3600) + " h"));
 let MACHINES = [];
+let VM_ROWS = [];
+
+function vmCard(v) {
+  const camp = v.campaign ? ("campagne #" + v.campaign.id + " " + v.campaign.coin + " · " + v.campaign.status) : "sans campagne";
+  const backup = v.backup ? (v.backup.verified ? "vérifiée" : "refusée — " + (v.backup.reason || "")) : "jamais contrôlée";
+  return '<div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px" data-vm-card="' + v.id + '">' +
+    '<div class="name mono">' + esc(v.name) + '</div>' +
+    '<div class="mono">' + esc(v.state) + ' · ' + esc(v.ip || "sans IP") + (v.node_address ? " · nœud " + esc(v.node_address) : "") + '</div>' +
+    '<div class="mono">' + v.vcpus + ' vCPU · ' + v.memory_mb + ' Mo · ' + v.disk_gb + ' Go</div>' +
+    '<div class="mono">' + esc(camp) + '</div>' +
+    '<div class="mono">sauvegarde : <span class="chip ' + (v.backup && v.backup.verified ? "on" : "off") + '">' + esc(backup) + '</span></div>' +
+    '<div class="mono">' + esc(v.backup_path || "") + '</div></div>';
+}
+
+async function loadVmCards() {
+  try {
+    const r = await fetch("/api/vms", { credentials: "include" });
+    if (!r.ok) { return; }
+    const data = await r.json();
+    VM_ROWS = Array.isArray(data) ? data : (data.vms || []);
+    $("#vmCards").innerHTML = VM_ROWS.length
+      ? VM_ROWS.slice(0, 8).map(vmCard).join("")
+      : '<div style="color:var(--muted);font-size:13px">Aucune VM créée par Fossor.</div>';
+  } catch (e) { /* silencieux : le Suivi ne casse pas sur une VM */ }
+}
+loadVmCards();
 
 function visibleDevices(m) {
   return (m.devices || []).filter((d) => d.present !== false)
