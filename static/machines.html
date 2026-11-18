@@ -243,7 +243,7 @@ const openPower=async(id)=>{
   const kinds=(d.kinds||[]).map(k=>`<option value="${k.value}"${c.kind===k.value?' selected':''}>${k.label}${k.supported?'':' — non pris en charge'}</option>`).join('');
   box.innerHTML=`<div class="row">
     <div class="field"><label>Type</label><select id="pcKind-${id}">${kinds}</select></div>
-    <div class="field"><label>URL</label><input id="pcUrl-${id}" value="${c.url||''}" placeholder="http://192.0.2.50" style="width:210px"></div>
+    <div class="field"><label>URL</label><input id="pcUrl-${id}" value="${c.url||''}" placeholder="http://shelly-rig.local" style="width:210px"></div>
     <div class="field"><label>Entité switch (HA)</label><input id="pcEntity-${id}" value="${c.entity||''}" style="width:160px"></div>
     <div class="field"><label>Capteur de puissance (HA)</label><input id="pcPowerEntity-${id}" value="${c.power_entity||''}" style="width:160px"></div>
   </div>
