@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026.11.006 — 2026-11-18
+- Aide au choix du token (§4.20) : classement de rentabilité par GPU lu sur WhatToMine
+  (identifiants numériques `/gpus/<id>-<slug>`, revenu recalculé depuis `coins.json` au
+  lieu du `hr=` de la page) et sur Hashrate.no, source **sous clé**
+  (`hashrate_no_api_key`, chiffrée) : sans clé, elle est annoncée désactivée sans
+  émettre aucune requête. État et origine de chaque source exposés par l'API.
+- ASIC en lecture seule (§4.20) : AxeOS (Bitaxe / NerdQaxe, `GET /api/system/info`)
+  vérifié sur une sortie réelle (AxeOS v2.12.2, Gamma 602) ; cgminer / bmminer /
+  BOSminer (API TCP 4028) et IceRiver (KS0 Ultra, `GET /api/overview`) implémentés
+  d'après le format documenté, **non vérifiés** sur une machine et signalés comme tels
+  dans le code et à l'écran.
+- Domaines de hachage inactifs : un domaine à zéro — ou sous 5 % du domaine le plus
+  fort, seuil où AxeOS affiche « 0 » — est compté inactif et nommé dans la santé de la
+  machine.
+- Santé CPU multi-mineurs : chaque mineur du relevé (`cpu.miners[]`) est jugé sur son
+  propre hashrate ; un mineur muet passe la machine en orange avec son nom, au lieu de
+  juger `device.hashrate_hs` (None dès que deux algos tournent, c'est voulu).
+
 ## 2026.11.005-c1 — 2026-11-18
 - Fréquence de vérification : le réglage enregistré (Jamais / 1 h / 6 h / 12 h / 24 h)
   pilote désormais réellement la boucle de vérification ;
