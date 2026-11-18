@@ -193,7 +193,7 @@ tr:last-child td{border-bottom:none}
     if (!options) { return; }
     var select = $("#fProfile");
     select.innerHTML = options.profiles.map(function (p) {
-      return '<option value="' + p.id + '" data-coin="' + p.coin + '">' + p.name + " — " + p.coin + "</option>";
+      return '<option value="' + p.id + '" data-coin="' + p.coin + '" data-mode="' + (p.execution_mode || "host") + '">' + p.name + " — " + p.coin + "</option>";
     }).join("");
     if (options.profiles.length) { $("#fCoin").value = options.profiles[0].coin; }
     var modeSelect = $("#fMode");
@@ -201,7 +201,8 @@ tr:last-child td{border-bottom:none}
     modeSelect.innerHTML = modes.map(function (m) {
       return '<option value="' + m.value + '">' + m.label + "</option>";
     }).join("");
-    modeSelect.value = options.default_mode || "host";
+    var first = options.profiles && options.profiles.length ? options.profiles[0] : null;
+    modeSelect.value = (first && first.execution_mode) || options.default_mode || "host";
     var note = $("#fModeNote");
     if (modes.length > 1) {
       note.textContent = options.vm_ready
@@ -315,6 +316,10 @@ tr:last-child td{border-bottom:none}
   $("#fProfile").addEventListener("change", function () {
     var option = this.options[this.selectedIndex];
     if (option && option.getAttribute("data-coin")) { $("#fCoin").value = option.getAttribute("data-coin"); }
+    if (option && option.getAttribute("data-mode")) { $("#fMode").value = option.getAttribute("data-mode"); }
+    if (state.options && state.options.default_mode) {
+      $("#fModeNote").textContent = "mode du profil appliqué ; défaut du spec mining : " + state.options.default_mode;
+    }
   });
   document.addEventListener("click", function (event) {
     var button = event.target.closest("button[data-act]");

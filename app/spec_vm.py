@@ -411,7 +411,10 @@ def image_plan(model: dict[str, Any]) -> list[VmStep]:
         'echo "IMAGE:present $s"; exit 0; fi; '
         'rm -f "$p" "$p.part"; '
         'if command -v curl >/dev/null 2>&1; then curl -fsSL --max-time 600 -o "$p.part" "$u"; '
-        'else wget -q -O "$p.part" "$u"; fi || exit 4; '
+        'elif command -v wget >/dev/null 2>&1; then wget -q -O "$p.part" "$u"; '
+        'elif command -v python3 >/dev/null 2>&1; then '
+        'python3 -c "import sys,urllib.request; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])" '
+        '"$u" "$p.part"; else echo "IMAGE:no-downloader" >&2; exit 3; fi || exit 4; '
         'echo "$s  $p.part" | sha256sum -c - || { rm -f "$p.part"; exit 5; }; '
         'mv "$p.part" "$p" && echo "IMAGE:downloaded $s"'
     )
@@ -554,7 +557,10 @@ def provision_plan(
 
     download = (
         'if command -v curl >/dev/null 2>&1; then curl -fsSL --max-time 600 -o "$1" "$2"; '
-        'else wget -q -O "$1" "$2"; fi'
+        'elif command -v wget >/dev/null 2>&1; then wget -q -O "$1" "$2"; '
+        'elif command -v python3 >/dev/null 2>&1; then '
+        'python3 -c "import sys,urllib.request; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])" '
+        '"$2" "$1"; else echo "no downloader" >&2; exit 3; fi'
     )
     steps = [
         vm_step("outils de la VM", ip, ["sh", "-c",
