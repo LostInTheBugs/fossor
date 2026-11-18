@@ -642,6 +642,9 @@ async def ssh_collect_stats(machine: Any, actor: str = "system") -> dict[str, An
 
 
 CPU_PROBE_PATH_RE = re.compile(r"^/[A-Za-z0-9_.\-/]{1,300}$")
+#: ``~`` accepté pour la redirection du lanceur d'un script solo (c1).
+CPU_PROBE_LOG_RE = re.compile(r"^~?/[A-Za-z0-9_.\-/]{1,300}$")
+CPU_PROBE_USER_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 #: Relative form accepted for a ``*-cli`` / ``-datadir`` resolved from cwd.
 CPU_PROBE_REL_RE = re.compile(r"^[A-Za-z0-9_.\-/]{1,300}$")
 CPU_PROBE_BIN_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,80}$")
@@ -784,6 +787,25 @@ def cpu_probe_command(probes: dict[str, Any]) -> str:
             f"echo '### NETPS {key}'",
             f"[ -n \"$P\" ] && RD \"$P\"{datadir_arg} getnetworkhashps",
         ]
+        # (b) redirection du lanceur du script solo : « ~/… » est développé
+        # avec le home du compte du processus (getent passwd).  Cette voie ne
+        # dépend pas de /proc/<pid>/fd, réservé au propriétaire et à root.
+        redirect = str(probe.get("redirect") or "")
+        if CPU_PROBE_LOG_RE.match(redirect):
+            user = str(probe.get("redirect_user") or "")
+            if CPU_PROBE_USER_RE.match(user):
+                lines.append(
+                    f"RH=$(RD getent passwd {user} 2>/dev/null | cut -d: -f6)"
+                )
+            else:
+                lines.append('RH="$HOME"')
+            lines += [
+                f"RL='{redirect}'",
+                'case "$RL" in "~/"*) RL="$RH/${RL#\\~/}";; esac',
+                f'echo "### LOGS {key} $RL"',
+                'RD stat -c %Y "$RL" 2>/dev/null',
+                'RD tail -n 80 "$RL" 2>/dev/null',
+            ]
         log_path = str(probe.get("log") or "")
         if CPU_PROBE_PATH_RE.match(log_path):
             lines += [

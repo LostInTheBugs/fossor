@@ -55,7 +55,9 @@ def test_plan_suit_script_puis_lanceur_puis_demon():
     assert node["solo_pids"]["script"][0] == SCRIPT_PID
     assert node["solo_pids"]["parent"] == [LAUNCHER_PID]
     assert node["solo_pids"]["daemon"] == [DAEMON_PID]
-    assert node["pids"] == [SCRIPT_PID, LAUNCHER_PID, DAEMON_PID]
+    assert node["pids"][0] == SCRIPT_PID and node["pids"][-1] == DAEMON_PID
+    assert node["redirect"] == "~/bigcoin-mine/bigcoin/mine.log"
+    assert node["redirect_user"] == "administrator"
     assert [probe["pid"] for probe in probes["fds"]] == node["pids"]
     # Plus aucun nom de log deviné, ni ``*_pid`` de mineur script.
     assert probes["logs"] == []
@@ -68,13 +70,17 @@ def test_commande_de_sonde_suit_les_fd_dans_l_ordre():
     from app.ssh_client import cpu_probe_command
 
     command = cpu_probe_command(plan_cpu_probes(PS))
-    assert f"for p in {SCRIPT_PID} {LAUNCHER_PID} {DAEMON_PID}; do" in command
+    assert f"for p in {SCRIPT_PID} " in command
+    assert f"{DAEMON_PID}; do" in command
     assert "readlink -f /proc/$p/fd/1" in command
     assert "readlink -f /proc/$p/fd/2" in command
+    # (b) la redirection du lanceur, « ~/… » développé par getent passwd.
+    assert "RH=$(RD getent passwd administrator 2>/dev/null | cut -d: -f6)" in command
+    assert "RL='~/bigcoin-mine/bigcoin/mine.log'" in command
+    assert 'case "$RL" in "~/"*)' in command
+    assert 'echo "### LOGS bigcoin $RL"' in command
     assert "mining.log" not in command
     assert "miner.log" not in command
-    # Le démon n'est pas sondé pour son journal avant le script.
-    assert command.index(f"for p in {SCRIPT_PID}") < command.index("/bigcoin")
 
 def probe_output(mtime: int) -> str:
     """Ce que la sonde rend sur la machine : fd/1 du script → ``mine.log``."""
@@ -122,6 +128,31 @@ def test_bout_en_bout_du_ps_au_hashrate():
     assert miner["node"]["height"] == 20353
     assert miner["node"]["difficulty"] == pytest.approx(0.003300662640699338)
     assert miner["node"]["blocks_found"] == 0
+
+
+def test_bout_en_bout_par_la_redirection_du_lanceur():
+    """La voie réelle en prod : ``### LOGS`` (fd du script refusé à fossor)."""
+    from app.cpu_stats import attach_cpu_hashrates, parse_cpu_report, plan_cpu_probes
+    from app.external_miners import detect_solo_miners, parse_ps_rows
+
+    probes = plan_cpu_probes(PS)
+    now = local_epoch_at("21:56:30")
+    text = (
+        "### NODE bigcoin\n"
+        '{"blocks": 20353, "difficulty": 0.003300662640699338, '
+        '"networkhashps": 18400000000, "chain": "main"}\n'
+        "### NETPS bigcoin\n18400000000\n"
+        f"### LOGS bigcoin {LOG_PATH}\n"
+        f"{int(now) - 5}\n" + (FIX / "solo_big_log.txt").read_text()
+    )
+    report = parse_cpu_report(text)
+    miners = detect_solo_miners(parse_ps_rows(PS), {"bigcoin": "BIG"})
+    attach_cpu_hashrates(miners, probes, report, now=now)
+
+    assert miners[0]["hashrate_hs"] == pytest.approx(6952.0)
+    assert miners[0]["workers"] == 11
+    assert miners[0]["hashrate_source"] == "log du script (hashes/s/worker × workers)"
+    assert miners[0]["node"]["log"] == LOG_PATH
 
 
 def test_sans_fd_du_script_le_demon_ne_donne_toujours_pas_de_hashrate():
