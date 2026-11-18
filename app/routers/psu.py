@@ -447,7 +447,7 @@ def evaluate_machine_power(db: Session, machine: Machine, notify: bool = False) 
     cpu_model = (cpu_row or {}).get("model")
     cpu_state: dict[str, Any] = {}
     status_row = (
-        db.query(MachineStatus).filter(MachineStatus.machine_id == machine.id).first()
+        db.query(MachineStatus).filter(MachineStatus.machine_uuid == machine.uuid).first()
     )
     raw_cpu = getattr(status_row, "cpu_json", None) if status_row else None
     if raw_cpu:
