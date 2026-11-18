@@ -9,10 +9,12 @@ Trois familles de pilotes :
 * **cgminer / bmminer / BOSminer** : API TCP 4028, commandes ``summary``,
   ``stats`` et ``pools``.  Couvre Antminer et Whatsminer.  Format **non
   vérifié** (aucune sortie réelle fournie) : parseur tolérant, dernier recours.
-* **IceRiver** (KS0 Ultra, Kaspa) : ``GET /api/overview`` du firmware, tel que
-  documenté par l'apidoc ``iceriver-oc`` (``/api/overview`` -> ``data.model``,
-  ``rtpow``/``avgpow`` + ``unit``, ``pools[]``, ``boards[]``).  Format **non
-  vérifié** sur la machine de Fred.
+* **IceRiver** (KS0 Ultra, Kaspa) : ``POST /user/userpanel`` avec ``post=4``,
+  l'appel que fait l'écran « Miner » du firmware ICM168.  Format **vérifié**
+  sur la réponse réelle d'un KS0 Ultra (``ICM168_3_2_14_ks0ultra``) : ``data``
+  porte ``rtpow``/``avgpow`` + ``unit``, ``runtime`` ``j:h:m:s``, ``fans``,
+  ``fanstate``, ``pools[]`` et ``boards[]``.  **Aucune authentification** et
+  aucun identifiant de pool n'est lu, stocké ni affiché.
 
 Aucun pilotage : ces fonctions ne lisent que des états.
 """
@@ -47,6 +49,15 @@ DRIVER_COIN: dict[str, dict[str, str]] = {
     "iceriver": {"coin": "KAS", "algo": "kHeavyHash"},
 }
 
+#: Nominal par modèle IceRiver (H/s), dans l'ordre de reconnaissance : le
+#: modèle se lit dans ``data.softver1`` (``…_ks0ultra_miner``).  « ks0pro »
+#: contient « ks0 », donc l'ultra puis le pro passent avant le ks0 nu.
+ICERIVER_NOMINALS: dict[str, tuple[str, float]] = {
+    "ks0ultra": ("KS0 Ultra", 400e9),
+    "ks0pro": ("KS0 Pro", 200e9),
+    "ks0": ("KS0", 100e9),
+}
+
 _RATE_UNITS = {"h": 1.0, "kh": 1e3, "mh": 1e6, "gh": 1e9, "th": 1e12, "ph": 1e15}
 
 
@@ -72,6 +83,48 @@ def parse_short_rate(text: str) -> float | None:
         return None
     unit = (match.group(2) or "").lower()
     return number * _RATE_UNITS.get(f"{unit}h", 1.0)
+
+
+def parse_rate(value: Any, unit: str = "") -> float | None:
+    """Débit IceRiver -> H/s, en retombant sur ``unit`` si la valeur est nue.
+
+    Le firmware écrit ``"271G"`` avec ``unit="G"`` ; certains modèles
+    n'écrivent que ``"271"`` : c'est alors ``unit`` qui porte l'échelle.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return None
+    match = re.search(r"([0-9][0-9.,]*)\s*([kKmMgGtTpP]?)", text)
+    if not match:
+        return None
+    number = _num(match.group(1))
+    if number is None:
+        return None
+    letter = (match.group(2) or unit or "").strip()[:1].lower()
+    return number * _RATE_UNITS.get(f"{letter}h", 1.0)
+
+
+def iceriver_model(softver: Any) -> tuple[str, float | None]:
+    """``softver1`` -> (modèle lisible, nominal en H/s)."""
+    text = re.sub(r"[^a-z0-9]", "", str(softver or "").lower())
+    for key, (label, nominal) in ICERIVER_NOMINALS.items():
+        if key in text:
+            return label, nominal
+    return "", None
+
+
+def parse_runtime(text: Any) -> int | None:
+    """``"00:05:20:11"`` (jours:heures:minutes:secondes) -> secondes."""
+    parts = str(text or "").strip().split(":")
+    if len(parts) != 4:
+        return None
+    try:
+        days, hours, minutes, seconds = (int(float(part)) for part in parts)
+    except ValueError:
+        return None
+    if min(days, hours, minutes, seconds) < 0:
+        return None
+    return days * 86400 + hours * 3600 + minutes * 60 + seconds
 
 
 def parse_axeos(payload: dict[str, Any]) -> dict[str, Any]:
@@ -199,58 +252,115 @@ def parse_cgminer(
 
 
 def parse_iceriver(payload: dict[str, Any]) -> dict[str, Any]:
-    """État normalisé d'un IceRiver depuis ``GET /api/overview``.
+    """État normalisé d'un IceRiver depuis ``POST /user/userpanel`` (``post=4``).
 
-    Documenté par l'apidoc ``iceriver-oc`` (KS0) : ``data.rtpow``/``avgpow``
-    avec ``data.unit`` (``G`` = GH/s), ``pools[]`` (``accepted``/``rejected``,
-    ``addr``), ``boards[]`` (``chiptmp``/``intmp``), ``fans[]``.  **Format non
-    vérifié** sur la machine de Fred (IP inconnue à ce jour).
+    Format **vérifié** sur la réponse réelle d'un KS0 Ultra
+    (``ICM168_3_2_14_ks0ultra``) : ``data.rtpow``/``avgpow`` + ``unit``,
+    ``runtime`` ``j:h:m:s``, ``reject`` en %, ``fans[]``/``fanstate``,
+    ``pools[]`` (``connect``, ``accepted``, ``rejected``, ``state``) et
+    ``boards[]`` (``freq``, ``rtpow``, ``avgpow``, ``intmp``, ``outtmp``,
+    ``chipnum``).  Le modèle se lit dans ``softver1``.
+
+    ``pools[].user`` et ``pools[].pass`` ne sont **jamais** lus : ni stockés,
+    ni affichés, ni reversés dans l'état normalisé.
     """
-    data = (payload or {}).get("data") if isinstance((payload or {}).get("data"), dict) else payload or {}
-    unit = str(data.get("unit") or "G").strip() or "G"
-    hashrate = parse_short_rate(f"{data.get('rtpow') or data.get('avgpow') or ''}")
-    if hashrate is None:
-        hashrate = parse_short_rate(f"{data.get('avgpow') or ''}")
-    if hashrate is not None and unit.upper() != "G":
-        hashrate = hashrate * _RATE_UNITS.get(f"{unit.lower()}h", 1.0) / 1e9
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else payload or {}
+    unit = str(data.get("unit") or "").strip() or "G"
+    rt_hs = parse_rate(data.get("rtpow"), unit)
+    avg_hs = parse_rate(data.get("avgpow"), unit)
+    softver = str(data.get("softver1") or "")
+    model, nominal_hs = iceriver_model(softver)
+    reference = avg_hs if avg_hs else rt_hs
+    nominal_pct = None
+    if nominal_hs and reference:
+        nominal_pct = round(100.0 * reference / nominal_hs, 1)
+
     pools = [p for p in (data.get("pools") or []) if isinstance(p, dict)]
-    active = next((p for p in pools if _num(p.get("connect")) or _num(p.get("state"))), pools[0] if pools else {})
+    connected = [p for p in pools if _num(p.get("connect")) == 1]
+    active = connected[0] if connected else (pools[0] if pools else {})
+    pool_host = str(active.get("addr") or "")
+
     boards = [b for b in (data.get("boards") or []) if isinstance(b, dict)]
-    temps = [value for value in (_num(b.get("chiptmp")) for b in boards) if value]
-    fans = [value for value in (_num(v) for v in (data.get("fans") or [])) if value]
+    board_rows = []
+    for board in boards:
+        board_rows.append({
+            "no": _num(board.get("no")),
+            "freq_mhz": _num(board.get("freq")),
+            "rtpow_hs": parse_rate(board.get("rtpow"), unit),
+            "avgpow_hs": parse_rate(board.get("avgpow"), unit),
+            "intmp_c": _num(board.get("intmp")),
+            "outtmp_c": _num(board.get("outtmp")),
+            "chipnum": _num(board.get("chipnum")),
+        })
+    temps = [v for v in (_num(b.get("intmp")) for b in boards) if v is not None]
+    out_temps = [v for v in (_num(b.get("outtmp")) for b in boards) if v is not None]
+    freqs = [v for v in (_num(b.get("freq")) for b in boards) if v]
+    chips = [v for v in (_num(b.get("chipnum")) for b in boards) if v]
+
+    fans = [v for v in (_num(v) for v in (data.get("fans") or [])) if v is not None]
+    fan_state = data.get("fanstate")
+    fans_zero = bool(fans) and not any(v > 0 for v in fans)
+    if fan_state is False:
+        fans_zero = True
+
     accepted = sum(_num(p.get("accepted")) or 0.0 for p in pools) or None
     rejected = sum(_num(p.get("rejected")) or 0.0 for p in pools) or None
+    reject_pct = _num(data.get("reject"))
+    if reject_pct is None and accepted and rejected:
+        reject_pct = round(100.0 * rejected / (accepted + rejected), 3)
+
+    text = f"{pool_host} {softver}".lower()
+    if "kas" in text or model:
+        coin, algorithm = "KAS", "kHeavyHash"
+    else:
+        coin, algorithm = "", ""
+
     return {
         "driver": "iceriver",
-        "online": True,
-        "model": str(data.get("model") or ""),
-        "firmware": str(data.get("softver1") or data.get("firmver1") or ""),
+        "online": bool(data.get("online", True)),
+        "model": model or softver,
+        "firmware": softver,
         "board_version": "",
-        "asic_model": "",
-        "hashrate_hs": hashrate,
-        "hashrate_1h_hs": hashrate,
-        "expected_hashrate_hs": None,
-        "nominal_pct": None,
+        "asic_model": model,
+        "hashrate_hs": rt_hs if rt_hs is not None else avg_hs,
+        "hashrate_1h_hs": avg_hs,
+        "expected_hashrate_hs": nominal_hs,
+        "nominal_hs": nominal_hs,
+        "nominal_pct": nominal_pct,
         "power_w": None,
-        "temp_c": max(temps) if temps else None,
-        "vr_temp_c": _num(boards[0].get("intmp")) if boards else None,
+        "temp_c": max(temps + out_temps) if (temps or out_temps) else None,
+        "vr_temp_c": None,
+        "intemp_c": max(temps) if temps else None,
+        "outtemp_c": max(out_temps) if out_temps else None,
         "fan_rpm": max(fans) if fans else None,
         "fan_pct": None,
-        "pool": str(active.get("addr") or ""),
+        "fan_state": fan_state,
+        "fans": fans,
+        "fans_zero": fans_zero,
+        "freq_mhz": max(freqs) if freqs else None,
+        "chipnum": sum(chips) if chips else None,
+        "boards": board_rows,
+        "pool": pool_host,
         "pool_port": None,
-        "pool_user_masked": _mask_user(active.get("user")),
+        "pool_connected": bool(connected) if pools else None,
+        "pool_priority": _num(active.get("priority")),
         "difficulty": str(active.get("diff") or ""),
         "shares_accepted": accepted,
         "shares_rejected": rejected,
+        "reject_pct": reject_pct,
         "best_diff": None,
         "best_session_diff": None,
-        "uptime_s": None,
+        "uptime_s": parse_runtime(data.get("runtime")),
+        "runtime": str(data.get("runtime") or ""),
+        "powstate": data.get("powstate"),
+        "netstate": data.get("netstate"),
+        "tempstate": data.get("tempstate"),
         "domains_total": 0,
         "domains_inactive": 0,
-        "algorithm": "kHeavyHash",
-        "coin": "KAS",
+        "algorithm": algorithm,
+        "coin": coin,
         "read_only": True,
-        "format_verified": False,
+        "format_verified": True,
     }
 
 
@@ -263,7 +373,12 @@ def driver_from_payload(payload: dict[str, Any]) -> str:
     if "SUMMARY" in payload or "STATS" in payload:
         return "cgminer"
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-    if "rtpow" in data or "avgpow" in data or (data.get("model") and "pools" in data):
+    if "rtpow" in data or "avgpow" in data:
+        return "iceriver"
+    softver = str(data.get("softver1") or "").lower()
+    if softver and "pools" in data and ("ks0" in softver or "iceriver" in softver):
+        return "iceriver"
+    if data.get("model") and "pools" in data and "boards" in data:
         return "iceriver"
     return ""
 
@@ -297,15 +412,32 @@ def limits(values: dict[str, Any] | None = None) -> dict[str, float]:
 def health(state: dict[str, Any] | None, settings: dict[str, Any] | None = None) -> dict[str, Any]:
     """Pastille d'un ASIC : ``green`` / ``orange`` / ``red`` + raison.
 
-    Un domaine de hachage à zéro passe **avant** le seuil de hashrate : c'est
-    le défaut constaté sur les trois Bitaxe de Fred (~75 % du nominal avec un
-    domaine inactif sur quatre).
+    L'ordre est celui du danger : ventilateurs arrêtés, pool déconnecté, puis
+    hashrate sous le nominal.  Un domaine de hachage à zéro passe **avant** le
+    seuil de hashrate : c'est le défaut constaté sur les trois Bitaxe de Fred
+    (~75 % du nominal avec un domaine inactif sur quatre).
     """
     limits_ = limits(settings)
     if not state:
         return {"status": "orange", "reason": "ASIC non interrogé"}
     if not state.get("online"):
         return {"status": "red", "reason": "hors ligne", "detail": state.get("error") or ""}
+    if state.get("fans_zero"):
+        return {
+            "status": "orange",
+            "reason": "ventilateurs à 0 tr/min",
+            "fan_rpm": state.get("fan_rpm"),
+            "nominal_pct": state.get("nominal_pct"),
+        }
+    if state.get("pool_connected") is False:
+        return {
+            "status": "orange",
+            "reason": "pool déconnecté",
+            "nominal_pct": state.get("nominal_pct"),
+        }
+    reject = state.get("reject_pct")
+    if isinstance(reject, (int, float)) and reject > 5.0:
+        return {"status": "orange", "reason": f"rejets {reject:.1f} % du travail"}
     total = int(state.get("domains_total") or 0)
     inactive = int(state.get("domains_inactive") or 0)
     pct = state.get("nominal_pct")

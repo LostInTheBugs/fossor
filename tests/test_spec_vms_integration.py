@@ -49,6 +49,7 @@ exit 0
 echo "virt-install $*" >> "$FOSSOR_STUB_LOG"
 exit 0
 """,
+    # Adresses 192.168.122.0/24 : plage NAT libvirt par défaut.
     "virsh": """#!/bin/bash
 echo "virsh $*" >> "$FOSSOR_STUB_LOG"
 case "$*" in

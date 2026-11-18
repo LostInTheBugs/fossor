@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026.11.007 — 2026-11-18
+- Campagnes en mode `vm` et `hybrid` (§4.6) : modèle de VM jetable, pilote libvirt
+  (création, démarrage, collecte, extinction), VM préfixée `fossor-` et marquée
+  `fossor_vm=1`, refus de destruction sans sauvegarde vérifiée et fraîche, wallet qui ne
+  quitte jamais la VM (adresse et chemin seuls enregistrés).
+- ASIC IceRiver **vérifié sur une réponse réelle** : le pilote interroge
+  `POST /user/userpanel` avec `post=4`, l'appel du firmware `ICM168_3_2_14_ks0ultra`, et
+  non le `GET /api/overview` de l'apidoc — sans authentification. Modèle lu dans
+  `softver1`, nominal par modèle (KS0 Ultra 400 GH/s, KS0 Pro 200, KS0 100), hashrate en
+  H/s, `runtime` j:h:m:s, ventilateurs à 0 tr/min ou `fanstate=false` → orange, pool
+  déconnecté (`connect≠1`) et rejets > 5 % signalés, coin KAS (kHeavyHash).
+  `pools[].user` / `pass` ne sont jamais lus, stockés ni affichés ; cgminer reste
+  déclaré « format non vérifié ».
+
 ## 2026.11.006 — 2026-11-18
 - Aide au choix du token (§4.20) : classement de rentabilité par GPU lu sur WhatToMine
   (identifiants numériques `/gpus/<id>-<slug>`, revenu recalculé depuis `coins.json` au

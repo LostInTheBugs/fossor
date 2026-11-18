@@ -1,8 +1,9 @@
 """Lecture réseau des ASIC (§4.20) — HTTP et TCP 4028, **sans aucun pilotage**.
 
 Toutes les fonctions sont en lecture seule : ``GET /api/system/info`` (AxeOS),
-``GET /api/overview`` (IceRiver) et les commandes ``summary``/``stats``/``pools``
-de l'API cgminer.  Aucune commande d'écriture n'est construite ici.
+``POST /user/userpanel`` avec ``post=4`` (IceRiver, sans authentification) et les
+commandes ``summary``/``stats``/``pools`` de l'API cgminer.  Aucune commande
+d'écriture n'est construite ici ; aucun identifiant de pool n'est lu.
 """
 
 from __future__ import annotations
@@ -84,8 +85,28 @@ async def fetch_axeos(host: str, timeout: float = TIMEOUT_S) -> dict[str, Any]:
 
 
 async def fetch_iceriver(host: str, timeout: float = TIMEOUT_S) -> dict[str, Any]:
-    """``GET /api/overview`` — firmware IceRiver (KS0 & co)."""
-    return await _get_json(_url(host, "/api/overview"), timeout)
+    """``POST /user/userpanel`` avec ``post=4`` — firmware IceRiver ICM168.
+
+    C'est l'appel de l'écran « Miner » du firmware ``ICM168_3_2_14_ks0ultra``
+    (relevé réel sur le KS0 Ultra de Fred) : formulaire ``post=4``, **aucune
+    authentification**, aucune session à ouvrir.  Le format ``GET
+    /api/overview`` de l'apidoc ``iceriver-oc`` n'est pas celui du firmware.
+    """
+    import httpx
+
+    url = _url(host, "/user/userpanel")
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+            response = await client.post(
+                url, data={"post": "4"}, headers={"User-Agent": "Fossor/0.1"}
+            )
+        response.raise_for_status()
+        payload = response.json()
+    except Exception as exc:  # réseau, HTTP, JSON
+        raise AsicError(f"{url} : {exc}") from exc
+    if not isinstance(payload, dict):
+        raise AsicError(f"{url} : réponse inattendue")
+    return payload
 
 
 async def _cgminer_command(reader, writer, command: str, timeout: float) -> dict[str, Any]:

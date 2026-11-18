@@ -1,10 +1,10 @@
 """ASIC (§4.20) — pilotes et santé.
 
-La fixture AxeOS est une réponse **réelle** d'un des Bitaxe de Fred
-(AxeOS v2.12.2, Gamma 602, champs sensibles à ``REDACTED``).  cgminer et
-IceRiver sont écrits d'après leur documentation publique, sans sortie réelle :
-les tests le déclarent (``format_verified``) au lieu de faire croire à une
-mesure.
+Les fixtures AxeOS et IceRiver sont des réponses **réelles** (Bitaxe AxeOS
+v2.12.2 Gamma 602 ; KS0 Ultra ``ICM168_3_2_14_ks0ultra``, ``post=4`` de
+``/user/userpanel``), champs sensibles à ``REDACTED``.  Seul cgminer est écrit
+d'après sa documentation publique, sans sortie réelle : ses tests le déclarent
+(``format_verified``) au lieu de faire croire à une mesure.
 """
 
 from __future__ import annotations
@@ -23,6 +23,16 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 def axeos_state() -> dict:
     payload = json.loads((FIXTURES / "axeos-system-info.json").read_text())
     return asic.parse_axeos(payload)
+
+
+@pytest.fixture()
+def iceriver_payload() -> dict:
+    return json.loads((FIXTURES / "iceriver-userpanel-post4.json").read_text())
+
+
+@pytest.fixture()
+def iceriver_state(iceriver_payload) -> dict:
+    return asic.parse_iceriver(iceriver_payload)
 
 
 def test_axeos_real_fixture_hashrate_pct_and_domain(axeos_state):
@@ -88,44 +98,83 @@ def test_cgminer_parser_is_declared_unverified():
     assert state["format_verified"] is False
 
 
-def test_iceriver_parser_uses_overview_format():
-    payload = {
-        "error": 0,
-        "data": {
-            "model": "KS0",
-            "unit": "G",
-            "rtpow": "150G",
-            "avgpow": "145G",
-            "fans": [1877, 1901, 0, 0],
-            "pools": [{
-                "accepted": 33240.0,
-                "rejected": 7.0,
-                "addr": "stratum+tcp://pool.example:1207",
-                "connect": True,
-                "user": "kaspa:qexampleworker",
-            }],
-            "boards": [{"chiptmp": 67.161591, "intmp": 43.0}],
-        },
-    }
-    state = asic.parse_iceriver(payload)
-    assert state["driver"] == "iceriver"
-    assert state["model"] == "KS0"
-    assert state["hashrate_hs"] == pytest.approx(150e9)
-    assert state["coin"] == "KAS"
-    assert state["algorithm"] == "kHeavyHash"
-    assert state["temp_c"] == pytest.approx(67.161591)
-    assert state["fan_rpm"] == 1901
-    assert state["shares_accepted"] == 33240
-    assert state["format_verified"] is False
+# ── IceRiver KS0 Ultra : fixture réelle ``/user/userpanel`` ``post=4`` ──
+def test_iceriver_real_fixture_hashrate_nominal_and_health(iceriver_state):
+    assert iceriver_state["driver"] == "iceriver"
+    assert iceriver_state["format_verified"] is True
+    # ``rtpow`` en temps réel, ``avgpow`` en moyenne : les deux en H/s.
+    assert iceriver_state["hashrate_hs"] == pytest.approx(271e9)
+    assert iceriver_state["hashrate_1h_hs"] == pytest.approx(245e9)
+    assert iceriver_state["nominal_hs"] == pytest.approx(400e9)  # KS0 Ultra
+    assert iceriver_state["expected_hashrate_hs"] == pytest.approx(400e9)
+    assert iceriver_state["nominal_pct"] == pytest.approx(61.0, abs=0.5)
+    verdict = asic.health(iceriver_state)
+    assert verdict["status"] == "orange"
+    assert verdict["reason"] == "ventilateurs à 0 tr/min"
 
 
-def test_driver_recognition_and_short_rates():
+def test_iceriver_real_fixture_model_boards_runtime_and_pool(iceriver_state):
+    assert iceriver_state["model"] == "KS0 Ultra"
+    assert iceriver_state["firmware"] == "ICM168_3_2_14_ks0ultra_miner"
+    assert iceriver_state["coin"] == "KAS"
+    assert iceriver_state["algorithm"] == "kHeavyHash"
+    assert iceriver_state["runtime"] == "00:05:20:20"
+    assert iceriver_state["uptime_s"] == 19220  # j:h:m:s -> 0 j 5 h 20 min 20 s
+    assert iceriver_state["freq_mhz"] == pytest.approx(875)
+    assert iceriver_state["chipnum"] == pytest.approx(18)
+    assert iceriver_state["fans"] == [0, 0, 0, 0]
+    assert iceriver_state["fan_rpm"] == 0
+    assert iceriver_state["fan_state"] is False
+    assert iceriver_state["intemp_c"] == pytest.approx(36)
+    assert iceriver_state["outtemp_c"] == pytest.approx(29)
+    board = iceriver_state["boards"][0]
+    assert board["freq_mhz"] == pytest.approx(875)
+    assert board["avgpow_hs"] == pytest.approx(245.86e9)
+    assert board["chipnum"] == pytest.approx(18)
+    assert iceriver_state["pool"] == "stratum+tcp://kas.eu1.humpool.com:18083"
+    assert iceriver_state["pool_connected"] is True
+    assert iceriver_state["shares_accepted"] == pytest.approx(296)
+    assert iceriver_state["shares_rejected"] == pytest.approx(1)
+    assert iceriver_state["reject_pct"] == pytest.approx(0.342466)
+
+
+def test_iceriver_state_carries_no_wallet_and_no_redaction(iceriver_state, iceriver_payload):
+    dumped = json.dumps(iceriver_state, ensure_ascii=False)
+    assert "REDACTED" not in dumped
+    assert "user" not in dumped
+    assert "pass" not in dumped
+    # La fixture porte bien des identifiants : le parseur ne les recopie pas.
+    assert any(pool.get("user") for pool in iceriver_payload["data"]["pools"])
+    assert "pools" not in iceriver_state
+
+
+def test_iceriver_without_fans_zero_falls_back_to_nominal(iceriver_state):
+    spinning = dict(iceriver_state, fans_zero=False, fan_state=True, fan_rpm=1877)
+    verdict = asic.health(spinning)
+    assert verdict["status"] == "orange"
+    assert verdict["reason"] == "hashrate à 61 % du nominal"
+    healthy = dict(iceriver_state, fans_zero=False, fan_state=True, nominal_pct=95.0)
+    assert asic.health(healthy)["status"] == "green"
+
+
+def test_iceriver_disconnected_pool_is_orange(iceriver_state):
+    state = dict(iceriver_state, fans_zero=False, nominal_pct=95.0, pool_connected=False)
+    verdict = asic.health(state)
+    assert verdict["status"] == "orange"
+    assert verdict["reason"] == "pool déconnecté"
+
+
+def test_driver_recognition_and_short_rates(iceriver_payload):
     assert asic.driver_from_payload({"hashRate": 1, "expectedHashrate": 2}) == "axeos"
     assert asic.driver_from_payload({"SUMMARY": []}) == "cgminer"
     assert asic.driver_from_payload({"data": {"rtpow": "1T"}}) == "iceriver"
+    assert asic.driver_from_payload(iceriver_payload) == "iceriver"
+    assert asic.state_from_payload(iceriver_payload)["model"] == "KS0 Ultra"
     assert asic.driver_from_payload({}) == ""
     assert asic.parse_short_rate("37.68G") == pytest.approx(37.68e9)
     assert asic.parse_short_rate("1.18T") == pytest.approx(1.18e12)
+    assert asic.parse_rate("271", "G") == pytest.approx(271e9)
+    assert asic.parse_runtime("00:05:20:20") == 19220
 
 
 # ── Santé CPU multi-mineurs (§0.3) ──────────────────────────────────
