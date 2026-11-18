@@ -57,7 +57,7 @@ def installed_version() -> str:
     return VERSION_FILE.read_text().strip()
 
 
-def check_interval() -> int:
+def _env_interval() -> int:
     raw = os.environ.get("FOSSOR_UPDATE_CHECK_INTERVAL")
     if raw is None or raw.strip() == "":
         return DEFAULT_INTERVAL
@@ -65,6 +65,26 @@ def check_interval() -> int:
         return max(0, int(raw))
     except ValueError:
         return DEFAULT_INTERVAL
+
+
+def check_interval() -> int:
+    """Cadence réelle : réglage en base (§4.19), sinon défaut du premier démarrage.
+
+    C'est cette valeur qui pilote la boucle de vérification : changer la
+    fréquence dans l'interface change donc la cadence, la variable
+    d'environnement ne servant plus qu'à amorcer une base neuve.
+    """
+    try:
+        from app import update_settings
+        from app.database import SessionLocal
+
+        db = SessionLocal()
+        try:
+            return int(update_settings.read(db)["check_interval_s"])
+        finally:
+            db.close()
+    except Exception:  # pragma: no cover - base pas encore prête au démarrage
+        return _env_interval()
 
 
 def reset_state() -> None:
