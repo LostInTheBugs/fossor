@@ -567,7 +567,14 @@ def provision_plan(
                 "for t in curl wget tar sha256sum ps; do command -v \"$t\" >/dev/null 2>&1 "
                 "|| echo \"MISSING:$t\"; done; echo OK"]),
         vm_step("répertoires de travail",
-                ip, ["install", "-d", "-m", "0755", INSTALL_DIR, LOG_DIR, RUN_DIR, DATA_DIR]),
+                ip, ["install", "-d", "-m", "0755", INSTALL_DIR, DATA_DIR]),
+        # Le mineur vit sous /opt/fossor (mêmes chemins que sur un hôte) :
+        # specminer a sudo sans mot de passe dans la VM (cloud-init).
+        vm_step("répertoires du mineur dans la VM",
+                ip, ["sudo", "-n", "install", "-d", "-m", "0775", "-o", VM_USER, "-g", VM_USER,
+                     M.RUN_DIR, M.LOG_DIR]),
+        vm_step("racine des binaires du mineur",
+                ip, ["sudo", "-n", "install", "-d", "-m", "0755", M.INSTALL_ROOT]),
     ]
     if model.get("node_url"):
         node_dir = f"{INSTALL_DIR}/node"
@@ -591,7 +598,7 @@ def provision_plan(
     binary_dir = M.install_dir(profile["software"], profile["version"])
     miner_archive = f"{INSTALL_DIR}/miner.tar.gz"
     steps += [
-        vm_step("répertoire du mineur", ip, ["install", "-d", "-m", "0755", binary_dir]),
+        vm_step("répertoire du mineur", ip, ["sudo", "-n", "install", "-d", "-m", "0755", binary_dir]),
         vm_step(
             "téléchargement du mineur dans la VM",
             ip,
@@ -603,9 +610,10 @@ def provision_plan(
             ip,
             ["sh", "-c", 'echo "$2  $1" | sha256sum -c -', "fossor", miner_archive, profile["sha256"]],
         ),
-        vm_step("extraction du mineur", ip, ["tar", "-xzf", miner_archive, "-C", binary_dir],
-                timeout=600),
-        vm_step("binaire du mineur exécutable", ip, ["chmod", "0755", M.binary_path(profile)]),
+        vm_step("extraction du mineur", ip, ["sudo", "-n", "tar", "-xzf", miner_archive,
+                                            "-C", binary_dir], timeout=600),
+        vm_step("binaire du mineur exécutable",
+                ip, ["sudo", "-n", "chmod", "0755", M.binary_path(profile)]),
     ]
     if model.get("wallet_create_cmd"):
         values = {"datadir": DATA_DIR, "coin": coin}
