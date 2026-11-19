@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026.11.009 — 2026-11-19
+
+### 3e — pilotage HiveOS
+
+- **Sonde en lecture seule** : le bouton « Sonder » interroge un rig HiveOS sans rien
+  y modifier, via une commande dédiée en liste blanche.
+- **Pilotage des mineurs** : `miner stop` / `miner start` avec retour vérifié après
+  chaque commande.
+- **Watchdog HiveOS** : refusé par défaut ; l'option `wd stop` / `wd start` doit être
+  validée explicitement.
+- **Campagnes** : la campagne partielle est refusée, ainsi que le mode « réduire » sur
+  HiveOS — le boost utilise toujours tous les GPU.
+- **Périmètre** : les mineurs hors HiveOS ne sont jamais touchés.
+
+### Correctif
+
+- **Découpage de la sonde** : un JSON sans saut de ligne final est désormais découpé
+  correctement.
+
 ## 2026.11.008 — 2026-11-18
 
 ### ASIC — IceRiver en HTTPS avec connexion, affichage, puissance mesurée
