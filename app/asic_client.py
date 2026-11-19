@@ -61,6 +61,10 @@ class IceRiverSessionError(AsicError):
     """
 
 
+class IceRiverLegacyFirmware(AsicError):
+    """Le panneau ne sert pas ``/overview`` : firmware ICM168, repli ``post=4``."""
+
+
 def clean_host(value: str) -> str:
     """Nettoie et valide une cible : IP (v4/v6) ou nom d'hôte, port optionnel.
 
@@ -421,15 +425,25 @@ async def _overview_flow(
     except (AsicAuthError, IceRiverSessionError):
         raise
     except AsicError as exc:
-        # Panneau sans cookie : ancien firmware (pas de /overview) ou session
-        # refusée sur un firmware qui a /overview.  C'est /overview qui tranche.
+        # ``GET /`` n'a pas ouvert de session : ``/overview`` tranche entre
+        # session absente (panneau réel) et firmware qui ignore ``GET``.
         _payload, failure = await _read_overview(session, base)
+        if _payload is not None:
+            return {"payload": _payload, "steps": [str(exc)]}
         if failure.startswith("/overview : 404"):
-            raise
-        raise IceRiverSessionError(f"{exc} ; {failure}") from exc
+            # Panneau sans /overview (ICM168) : l'appelant tente ``post=4``.
+            raise IceRiverLegacyFirmware(f"{exc} ; {failure}") from exc
+        if "loginpage" in str(exc) or "notfound" in str(exc):
+            # Page de connexion servie : panneau IceRiver, session absente.
+            raise IceRiverSessionError(f"{exc} ; {failure}") from exc
+        # 405/404 sur ``GET /`` : GET ignoré par l'ancien firmware.
+        raise IceRiverLegacyFirmware(f"{exc} ; {failure}") from exc
     payload, failure = await _read_overview(session, panel_base)
     if payload is not None:
         return {"payload": payload, "steps": steps}
+    if failure.startswith("/overview : 404"):
+        # Firmware sans /overview : le panneau ``post=4`` reste la source.
+        raise IceRiverLegacyFirmware(f"{' ; '.join(steps)} ; {failure}")
     steps.append(failure)
     more, panel_base = await _open_panel(session, base, username, password)
     steps.extend(more)
@@ -504,8 +518,11 @@ async def iceriver_probe(
                 opened = await _overview_flow(session, base, username, password)
             except (AsicAuthError, IceRiverSessionError):
                 raise
+            except IceRiverLegacyFirmware as exc:
+                # Firmware sans /overview : repli ``post=4`` ci-dessous.
+                steps.append(str(exc))
             except AsicError:
-                # Pas de session, pas de /overview : ancien firmware ci-dessous.
+                # Pas de session posée : ancien firmware ci-dessous.
                 pass
             else:
                 certificate = _observed_certificate(session, host)
@@ -700,9 +717,10 @@ async def detect(
 ) -> dict[str, Any]:
     """Sonde en lecture seule : reconnaît le pilote d'un ASIC.
 
-    IceRiver est reconnu **avant** AxeOS (le firmware ICM168 en HTTPS répond à
-    ``/user/userpanel`` par la page de connexion, pas par du JSON).  L'échec
-    d'un pilote passe au suivant ; aucun ne fait échouer la détection entière.
+    IceRiver est reconnu **avant** AxeOS : l'identité ``GET /`` d'abord, puis
+    le panneau ``POST /user/userpanel`` (``post=4``) de l'ancien firmware, qui
+    répond 405 à tout ``GET``.  Un panneau reconnu ne bascule jamais sur AxeOS ;
+    l'échec d'un autre pilote passe au suivant.
     """
     errors: list[str] = []
     try:
@@ -710,10 +728,7 @@ async def detect(
     except AsicError as exc:
         errors.append(str(exc))
         is_iceriver = False
-    if is_iceriver:
-        # Un panneau IceRiver n'expose pas /api/system/info : **aucun** repli
-        # AxeOS, même quand la lecture échoue — l'erreur dit où ça coince.
-        found = await iceriver_probe(host, username, password, cert_sha256, timeout)
+    def _iceriver_result(found: dict[str, Any]) -> dict[str, Any]:
         return {
             "driver": "iceriver",
             "state": iceriver_state(found),
@@ -723,6 +738,24 @@ async def detect(
             "cert_sha256": found.get("cert_sha256"),
             "errors": errors,
         }
+
+    if is_iceriver:
+        # Un panneau IceRiver n'expose pas /api/system/info : **aucun** repli
+        # AxeOS, même quand la lecture échoue — l'erreur dit où ça coince.
+        found = await iceriver_probe(host, username, password, cert_sha256, timeout)
+        return _iceriver_result(found)
+    # ``GET /`` n'a pas répondu comme un panneau à session.  L'ancien firmware
+    # ICM168 ne sert que ``POST /user/userpanel`` (``post=4``) et renvoie 405
+    # sur tout GET : c'est sa réponse JSON qui l'identifie, **avant** AxeOS.
+    try:
+        legacy = await iceriver_probe(host, username, password, cert_sha256, timeout)
+    except (AsicAuthError, IceRiverSessionError):
+        # Page de connexion / session refusée : c'est un panneau, pas un AxeOS.
+        raise
+    except AsicError as exc:
+        errors.append(str(exc))
+    else:
+        return _iceriver_result(legacy)
     try:
         payload = await fetch_axeos(host, timeout)
         state = asic.parse_axeos(payload)
