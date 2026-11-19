@@ -332,12 +332,32 @@ class PveBackend:
             simulated=simulated,
         )
 
+    async def ensure_owned_live(self, host: Any, model: dict, row: Any) -> dict:
+        """Propriété relue sur le nœud : plage, tag ``fossor``, ``fossor_vm=1``."""
+        from app import pve_remote as PR
+        from app import pve_vm as P
+
+        vmid = self.vmid_of(row)
+        config = await PR.config(host, vmid, simulated=False)
+        try:
+            P.ensure_owned(
+                vmid, model["vmid_min"], model["vmid_max"],
+                config.get("tags") or [], config.get("description") or "",
+            )
+        except P.VmError as exc:
+            raise VmBackendError(str(exc))
+        return config
+
     async def shutdown(self, host: Any, model: dict, row: Any, simulated: bool) -> dict:
         from app import pve_remote as PR
 
         vmid = int(getattr(row, "vmid", 0) or 0)
         if vmid <= 0 and not simulated:
             raise VmBackendError("VMID inconnu : extinction Proxmox impossible.")
+        if not simulated:
+            # Garde-fous avant toute commande : une VM hors plage, sans tag ou
+            # sans ``fossor_vm=1`` n'est pas arrêtée (constat n°4).
+            await self.ensure_owned_live(host, model, row)
         return await PR.shutdown(host, vmid, simulated=simulated)
 
     async def destroy(self, host: Any, model: dict, row: Any, *, backup: dict | None,

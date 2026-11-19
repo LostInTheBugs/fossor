@@ -466,9 +466,33 @@ async def stop(
     parsed = parse_probe(probe.get("stdout", ""))
 
     if parsed.get("systemd"):
-        for step in systemd_steps:
+        for index, step in enumerate(systemd_steps):
+            if index == 0:
+                # L'unité peut être absente sur cette cible (code 5, « not
+                # loaded ») : c'est « rien à arrêter », pas un échec (constat n°2).
+                step = Step(step.title, step.argv, allow_fail=True, timeout=step.timeout)
             result = await _run(machine, step)
             executed.append(step.command())
+            if index == 0 and int(result.get("status") or 0) != 0:
+                detail = (result.get("stderr") or result.get("stdout") or "").strip()
+                lowered = detail.lower()
+                absent = (
+                    int(result.get("status") or 0) == 5
+                    or "not loaded" in lowered
+                    or "not found" in lowered
+                    or "could not be found" in lowered
+                )
+                if not absent:
+                    raise MinerError(f"{step.title} : code {result.get('status')} — {detail[:300]}")
+                executed.append(f"# unité {unit} absente : rien à arrêter")
+                return {
+                    "simulated": False,
+                    "ok": True,
+                    "mode": "systemd",
+                    "commands": executed,
+                    "note": f"unité {unit} absente : rien à arrêter",
+                    "status": await _status(machine, profile, unit, user, executed),
+                }
             if step.title == "état après arrêt":
                 state = (result.get("stdout") or "").strip()
                 executed.append(f"# état après arrêt : {state}")

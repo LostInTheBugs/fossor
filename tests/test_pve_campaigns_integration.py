@@ -228,7 +228,10 @@ async def main():
         if server.export_public_key().decode().split()[1] != expected:
             sys.stderr.write("ssh: cle d'hote differente de la cle epinglee\\n")
             return 255
-        result = await conn.run(shlex.join(rest), check=False)
+        # Même sémantique que ``ssh`` : les arguments sont recollés par une
+        # espace, sans réencodage (le shell local a déjà retiré les guillemets).
+        # ``shlex.join`` ici re-quotait la commande et masquait le défaut réel.
+        result = await conn.run(" ".join(rest), check=False)
         sys.stdout.write(result.stdout or "")
         sys.stderr.write(result.stderr or "")
         return result.exit_status
@@ -577,6 +580,92 @@ class TestCampagneProxmoxReelle:
             assert str(vm.vmid) not in json.loads(harness["state"].read_text())
 
             _journal(db, campaign.id)
+        finally:
+            db.close()
+
+
+class TestCorrectifsDuTestReel:
+    """N°1 et n°4 : l'argv ``sh -c 'for…; do…; done'`` survit, et l'API détruit.
+
+    La campagne réelle exécute le pas « outils de la VM » (``sh -c "for t in
+    curl wget …; do …; done"``) : avant le réencodage, ce pas cassait la
+    campagne. La destruction passe ensuite par la route
+    ``POST /api/vms/{id}/destroy`` — pas par le pilote directement.
+    """
+
+    async def test_argv_sh_c_reel_puis_destruction_par_api(self, harness, monkeypatch):
+        import shlex
+        import time
+        from pathlib import Path
+
+        from app import campaign_runner as RUN
+        from app.ai_config import set_setting
+        from app.models import CampaignEvent, SpecVm
+        from app.routers import vms as R
+
+        # La route lit le réglage de simulation : ici on veut le chemin réel.
+        monkeypatch.setattr(R, "simulation_enabled", lambda db: False)
+
+        db = _db()
+        try:
+            campaign, host, model = _seed(db, harness)
+            set_setting(db, "spec_host_id", host.id)
+
+            print("\n### ETAPE 1 — campagne réelle (argv sh -c dans la VM)")
+            await RUN.tick(db, now=RUN.C.now_utc(), simulated=False)
+            db.refresh(campaign)
+            print(f"campagne #{campaign.id} statut={campaign.status} note={campaign.note}")
+            assert campaign.status == "running", campaign.note
+
+            vm = db.query(SpecVm).filter(SpecVm.campaign_id == campaign.id).one()
+            provision = (
+                db.query(CampaignEvent)
+                .filter(CampaignEvent.campaign_id == campaign.id,
+                        CampaignEvent.kind == "vm-provisioned")
+                .one()
+            )
+            print("### vm-provisioned:", provision.result, provision.message)
+            detail = str(provision.detail or "")
+            assert provision.result == "ok", detail
+            assert "for t in curl wget tar sha256sum ps; do" in detail, detail
+            # La boucle est passée en **une** chaîne citée, pas en morceaux.
+            loop = next(c for c in json.loads(detail)["commands"] if "for t in" in c)
+            print("### commande réelle:", loop)
+            assert shlex.split(loop)[-1].startswith("sh -c 'for t in"), loop
+
+            print("\n### ETAPE 2 — sauvegarde puis destruction par /api/vms/{id}/destroy")
+            from app import pve_remote as PR
+
+            await _guest(f"install -d -m 0755 /home/{SSH_USER}/data && printf wallet > /home/{SSH_USER}/data/wallet.dat")
+            verdict = await PR.check_backup(
+                host, vm.ip, f"/home/{SSH_USER}/data/wallet.dat",
+                now_epoch=int(time.time()), max_age_days=7, simulated=False,
+            )
+            print("verdict sauvegarde:", json.dumps(verdict))
+            assert verdict["verified"] is True
+            vm.backup_state = json.dumps(verdict)
+            db.commit()
+
+            vz = Path(harness["state"]).parent / "vz"
+            snippets = sorted(p.name for p in (vz / "snippets").glob("fossor-user-*.yaml"))
+            print("snippets avant destruction:", snippets)
+            assert f"fossor-user-{vm.vmid}.yaml" in snippets, snippets
+
+            result = await R.destroy_vm(
+                vm.id, {"confirm": R.DESTROY_WORD}, db=db, user="integration"
+            )
+            print("destruction:", json.dumps({k: v for k, v in result.items() if k != "commands"}))
+            for command in result.get("commands") or []:
+                print("  $", command)
+
+            state = json.loads(Path(harness["state"]).read_text())
+            assert str(vm.vmid) not in state
+            after = sorted(p.name for p in (vz / "snippets").glob("fossor-user-*.yaml"))
+            print("snippets après destruction:", after)
+            assert f"fossor-user-{vm.vmid}.yaml" not in after, after
+            db.refresh(vm)
+            print("VM en base:", vm.state, vm.destroyed_at)
+            assert vm.state == "destroyed"
         finally:
             db.close()
 

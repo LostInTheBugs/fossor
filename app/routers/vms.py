@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app import vm_backend as VB
 from app import spec_vm as V
 from app import vm_remote as VR
 from app.ai_config import get_setting, set_setting
@@ -89,6 +90,46 @@ def _vm(db: Session, vm_id: int) -> SpecVm:
     if row is None:
         raise HTTPException(status_code=404, detail="VM introuvable")
     return row
+
+
+def _vm_backend(db: Session, row: SpecVm):
+    """Fabrique de backend : une VM Proxmox se pilote par le pilote Proxmox.
+
+    Constat n°4 : les routes ``/api/vms/*`` appelaient directement
+    :mod:`app.vm_remote` (libvirt), donc une VM créée par une campagne
+    Proxmox n'était ni collectée, ni éteinte, ni détruite.
+    """
+    from app import vm_backend as VB
+
+    machine = db.query(Machine).filter(Machine.id == row.host_machine_id).first()
+    if machine is None:
+        raise HTTPException(status_code=400, detail="Machine hôte introuvable")
+    backend = VB.backend_for_host(machine)
+    stored_kind = (getattr(row, "hypervisor", "") or "libvirt").strip().lower()
+    if stored_kind != backend.kind:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"VM enregistrée comme « {stored_kind} » sur un hôte « {backend.kind} » "
+                "— pilote refusé."
+            ),
+        )
+    raw = backend.load_model(db)
+    if not raw:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Aucun modèle de VM {backend.kind} enregistré pour {machine.name}",
+        )
+    try:
+        model = backend.validate(raw)
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail=f"Modèle de VM invalide : {exc}")
+    if int(model.get("host_id") or 0) != int(machine.id):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Le modèle de VM ne désigne pas {machine.name} — réenregistrez-le",
+        )
+    return machine, backend, model
 
 
 def vm_to_dict(db: Session, row: SpecVm) -> dict:
@@ -256,9 +297,7 @@ def read_vm(vm_id: int, db: Session = Depends(get_db), _user=Depends(require_log
 @router.get("/vms/{vm_id}/collect")
 async def collect_vm(vm_id: int, db: Session = Depends(get_db), _user=Depends(require_login)):
     row = _vm(db, vm_id)
-    machine = db.query(Machine).filter(Machine.id == row.host_machine_id).first()
-    if machine is None:
-        raise HTTPException(status_code=400, detail="Machine hôte introuvable")
+    machine, backend, model = _vm_backend(db, row)
     simulated = simulation_enabled(db)
     from app.routers.miners import profile_to_dict
     from app.models import MinerProfile
@@ -269,7 +308,10 @@ async def collect_vm(vm_id: int, db: Session = Depends(get_db), _user=Depends(re
         if campaign is not None:
             found = db.query(MinerProfile).filter(MinerProfile.id == campaign.profile_id).first()
             profile = profile_to_dict(found) if found is not None else None
-    result = await VR.collect(machine, row.name, row.ip, profile, simulated=simulated)
+    try:
+        result = await backend.collect(machine, model, row, profile, simulated)
+    except VB.VmBackendError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     if not simulated and result.get("state"):
         row.state = "running" if result["state"] == "running" else result["state"]
         row.updated_at = datetime.now(timezone.utc).isoformat()
@@ -281,15 +323,14 @@ async def collect_vm(vm_id: int, db: Session = Depends(get_db), _user=Depends(re
 async def check_backup(vm_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
     """§10.11 : le fichier existe, n'est pas vide et est récent — jamais lu."""
     row = _vm(db, vm_id)
-    machine = db.query(Machine).filter(Machine.id == row.host_machine_id).first()
-    if machine is None:
-        raise HTTPException(status_code=400, detail="Machine hôte introuvable")
     if not row.backup_path:
         raise HTTPException(status_code=400, detail="Aucun chemin de sauvegarde enregistré")
+    machine, backend, model = _vm_backend(db, row)
     simulated = simulation_enabled(db)
-    verdict = await VR.check_backup(
+    verdict = await backend.check_backup(
         machine,
-        row.ip,
+        model,
+        row,
         row.backup_path,
         now_epoch=int(time.time()),
         max_age_days=backup_max_age_days(db),
@@ -314,12 +355,10 @@ async def check_backup(vm_id: int, db: Session = Depends(get_db), user=Depends(r
 async def stop_vm(vm_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
     """Éteint la VM **en la conservant** : le wallet y est."""
     row = _vm(db, vm_id)
-    machine = db.query(Machine).filter(Machine.id == row.host_machine_id).first()
-    if machine is None:
-        raise HTTPException(status_code=400, detail="Machine hôte introuvable")
+    machine, backend, model = _vm_backend(db, row)
     simulated = simulation_enabled(db)
-    if not simulated:
-        live = await VR.list_vms(machine, simulated=False)
+    if not simulated and backend.kind == "libvirt":
+        live = await backend.list(machine, simulated=False)
         found = next((item for item in live["vms"] if item["name"] == row.name), None)
         if found is None:
             raise HTTPException(status_code=404, detail="VM absente de l'hôte")
@@ -327,7 +366,10 @@ async def stop_vm(vm_id: int, db: Session = Depends(get_db), user=Depends(requir
             V.ensure_owned(found["name"], found["description"])
         except V.VmError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
-    result = await VR.shutdown(machine, row.name, simulated=simulated)
+    try:
+        result = await backend.shutdown(machine, model, row, simulated=simulated)
+    except (V.VmError, VB.VmBackendError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     if not simulated:
         row.state = "shut off"
         db.commit()
@@ -344,9 +386,7 @@ async def destroy_vm(vm_id: int, data: dict, db: Session = Depends(get_db), user
             status_code=400,
             detail=f"Destruction refusée : saisissez « {DESTROY_WORD} » pour confirmer",
         )
-    machine = db.query(Machine).filter(Machine.id == row.host_machine_id).first()
-    if machine is None:
-        raise HTTPException(status_code=400, detail="Machine hôte introuvable")
+    machine, backend, model = _vm_backend(db, row)
     backup = None
     if row.backup_state:
         try:
@@ -354,24 +394,17 @@ async def destroy_vm(vm_id: int, data: dict, db: Session = Depends(get_db), user
         except (TypeError, ValueError):
             backup = None
     simulated = simulation_enabled(db)
-    description = V.OWNER_MARKER
-    if not simulated:
-        live = await VR.list_vms(machine, simulated=False)
-        found = next((item for item in live["vms"] if item["name"] == row.name), None)
-        if found is None:
-            raise HTTPException(status_code=404, detail="VM absente de l'hôte")
-        description = found["description"]
     try:
-        result = await VR.destroy(
+        result = await backend.destroy(
             machine,
-            row.name,
-            description,
+            model,
+            row,
             backup=backup,
             now_epoch=int(time.time()),
             max_age_days=backup_max_age_days(db),
             simulated=simulated,
         )
-    except V.VmError as exc:
+    except (V.VmError, VB.VmBackendError) as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     if not simulated:
         row.state = "destroyed"

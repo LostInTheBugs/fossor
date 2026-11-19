@@ -383,7 +383,9 @@ async def destroy(
         int(vmid), model["vmid_min"], model["vmid_max"], tags, description,
         backup, now_epoch, max_age_days,
     )
-    plan = P.destroy_plan(vmid)
+    # La VM emporte son snippet cloud-init ``fossor-user-<vmid>.yaml`` : le
+    # laisser dans ``snippets/`` est un résidu du test réel (voir RAPPORT).
+    plan = P.destroy_plan(vmid) + P.snippet_remove_plan(model, vmid)
     if simulated:
         return _simulated(plan, {"destroyed": False})
     commands: list[str] = []

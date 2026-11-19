@@ -59,6 +59,24 @@ def _get(db: Session, campaign_id: int) -> Campaign:
     return campaign
 
 
+def _vm_ready(db: Session) -> bool:
+    """Modèle **de l'hôte choisi** (Proxmox ou libvirt) enregistré.
+
+    Constat n°3 : ``stored_vm_model`` ne lisait que le modèle libvirt, donc un
+    hôte Proxmox correctement configuré affichait « vm / hybrid exigent un
+    modèle de VM ».
+    """
+    from app import vm_backend as VB
+
+    try:
+        host = VB.spec_host(db)
+        if host is None:
+            return False
+        return bool(VB.backend_for_host(host).load_model(db))
+    except Exception:
+        return False
+
+
 def _devices(db: Session, campaign_id: int) -> list[dict]:
     rows = (
         db.query(CampaignDevice, Machine)
@@ -228,7 +246,7 @@ def campaign_options(db: Session = Depends(get_db), _user=Depends(require_login)
     """Machines et devices proposables à la création (GPU intégrés masqués)."""
     from app.devices import integrated_hidden
     from app.routers.miners import default_profile_id
-    from app.routers.vms import spec_mode, stored_model as stored_vm_model
+    from app.routers.vms import spec_mode
 
     hide = integrated_hidden(db)
     machines = db.query(Machine).filter(Machine.enabled == True).order_by(Machine.name.asc()).all()  # noqa: E712
@@ -285,7 +303,7 @@ def campaign_options(db: Session = Depends(get_db), _user=Depends(require_login)
         # §4.6 : mode par défaut du spec mining et modes proposés à la création.
         "default_mode": spec_mode(db),
         "modes": [{"value": mode, "label": V.MODE_LABELS[mode]} for mode in V.SPEC_MODES],
-        "vm_ready": bool(stored_vm_model(db)),
+        "vm_ready": _vm_ready(db),
         "machines": payload,
         "profiles": [
             {

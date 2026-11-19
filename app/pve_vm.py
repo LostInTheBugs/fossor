@@ -570,6 +570,30 @@ def snippet_name(vmid: int) -> str:
     return f"{SNIPPET_PREFIX}-{int(vmid)}.yaml"
 
 
+def snippet_remove_plan(model: dict[str, Any], vmid: int) -> list[VmStep]:
+    """Supprime le snippet cloud-init de la VM, même stockage que l'écriture.
+
+    Le dossier est résolu par ``pvesh`` (champ ``path``) : jamais ``/var/lib/vz``
+    en dur. Un fichier déjà absent n'échoue pas (``allow_fail``) : la
+    destruction de la VM, elle, est déjà faite.
+    """
+    script = (
+        's="$1"; f="$2"; b=""; '
+        'b=$(pvesh get "/storage/$s" --output-format json 2>/dev/null '
+        "| sed -n 's/.*\"path\":\"\\([^\"]*\\)\".*/\\1/p'); "
+        '[ -n "$b" ] || b="' + LOCAL_SNIPPET_DIR.rsplit("/snippets", 1)[0] + '"; '
+        'rm -f -- "$b/snippets/$f" && echo "SNIPPET_REMOVED:$b/snippets/$f"'
+    )
+    return [
+        VmStep(
+            "suppression du snippet cloud-init",
+            _sh(script, model["ci_storage"], snippet_name(vmid)),
+            allow_fail=True,
+            timeout=60,
+        )
+    ]
+
+
 def cicustom_value(model: dict[str, Any], vmid: int) -> str:
     """Référence ``<stockage>:snippets/<fichier>`` passée à ``qm set --cicustom``."""
     return f"{model['ci_storage']}:snippets/{snippet_name(vmid)}"
@@ -886,7 +910,10 @@ def ssh_vm_argv(
         "-o", f"UserKnownHostsFile={KNOWN_HOSTS}",
         "-o", "ConnectTimeout=10",
         f"{VM_USER}@{target}{scope}",
-        *argv,
+        # Même réencodage que côté libvirt : ssh recolle ses arguments par une
+        # espace, le shell distant les redécoupe. Sans ``shlex.join``, un
+        # ``sh -c 'for t in a b; …'`` perd son argv (constat n°1).
+        shlex.join(list(argv)),
     )
 
 

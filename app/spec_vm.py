@@ -537,7 +537,11 @@ def ssh_vm_argv(ip: str, argv: list[str] | tuple[str, ...]) -> tuple[str, ...]:
         "-o", f"UserKnownHostsFile={KNOWN_HOSTS}",
         "-o", "ConnectTimeout=10",
         f"{VM_USER}@{ip}",
-        *argv,
+        # ``ssh`` recolle ses arguments par une espace et le shell distant les
+        # redécoupe : sans réencodage, ``sh -c 'for t in a b; do …; done'``
+        # arrive en morceaux (constat n°1 du test réel). Une seule chaîne
+        # citée rend l'argv intact.
+        shlex.join(list(argv)),
     )
 
 

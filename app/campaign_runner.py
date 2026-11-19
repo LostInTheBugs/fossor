@@ -299,6 +299,10 @@ async def _spec_start_steps(
         try:
             if mode == "vm":
                 target = targets[0] if targets else Target(machine=host)
+                # Hôte Proxmox sans device détecté : la cible est l'hôte de
+                # spec et le CPU vient du modèle (vCPU), pas d'un device.
+                if not target.device_uuids:
+                    target.threads = int(model.get("vcpus") or target.threads or 1)
                 argv = render_argv(profile, host, target)
                 result = await vm.start_miner(host, model, profile, argv, row, simulated)
                 commands.extend(result.get("commands") or [])
@@ -760,12 +764,27 @@ async def _start(db: Any, campaign: Any, moment: datetime, backend: Any, simulat
             db.commit()
 
     # 1. Arrêt de ce que **Fossor** fait tourner sur ces devices.
+    mode = campaign_mode(db, campaign, profile)
+    spec_host_machine = None
+    if mode in ("vm", "hybrid"):
+        from app import vm_backend as VB
+
+        try:
+            spec_host_machine = VB.backend_for(db).host
+        except VB.VmBackendError:
+            spec_host_machine = None
     if not _step_done(db, campaign, "default-stopped"):
         commands: list[str] = []
         stopped: list[str] = []
+        skipped: list[str] = []
         for target in targets:
             if HV.is_hiveos(target.machine):
                 continue  # le minage de ce rig est tenu par HiveOS, pas par un profil Fossor
+            if spec_host_machine is not None and int(target.machine.id) == int(spec_host_machine.id):
+                # Mode vm/hybrid : l'hôte de spec n'est pas une cible du token
+                # par défaut, on n'y arrête rien (constat n°2).
+                skipped.append(target.machine.name)
+                continue
             default_row = default_profile_for(db, target.machine)
             if default_row is None:
                 continue
@@ -778,12 +797,11 @@ async def _start(db: Any, campaign: Any, moment: datetime, backend: Any, simulat
             "default-stopped",
             "token par défaut arrêté" if stopped else "aucun token par défaut à arrêter",
             simulated=simulated,
-            detail={"machines": stopped, "commands": commands},
+            detail={"machines": stopped, "skipped": skipped, "commands": commands},
         )
         db.commit()
 
     # 2. Démarrage du profil de la campagne (§4.6 : vm / hybrid / host).
-    mode = campaign_mode(db, campaign, profile)
     if mode in ("vm", "hybrid"):
         failure = await _spec_start_steps(db, campaign, moment, backend, simulated, mode, profile, targets)
         if failure is not None:

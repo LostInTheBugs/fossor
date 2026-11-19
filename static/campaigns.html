@@ -209,7 +209,11 @@ tr:last-child td{border-bottom:none}
         ? "vm / hybrid : VM jetable créée depuis le modèle de la Configuration."
         : "vm / hybrid exigent un modèle de VM (Configuration → Spec mining) : sans lui, la campagne échouera au démarrage.";
     }
-    $("#fDevices").innerHTML = options.machines.map(function (m) {
+    // Les hôtes sans device détecté passent **après** : le premier cochable
+    // reste un vrai device (mode hôte), l'hôte de spec n'est proposé qu'en vm.
+    var blocks = [];
+    var extra = [];
+    options.machines.forEach(function (m) {
       var rows = m.devices.map(function (d) {
         var disabled = (!d.enabled || d.occupied_external) ? " disabled" : "";
         var cls = d.enabled && !d.occupied_external ? "dev" : "dev off";
@@ -217,8 +221,15 @@ tr:last-child td{border-bottom:none}
           '" value="' + d.uuid + '"' + disabled + "> " + d.label +
           (d.disabled_reason ? ' <span class="why">(' + d.disabled_reason + ")</span>" : "") + "</label>";
       }).join("");
-      return '<div class="machine"><div class="name">' + m.name + "</div>" + (rows || '<span class="why">aucun device</span>') + "</div>";
-    }).join("");
+      if (!rows) {
+        extra.push('<div class="machine"><div class="name">' + m.name +
+          '</div><label class="dev"><input type="checkbox" data-machine="' + m.id +
+          '" value=""> hôte de spec (vCPU du modèle, mode vm)</label></div>');
+        return;
+      }
+      blocks.push('<div class="machine"><div class="name">' + m.name + "</div>" + rows + "</div>");
+    });
+    $("#fDevices").innerHTML = blocks.concat(extra).join("");
   }
 
   function load() {
