@@ -163,7 +163,7 @@ tr:last-child td{border-bottom:none}
 
   function render() {
     var rows = state.campaigns.map(function (c) {
-      return "<tr>" +
+      return '<tr data-campaign-id="' + c.id + '">' +
         "<td>" + c.id + "</td>" +
         '<td class="mono">' + c.coin + "</td>" +
         '<td><span class="chip ' + c.status + '">' + c.status_label + "</span>" +
@@ -335,7 +335,10 @@ tr:last-child td{border-bottom:none}
   document.addEventListener("click", function (event) {
     var button = event.target.closest("button[data-act]");
     if (!button) { return; }
-    var id = Number(button.getAttribute("data-id"));
+    var row = button.closest("tr[data-campaign-id]");
+    var id = Number(
+      (row && row.getAttribute("data-campaign-id")) || button.getAttribute("data-id")
+    );
     var verb = button.getAttribute("data-act");
     if (verb === "journal") { loadJournal(id); return; }
     act(verb, id);

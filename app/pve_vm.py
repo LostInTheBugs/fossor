@@ -36,6 +36,7 @@ from app.spec_vm import (
     VmStep,
     evaluate_backup,
     parse_backup_stat,
+    parse_checksum_file,
     validate_vm_node,
 )
 
@@ -123,12 +124,20 @@ def validate_pve_model(data: dict[str, Any] | None) -> dict[str, Any]:
     algo = str(data.get("checksum_algo") or "sha256").strip().lower()
     _require(algo in CHECKSUM_ALGOS, "somme de contrôle : sha256 ou sha512")
     checksum = str(data.get("checksum") or data.get("base_image_sha256") or "").strip().lower()
-    pattern = _RE_SHA512 if algo == "sha512" else _RE_SHA256
-    expected_len = 128 if algo == "sha512" else 64
-    _require(
-        bool(pattern.match(checksum)),
-        f"image cloud : somme {algo.upper()} obligatoire ({expected_len} hexadécimaux)",
-    )
+    checksum_url = str(data.get(
+        "checksum_url") or data.get("checksum_file_url") or "").strip()
+    if checksum_url:
+        _require(bool(_RE_URL.match(checksum_url)),
+                 "fichier de sommes : URL http(s) sans espace")
+        # Un fichier SHA256SUMS Ubuntu ne porte que des SHA256.
+        algo = "sha256"
+    else:
+        pattern = _RE_SHA512 if algo == "sha512" else _RE_SHA256
+        expected_len = 128 if algo == "sha512" else 64
+        _require(
+            bool(pattern.match(checksum)),
+            f"image cloud : somme {algo.upper()} obligatoire ({expected_len} hexadécimaux)",
+        )
 
     node_port = _int(data, "node_port", 1024, 65535, 19333)
     backup = str(data.get("wallet_backup_path") or "/home/specminer/data/wallet.dat").strip()
@@ -168,6 +177,7 @@ def validate_pve_model(data: dict[str, Any] | None) -> dict[str, Any]:
         "image_name": name,
         "checksum": checksum,
         "checksum_algo": algo,
+        "checksum_url": checksum_url,
         "node_port": node_port,
         "wallet_backup_path": backup,
         "node_url": node_url,
@@ -657,9 +667,17 @@ def image_plan(model: dict[str, Any]) -> list[VmStep]:
     path = image_path(model)
     algo = model["checksum_algo"]
     script = (
-        'p="$1"; u="$2"; s="$3"; a="$4"; '
-        'if [ -s "$p" ] && echo "$s  $p" | "${a}sum" -c - >/dev/null 2>&1; then '
+        'p="$1"; u="$2"; s="$3"; a="$4"; su="$5"; n="$6"; '
+        'if [ -s "$p" ] && [ -n "$s" ] && echo "$s  $p" | "${a}sum" -c - >/dev/null 2>&1; then '
         'echo "IMAGE:present $s"; exit 0; fi; '
+        'if [ -z "$s" ]; then '
+        'rm -f "$p.sums"; '
+        'if command -v curl >/dev/null 2>&1; then curl -fsSL --max-time 300 -o "$p.sums" "$su"; '
+        'elif command -v wget >/dev/null 2>&1; then wget -q -O "$p.sums" "$su"; '
+        'else echo "SUMS:no-downloader" >&2; exit 3; fi || exit 4; '
+        's=$(grep -E "[[:space:]]\\*?${n}$" "$p.sums" | head -1 | cut -d" " -f1); '
+        'rm -f "$p.sums"; '
+        '[ -n "$s" ] || { echo "SUMS:absent $n" >&2; exit 6; }; fi; '
         'rm -f "$p.part"; '
         'if command -v curl >/dev/null 2>&1; then curl -fsSL --max-time 1800 -o "$p.part" "$u"; '
         'elif command -v wget >/dev/null 2>&1; then wget -q -O "$p.part" "$u"; '
@@ -674,7 +692,8 @@ def image_plan(model: dict[str, Any]) -> list[VmStep]:
                                                           IMAGE_DIR)),
         VmStep(
             "image cloud (téléchargement et somme de contrôle vérifiée)",
-            _sh(script, path, model["image_url"], model["checksum"], algo),
+            _sh(script, path, model["image_url"], model["checksum"], algo,
+                model.get("checksum_url") or "", model["image_name"]),
             timeout=1800,
         ),
         VmStep("image cloud présente", ("test", "-s", path)),

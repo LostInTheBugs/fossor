@@ -105,6 +105,8 @@ def render_argv(profile: dict[str, Any], machine: Any, target: Target,
 
 #: Adresse de simulation (TEST-NET-1) : jamais routable, jamais une vraie VM.
 SIMULATION_IP = "192.0.2.10"
+LIVENESS_DELAYS = (15.0, 60.0)
+LIVENESS_INTERVAL_S = 60
 
 
 def campaign_mode(db: Any, campaign: Any, profile: dict[str, Any] | None) -> str:
@@ -178,6 +180,54 @@ def _spec_context(db: Any, backend: Any):
         return VB.backend_for(db), None
     except VB.VmBackendError as exc:
         return None, str(exc)
+
+
+LIVENESS_DELAYS = (15.0, 60.0)
+LIVENESS_INTERVAL_S = 60
+
+
+def _miner_stopped(db: Any, campaign: Any, message: str, simulated: bool = False) -> dict[str, Any]:
+    """Mineur mort : statut dédié, journal, audit et notification."""
+    log_event(db, campaign, "miner-stopped", message[:2000], result="fail", simulated=simulated)
+    campaign.status = "miner_stopped"
+    campaign.note = message[:1000]
+    campaign.ended_at = C.iso(C.now_utc())
+    db.commit()
+    audit(db, campaign, "campaign-miner-stopped", "fail", message)
+    notify(db, "campaign_miner_stopped", f"{C.summary_line(campaign)} : {message}")
+    return {"campaign": campaign.id, "action": "miner-stopped", "message": message}
+
+
+async def _vm_liveness_startup(
+    db: Any, campaign: Any, vm: Any, host: Any, model: dict[str, Any],
+    profile: dict[str, Any], row: Any,
+) -> dict[str, Any] | None:
+    """Processus présent à +15 s **et** +60 s ; sinon campagne « mineur arrêté »."""
+    previous = 0.0
+    for delay in LIVENESS_DELAYS:
+        await asyncio.sleep(max(0.0, float(delay) - previous))
+        previous = float(delay)
+        try:
+            verdict = await vm.check_alive(host, model, profile, row, False)
+        except Exception as exc:  # sonde impossible = pas de preuve de vie
+            verdict = {"alive": False, "error": str(exc)}
+        if verdict.get("alive"):
+            continue
+        tail = ""
+        try:
+            tail = (await vm.miner_log_tail(host, model, profile, row, False)).get("tail") or ""
+        except Exception:
+            tail = ""
+        message = (
+            f"mineur arrêté après le démarrage : processus absent à +{int(delay)} s"
+        )
+        if tail.strip():
+            message += " — fin du journal : " + " / ".join(tail.strip().splitlines()[-3:])[:800]
+        row.state = "failed"
+        row.note = message[:800]
+        db.commit()
+        return _miner_stopped(db, campaign, message)
+    return None
 
 
 async def _spec_start_steps(
@@ -277,6 +327,9 @@ async def _spec_start_steps(
         except Exception as exc:
             log_event(db, campaign, "vm-provisioned", str(exc)[:800], result="fail",
                       simulated=simulated)
+            row.state = "failed"
+            row.note = str(exc)[:800]
+            db.commit()
             return _fail(db, campaign, "vm-provision-failed", f"Provisionnement impossible : {exc}",
                          simulated)
         address = str(result.get("address") or profile.get("wallet") or "")
@@ -293,16 +346,46 @@ async def _spec_start_steps(
         )
         db.commit()
 
+    # 3 bis. Compatibilité du binaire **avant** campaign-started : un chargeur
+    # qui refuse GLIBC doit faire échouer la campagne sans attendre le mineur.
+    if mode == "vm" and not _step_done(db, campaign, "binary-checked"):
+        probe: dict[str, Any] = {"ok": True, "message": ""}
+        if not simulated:
+            try:
+                probe = await vm.check_binary(host, model, profile, row, False)
+            except Exception as exc:
+                probe = {"ok": False, "message": f"contrôle du binaire impossible : {exc}"}
+        log_event(
+            db, campaign, "binary-checked",
+            "binaire compatible (--version)" if probe.get("ok")
+            else str(probe.get("message") or "binaire incompatible"),
+            result="ok" if probe.get("ok") else "fail",
+            simulated=simulated,
+            detail={"exit": probe.get("exit"), "glibc_provided": probe.get("glibc_provided"),
+                    "glibc_required": probe.get("glibc_required"),
+                    "commands": probe.get("commands") or []},
+        )
+        db.commit()
+        if not probe.get("ok"):
+            message = str(probe.get("message") or "binaire incompatible avec la VM")
+            row.state = "failed"
+            row.note = message[:800]
+            db.commit()
+            try:
+                await vm.shutdown(host, model, row, False)
+            except Exception as exc:
+                log_event(db, campaign, "vm-stopped", str(exc)[:300], result="warn")
+                db.commit()
+            return _fail(db, campaign, "binary-incompatible", message, simulated)
+
     # 4. Mineur : dans la VM (mode vm) ou sur l'hôte (mode hybrid).
     if not _step_done(db, campaign, "campaign-started"):
         commands: list[str] = []
         try:
             if mode == "vm":
                 target = targets[0] if targets else Target(machine=host)
-                # Hôte Proxmox sans device détecté : la cible est l'hôte de
-                # spec et le CPU vient du modèle (vCPU), pas d'un device.
-                if not target.device_uuids:
-                    target.threads = int(model.get("vcpus") or target.threads or 1)
+                # Mode vm : {threads} suit les vCPU de la VM, sauf réglage du profil.
+                target.threads = int(model.get("vcpus") or target.threads or 1)
                 argv = render_argv(profile, host, target)
                 result = await vm.start_miner(host, model, profile, argv, row, simulated)
                 commands.extend(result.get("commands") or [])
@@ -325,6 +408,11 @@ async def _spec_start_steps(
             detail={"commands": commands, "mode": mode, "vm": row.name, "hypervisor": vm.kind},
         )
         db.commit()
+        if mode == "vm" and not simulated:
+            failure = await _vm_liveness_startup(
+                db, campaign, vm, host, model, profile, row)
+            if failure is not None:
+                return failure
     return None
 
 
@@ -1173,6 +1261,71 @@ async def refresh_vm_hashrates(db: Any, moment: datetime, simulated: bool) -> li
     return out
 
 
+async def check_vm_liveness(db: Any, moment: datetime, simulated: bool) -> list[dict[str, Any]]:
+    """Contrôle continu : un mineur mort passe la campagne en « mineur arrêté ».
+
+    Une lecture par minute au plus (``SpecVm.updated_at``), et jamais en
+    simulation. Un backend sans sonde de vivacité est ignoré.
+    """
+    if simulated:
+        return []
+    from app.models import Campaign, MinerProfile, SpecVm
+    from app.routers.miners import profile_to_dict
+    from app.routers.vms import _vm_backend
+
+    rows = (
+        db.query(SpecVm)
+        .join(Campaign, Campaign.id == SpecVm.campaign_id)
+        .filter(Campaign.status == "running")
+        .filter(SpecVm.destroyed_at.is_(None))
+        .filter(SpecVm.mode == "vm")
+        .all()
+    )
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        last = C.parse_iso(row.updated_at)
+        if last is not None and (moment - last).total_seconds() < LIVENESS_INTERVAL_S:
+            continue
+        campaign = (
+            db.query(Campaign).filter(Campaign.id == row.campaign_id).first()
+        )
+        if campaign is None:
+            continue
+        profile_row = None
+        if campaign.profile_id:
+            profile_row = (
+                db.query(MinerProfile)
+                .filter(MinerProfile.id == campaign.profile_id)
+                .first()
+            )
+        if profile_row is None:
+            continue
+        profile = profile_to_dict(profile_row)
+        try:
+            machine, backend, model = _vm_backend(db, row)
+            check = getattr(backend, "check_alive", None)
+            if check is None:
+                continue
+            row.updated_at = C.iso(moment)
+            db.commit()
+            verdict = await check(machine, model, profile, row, False)
+        except Exception as exc:
+            logger.info("vivacité VM %s indisponible : %s", row.name, exc)
+            continue
+        if not verdict.get("alive"):
+            tail = ""
+            try:
+                tail = (await backend.miner_log_tail(
+                    machine, model, profile, row, False)).get("tail") or ""
+            except Exception:
+                tail = ""
+            message = "mineur arrêté pendant la campagne (processus absent dans la VM)"
+            if tail.strip():
+                message += " — fin du journal : " + tail.strip().splitlines()[-1][:300]
+            out.append(_miner_stopped(db, campaign, message))
+    return out
+
+
 def due_campaigns(db: Any, moment: datetime) -> list[Any]:
     from app.models import Campaign
 
@@ -1219,6 +1372,7 @@ async def tick(
         _LOCK = asyncio.Lock()
     async with _LOCK:
         results.extend(await refresh_vm_hashrates(db, moment, sim))
+        results.extend(await check_vm_liveness(db, moment, sim))
         for campaign in due_campaigns(db, moment):
             if timeout_s:
                 campaign.restore_timeout_s = int(timeout_s)

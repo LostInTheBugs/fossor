@@ -538,6 +538,43 @@ async def stop_miner(host: Any, profile: dict[str, Any], ip: str, *,
     return {"simulated": False, "stopped": True, "commands": [s.command() for s in plan]}
 
 
+async def check_binary(host: Any, ip: str, profile: dict[str, Any], *,
+                       simulated: bool, bridge: str = "") -> dict[str, Any]:
+    from app import spec_vm as V
+
+    plan = V.binary_probe_plan(ip, profile, step_maker=P.vm_step)
+    if simulated:
+        return _simulated(plan, {"ok": True, "message": ""})
+    result = await _run(host, plan[0])
+    verdict = V.parse_binary_probe(result["stdout"] + "\n" + result["stderr"])
+    verdict["commands"] = [plan[0].command()]
+    return verdict
+
+
+async def check_alive(host: Any, ip: str, profile: dict[str, Any], *,
+                      simulated: bool, bridge: str = "") -> dict[str, Any]:
+    from app import spec_vm as V
+
+    plan = V.alive_plan(ip, profile, step_maker=P.vm_step)
+    if simulated:
+        return _simulated(plan, {"alive": True, "processes": []})
+    result = await _run(host, plan[0])
+    verdict = V.parse_alive(result["stdout"], profile)
+    verdict["commands"] = [plan[0].command()]
+    return verdict
+
+
+async def miner_log_tail(host: Any, ip: str, profile: dict[str, Any], *,
+                         simulated: bool, bridge: str = "") -> dict[str, Any]:
+    from app import spec_vm as V
+
+    plan = V.miner_log_tail_plan(ip, profile, step_maker=P.vm_step)
+    if simulated:
+        return _simulated(plan, {"tail": ""})
+    result = await _run(host, plan[0])
+    return {"tail": result["stdout"][-4000:], "commands": [plan[0].command()]}
+
+
 async def collect(host: Any, vmid: int, ip: str, profile: dict[str, Any] | None, *,
                   simulated: bool) -> dict[str, Any]:
     """``qm status`` sur l'hôte, puis ``ps``/API **dans** la VM."""
@@ -647,7 +684,8 @@ async def push_guest_binary(host: Any, ip: str, profile: dict[str, Any], *,
     from app import spec_vm as V
 
     path, digest = B.verified_path(profile)
-    dest = f"{V.INSTALL_DIR}/miner.tar.gz"
+    kind = str(profile.get("binary_kind") or "tar.gz").strip().lower()
+    dest = f"{V.INSTALL_DIR}/miner.{V.BINARY_SUFFIXES.get(kind, 'tar.gz')}"
     await _run(host, P.vm_step(
         "copie du binaire : cible vidée", ip,
         ["sh", "-c", 'p="$1"; install -d -m 0700 "$(dirname "$p")" && rm -f "$p"', "fossor", dest],

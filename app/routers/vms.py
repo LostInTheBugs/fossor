@@ -22,7 +22,7 @@ from app import vm_remote as VR
 from app.ai_config import get_setting, set_setting
 from app.database import get_db
 from app.dependencies import require_login
-from app.models import AuditLog, Campaign, Machine, SpecVm
+from app.models import AuditLog, Campaign, CampaignEvent, Machine, MinerProfile, SpecVm
 from app.routers.miners import simulation_enabled
 
 router = APIRouter(prefix="/api", tags=["vms"])
@@ -353,6 +353,30 @@ async def check_backup(vm_id: int, db: Session = Depends(get_db), user=Depends(r
         max_age_days=backup_max_age_days(db),
         simulated=simulated,
     )
+    provisioned = True
+    if row.campaign_id:
+        provisioned = (
+            db.query(CampaignEvent)
+            .filter(
+                CampaignEvent.campaign_id == row.campaign_id,
+                CampaignEvent.kind == "vm-provisioned",
+                CampaignEvent.result == "ok",
+            )
+            .first()
+            is not None
+        )
+    if (
+        not simulated
+        and not verdict.get("verified")
+        and str(row.state) == "failed"
+        and not provisioned
+        and verdict.get("reason") == "fichier de sauvegarde absent"
+    ):
+        # Provisionnement échoué avant toute création de wallet : il n'y a
+        # rien à sauvegarder, la VM doit pouvoir être détruite depuis l'UI.
+        verdict["verified"] = True
+        verdict["no_wallet"] = True
+        verdict["reason"] = "aucun wallet dans la VM"
     if not simulated:
         row.backup_state = json.dumps(verdict)
         row.backup_checked_at = datetime.now(timezone.utc).isoformat()

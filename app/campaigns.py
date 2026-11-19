@@ -20,19 +20,21 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
-STATUSES = ("proposed", "approved", "running", "stopping", "done", "failed", "cancelled")
+STATUSES = ("proposed", "approved", "running", "stopping", "done", "failed",
+            "cancelled", "miner_stopped")
 ORIGINS = ("manual", "hermes")
-TERMINAL = frozenset({"done", "failed", "cancelled"})
+TERMINAL = frozenset({"done", "failed", "cancelled", "miner_stopped"})
 
 #: Transitions autorisées, et elles seules.
 ALLOWED: dict[str, frozenset[str]] = {
     "proposed": frozenset({"approved", "cancelled"}),
     "approved": frozenset({"running", "cancelled"}),
-    "running": frozenset({"stopping", "failed", "cancelled"}),
+    "running": frozenset({"stopping", "failed", "cancelled", "miner_stopped"}),
     "stopping": frozenset({"done", "failed", "cancelled"}),
     "done": frozenset(),
     "failed": frozenset(),
     "cancelled": frozenset(),
+    "miner_stopped": frozenset(),
 }
 
 #: §4.2 bis : au-delà, le démarrage exige une confirmation explicite.
@@ -50,6 +52,7 @@ STATUS_LABELS = {
     "done": "terminée",
     "failed": "en échec",
     "cancelled": "annulée",
+    "miner_stopped": "mineur arrêté",
 }
 
 

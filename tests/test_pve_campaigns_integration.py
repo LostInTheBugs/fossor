@@ -796,3 +796,154 @@ while True:
             print("### /var/tmp/fossor-pve après destruction :", Path(harness["P"].PVE_TMP_DIR).exists())
         finally:
             db.close()
+
+
+
+class TestRobustesseQuatriemeEssai:
+    """Binaire déposé, compatibilité, vivacité et destruction sans wallet."""
+
+    @staticmethod
+    def _drop_elf(db, campaign, harness, script: bytes) -> None:
+        """Dépose un « ELF » brut dans Fossor (le type vient du profil)."""
+        import asyncio
+        import hashlib
+        from pathlib import Path
+
+        from app import binaries as B
+        from app import spec_vm as V
+        from app.models import MinerProfile
+
+        profile = (
+            db.query(MinerProfile)
+            .filter(MinerProfile.id == campaign.profile_id)
+            .one()
+        )
+        path = B.binary_dir() / f"{profile.uuid}.elf"
+        path.write_bytes(script)
+        payload = path.read_bytes()
+        profile.binary_source = "fossor"
+        profile.binary_kind = "elf"
+        profile.binary_stored = str(path)
+        profile.sha256 = hashlib.sha256(payload).hexdigest()
+        profile.binary_size = len(payload)
+        db.commit()
+
+    async def test_elf_brut_qui_meurt_passe_en_mineur_arrete(self, harness):
+        import time
+
+        from app import campaign_runner as RUN
+        from app.models import CampaignEvent, SpecVm
+
+        db = _db()
+        try:
+            campaign, host, model = _seed(db, harness)
+            script = (
+                b"#!/bin/sh\n"
+                b'case "$1" in --version|--help) echo "faux-mineur 1.0"; exit 0;; esac\n'
+                b"sleep 20\nexit 0\n"
+            )
+            self._drop_elf(db, campaign, harness, script)
+
+            started = time.monotonic()
+            result = await RUN.tick(db, now=RUN.C.now_utc(), simulated=False)
+            elapsed = time.monotonic() - started
+            db.refresh(campaign)
+            print("\n### tick robustesse :", json.dumps(result, default=str))
+            print(f"durée du tick : {elapsed:.1f}s | statut : {campaign.status}")
+            _journal(db, campaign.id)
+
+            vm = db.query(SpecVm).filter(SpecVm.campaign_id == campaign.id).one()
+            events = (
+                db.query(CampaignEvent)
+                .filter(CampaignEvent.campaign_id == campaign.id)
+                .order_by(CampaignEvent.id.asc())
+                .all()
+            )
+            kinds = [row.kind for row in events]
+            assert campaign.status == "miner_stopped", campaign.note
+            assert "campaign-started" in kinds
+            assert "miner-stopped" in kinds
+            assert elapsed >= 60, elapsed
+            assert vm.state == "failed"
+            assert "processus absent" in (campaign.note or "")
+        finally:
+            db.close()
+
+    async def test_binaire_glibc_incompatible_echoue_avant_campaign_started(self, harness):
+        from app import campaign_runner as RUN
+        from app.models import CampaignEvent, SpecVm
+
+        db = _db()
+        try:
+            campaign, host, model = _seed(db, harness)
+            script = (
+                b"#!/bin/sh\n"
+                b"echo \"faux: /lib/x86_64-linux-gnu/libc.so.6: version 'GLIBC_2.38' not found\" >&2\n"
+                b"exit 127\n"
+            )
+            self._drop_elf(db, campaign, harness, script)
+            result = await RUN.tick(db, now=RUN.C.now_utc(), simulated=False)
+            db.refresh(campaign)
+            print("\n### tick incompatible :", json.dumps(result, default=str))
+            _journal(db, campaign.id)
+
+            vm = db.query(SpecVm).filter(SpecVm.campaign_id == campaign.id).one()
+            events = (
+                db.query(CampaignEvent)
+                .filter(CampaignEvent.campaign_id == campaign.id)
+                .order_by(CampaignEvent.id.asc())
+                .all()
+            )
+            assert campaign.status == "failed"
+            assert "GLIBC_2.38" in (campaign.note or "")
+            assert "le binaire exige GLIBC_2.38" in (campaign.note or "")
+            assert not [r for r in events if r.kind == "campaign-started" and r.result == "ok"]
+            assert [r for r in events if r.kind == "binary-checked" and r.result == "fail"]
+            assert vm.state == "failed"
+
+        finally:
+            db.close()
+    async def test_destruction_apres_provisionnement_echoue(self, harness):
+        """Provisionnement en échec : aucun wallet, la VM se détruit depuis l'UI."""
+        from app import campaign_runner as RUN
+        from app.ai_config import set_setting
+        from app.models import MinerProfile, SpecVm
+        from app.routers import vms as VR
+
+        db = _db()
+        try:
+            campaign, host, model = _seed(db, harness)
+            profile = (
+                db.query(MinerProfile)
+                .filter(MinerProfile.id == campaign.profile_id)
+                .one()
+            )
+            profile.binary_source = "url"
+            profile.binary_url = f"{harness['base']}/absent.tar.gz"
+            profile.binary_kind = ""
+            profile.binary_stored = ""
+            db.commit()
+
+            await RUN.tick(db, now=RUN.C.now_utc(), simulated=False)
+            db.refresh(campaign)
+            _journal(db, campaign.id)
+            vm = db.query(SpecVm).filter(SpecVm.campaign_id == campaign.id).one()
+            print("\n### provisionnement échoué :", campaign.status, "|", campaign.note)
+            assert campaign.status == "failed"
+            assert "Provisionnement impossible" in (campaign.note or "")
+            assert vm.state == "failed"
+
+            set_setting(db, "simulation_mode", False)
+            db.commit()
+            verdict = await VR.check_backup(vm.id, db=db, user="test")
+            print("verdict sans wallet :", json.dumps(verdict))
+            assert verdict["verified"] is True
+            assert verdict["reason"] == "aucun wallet dans la VM"
+            destroyed = await VR.destroy_vm(vm.id, {"confirm": "DETRUIRE"}, db=db, user="test")
+            print("destruction :", json.dumps(destroyed, default=str))
+            assert destroyed["destroyed"] is True
+            db.refresh(vm)
+            assert vm.state == "destroyed"
+            assert str(vm.vmid) not in json.loads(harness["state"].read_text())
+        finally:
+            db.close()

@@ -38,9 +38,11 @@ PROFILE_FIELDS = (
     "binary_source",
     "binary_stored",
     "binary_size",
+    "binary_kind",
     "wallet_mode",
     "execution_mode",
     "threads",
+    "worker",
     "enabled",
 )
 
@@ -241,6 +243,7 @@ async def upload_profile_binary(
     profile.binary_source = "fossor"
     profile.binary_stored = saved["path"]
     profile.binary_size = saved["size"]
+    profile.binary_kind = saved["kind"]
     profile.sha256 = saved["sha256"]
     profile.updated_at = _now()
     db.commit()

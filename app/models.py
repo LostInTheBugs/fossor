@@ -134,10 +134,14 @@ class MinerProfile(Base):
     binary_source: Mapped[str] = mapped_column(String(10), default="url", server_default="url")
     binary_stored: Mapped[str] = mapped_column(String(300), default="", server_default="")
     binary_size: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Type du dépôt, détecté aux octets magiques : elf, tar.gz, tar.xz, zip.
+    binary_kind: Mapped[str] = mapped_column(String(10), default="", server_default="")
     # ``file`` = wallet local à sauvegarder ; ``pool_address`` = adresse seule.
     wallet_mode: Mapped[str] = mapped_column(String(16), default="file", server_default="file")
     execution_mode: Mapped[str] = mapped_column(String(10), default="host")
     threads: Mapped[int] = mapped_column(Integer, default=0)
+    # Nom de worker/RIG du gabarit ; vide = nom de la machine.
+    worker: Mapped[str] = mapped_column(String(32), default="", server_default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())

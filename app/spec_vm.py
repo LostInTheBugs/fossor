@@ -44,6 +44,7 @@ DEFAULT_NODE_PORT = 19333
 DEFAULT_BACKUP_MAX_AGE_DAYS = 7
 
 INSTALL_DIR = f"{VM_HOME}/opt"
+BINARY_SUFFIXES = {"elf": "elf", "tar.gz": "tar.gz", "tar.xz": "tar.xz", "zip": "zip"}
 LOG_DIR = f"{VM_HOME}/logs"
 RUN_DIR = f"{VM_HOME}/run"
 DATA_DIR = f"{VM_HOME}/data"
@@ -108,8 +109,17 @@ def validate_vm_model(data: dict[str, Any] | None) -> dict[str, Any]:
 
     url = str(data.get("base_image_url") or "").strip()
     _require(bool(_RE_URL.match(url)), "image de base : URL http(s) sans espace")
+    checksum_url = str(data.get("checksum_url") or "").strip()
+    if checksum_url:
+        _require(bool(_RE_URL.match(checksum_url)),
+                 "fichier de sommes : URL http(s) sans espace")
+
     sha = str(data.get("base_image_sha256") or "").strip().lower()
-    _require(bool(_RE_SHA.match(sha)), "image de base : SHA256 obligatoire (64 hexadécimaux)")
+    _require(
+        bool(_RE_SHA.match(sha)) or bool(checksum_url),
+        "image de base : SHA256 obligatoire (64 hexadécimaux), "
+        "ou fichier de sommes (checksum_url) pour une image Ubuntu",
+    )
 
     name = url.split("?", 1)[0].rstrip("/").rsplit("/", 1)[-1]
     _require(bool(_RE_IMAGE_NAME.match(name)), "image de base : nom de fichier .qcow2/.img/.raw attendu")
@@ -151,6 +161,7 @@ def validate_vm_model(data: dict[str, Any] | None) -> dict[str, Any]:
         "base_image_url": url,
         "base_image_sha256": sha,
         "base_image_name": name,
+        "checksum_url": checksum_url,
         "vcpus": _int("vcpus", 1, 32, 2),
         "memory_mb": _int("memory_mb", 256, 65536, 2048),
         "disk_gb": _int("disk_gb", 2, 2048, 20),
@@ -165,6 +176,32 @@ def validate_vm_model(data: dict[str, Any] | None) -> dict[str, Any]:
         "wallet_create_cmd": _validate_template(data.get("wallet_create_cmd"),
                                                "création du wallet", ("datadir", "coin")),
     }
+
+
+def parse_checksum_file(text: str, filename: str) -> str:
+    """Lit un fichier de sommes Debian (``SHA512SUMS``) ou Ubuntu (``SHA256SUMS``).
+
+    Les deux formats sont ``<empreinte>  <nom>`` et ``<empreinte> *<nom>`` ;
+    le nom comparé est celui de l'image, jamais une sous-chaîne.
+    """
+    wanted = str(filename or "").strip().lstrip("*")
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        digest = parts[0].strip().lower()
+        name = parts[-1].strip().lstrip("*")
+        if name.startswith("./"):
+            name = name[2:]
+        if name == wanted and re.fullmatch(r"[a-f0-9]{64}|[a-f0-9]{128}", digest):
+            return digest
+    raise VmError(
+        f"somme de contrôle introuvable pour {wanted or '(nom vide)'} "
+        "dans le fichier de sommes"
+    )
 
 
 def _validate_template(raw: Any, label: str, allowed: tuple[str, ...]) -> str:
@@ -412,9 +449,17 @@ def _sh(script: str, *args: str) -> tuple[str, ...]:
 def image_plan(model: dict[str, Any]) -> list[VmStep]:
     path = base_image_path(model)
     script = (
-        'p="$1"; u="$2"; s="$3"; '
-        'if [ -f "$p" ] && echo "$s  $p" | sha256sum -c - >/dev/null 2>&1; then '
+        'p="$1"; u="$2"; s="$3"; su="$4"; n="$5"; '
+        'if [ -f "$p" ] && [ -n "$s" ] && echo "$s  $p" | sha256sum -c - >/dev/null 2>&1; then '
         'echo "IMAGE:present $s"; exit 0; fi; '
+        'if [ -z "$s" ]; then '
+        'rm -f "$p.sums"; '
+        'if command -v curl >/dev/null 2>&1; then curl -fsSL --max-time 120 -o "$p.sums" "$su"; '
+        'elif command -v wget >/dev/null 2>&1; then wget -q -O "$p.sums" "$su"; '
+        'else echo "SUMS:no-downloader" >&2; exit 3; fi || exit 4; '
+        's=$(grep -E "[[:space:]]\\*?${n}$" "$p.sums" | head -1 | cut -d" " -f1); '
+        'rm -f "$p.sums"; '
+        '[ -n "$s" ] || { echo "SUMS:absent $n" >&2; exit 6; }; fi; '
         'rm -f "$p" "$p.part"; '
         'if command -v curl >/dev/null 2>&1; then curl -fsSL --max-time 600 -o "$p.part" "$u"; '
         'elif command -v wget >/dev/null 2>&1; then wget -q -O "$p.part" "$u"; '
@@ -431,7 +476,8 @@ def image_plan(model: dict[str, Any]) -> list[VmStep]:
         ),
         VmStep(
             "image de base (téléchargement et SHA256 vérifié)",
-            _root(*_sh(script, path, model["base_image_url"], model["base_image_sha256"])),
+            _root(*_sh(script, path, model["base_image_url"], model["base_image_sha256"],
+                       model.get("checksum_url") or "", model["base_image_name"])),
             timeout=600,
         ),
         VmStep("image de base présente", _root("test", "-s", path)),
@@ -614,15 +660,18 @@ def provision_plan(
             make("extraction du nœud", ip, ["tar", "-xzf", archive, "-C", node_dir], timeout=600),
         ]
     binary_dir = M.install_dir(profile["software"], profile["version"])
-    miner_archive = f"{INSTALL_DIR}/miner.tar.gz"
+    kind = str(profile.get("binary_kind") or "tar.gz").strip().lower()
+    if kind not in BINARY_SUFFIXES:
+        kind = "tar.gz"
+    miner_archive = f"{INSTALL_DIR}/miner.{BINARY_SUFFIXES[kind]}"
     steps.append(make("répertoire du mineur", ip, ["sudo", "-n", "install", "-d", "-m", "0755", binary_dir]))
     if str(profile.get("binary_source") or "url") == "fossor":
-        # Jamais d'exécution sans somme vérifiée : l'archive a été poussée par
+        # Jamais d'exécution sans somme vérifiée : le fichier a été poussé par
         # Fossor (somme vérifiée à l'envoi), le pas suivant la revérifie ici.
         _require(binary_pushed,
-                 "binaire fourni par Fossor : l'archive doit être poussée et vérifiée avant le provisionnement")
+                 "binaire fourni par Fossor : le fichier doit être poussé et vérifié avant le provisionnement")
         steps.append(make(
-            "archive du mineur envoyée par Fossor (déjà vérifiée à l'envoi)",
+            "binaire du mineur envoyé par Fossor (déjà vérifié à l'envoi)",
             ip, ["test", "-s", miner_archive]))
     else:
         steps.append(make(
@@ -631,17 +680,28 @@ def provision_plan(
             ["sh", "-c", download, "fossor", miner_archive, profile["binary_url"]],
             timeout=600,
         ))
-    steps += [
-        make(
-            "SHA256 du mineur vérifié dans la VM",
-            ip,
-            ["sh", "-c", 'echo "$2  $1" | sha256sum -c -', "fossor", miner_archive, profile["sha256"]],
-        ),
-        make("extraction du mineur", ip, ["sudo", "-n", "tar", "-xzf", miner_archive,
-                                            "-C", binary_dir], timeout=600),
-        make("binaire du mineur exécutable",
-                ip, ["sudo", "-n", "chmod", "0755", M.binary_path(profile)]),
-    ]
+    steps.append(make(
+        "SHA256 du mineur vérifié dans la VM",
+        ip,
+        ["sh", "-c", 'echo "$2  $1" | sha256sum -c -', "fossor", miner_archive, profile["sha256"]],
+    ))
+    if kind == "elf":
+        # ELF brut : aucun format d'archive, le fichier est copié tel quel.
+        steps.append(make(
+            "binaire ELF installé tel quel (aucune extraction)",
+            ip, ["sudo", "-n", "install", "-m", "0755", miner_archive, M.binary_path(profile)]))
+    elif kind == "zip":
+        steps.append(make("extraction du mineur (zip)", ip,
+                          ["sudo", "-n", "python3", "-m", "zipfile", "-e", miner_archive, binary_dir],
+                          timeout=600))
+        steps.append(make("binaire du mineur exécutable",
+                          ip, ["sudo", "-n", "chmod", "0755", M.binary_path(profile)]))
+    else:
+        steps.append(make("extraction du mineur", ip,
+                          ["sudo", "-n", "tar", "-xf", miner_archive, "-C", binary_dir],
+                          timeout=600))
+        steps.append(make("binaire du mineur exécutable",
+                          ip, ["sudo", "-n", "chmod", "0755", M.binary_path(profile)]))
     if model.get("wallet_create_cmd") and str(profile.get("wallet_mode") or "file") != "pool_address":
         values = {"datadir": DATA_DIR, "coin": coin}
         argv = render_template(model["wallet_create_cmd"], values)
@@ -696,6 +756,86 @@ def vm_miner_stop_plan(profile: dict[str, Any], ip: str,
         make("arrêt du mineur dans la VM", ip, ["sh", "-c", script, "fossor", M.pid_file(profile), M.INSTALL_ROOT],
                 timeout=60, allow_fail=True)
     ]
+
+
+def binary_probe_plan(ip: str, profile: dict[str, Any],
+                      step_maker: Any = None) -> list[VmStep]:
+    """Lance le binaire avec ``--version`` (repli ``--help``) avant la campagne."""
+    from app import miners as M
+
+    make = step_maker or vm_step
+    script = (
+        'b="$1"; o=/tmp/fossor-probe.$$; '
+        'g=$(ldd --version 2>/dev/null | head -1 | grep -oE "[0-9]+\\.[0-9]+$" | head -1); '
+        'timeout 20 "$b" --version >"$o" 2>&1; rc=$?; '
+        'if [ $rc -ne 0 ]; then timeout 20 "$b" --help >>"$o" 2>&1; rc=$?; fi; '
+        'echo "GLIBC:$g"; echo "EXIT:$rc"; cat "$o"; rm -f "$o"; exit 0'
+    )
+    return [make("compatibilité du binaire dans la VM (--version)", ip,
+                 ["sh", "-c", script, "fossor", M.binary_path(profile)],
+                 timeout=60)]
+
+
+def parse_binary_probe(text: str) -> dict[str, Any]:
+    """Verdict du lancement : chargeur manquant ou GLIBC insuffisante → refus."""
+    raw = text or ""
+    match = re.search(r"GLIBC:([0-9][0-9.]*)", raw)
+    provided = match.group(1) if match else ""
+    exit_match = re.search(r"EXIT:(\d+)", raw)
+    code = int(exit_match.group(1)) if exit_match else 0
+    needed = re.search(r"GLIBC_([0-9][0-9.]*)", raw)
+    if needed:
+        return {
+            "ok": False,
+            "exit": code,
+            "glibc_required": needed.group(1),
+            "glibc_provided": provided,
+            "message": (
+                f"le binaire exige GLIBC_{needed.group(1)}, la VM fournit "
+                f"{provided or 'une version inconnue'} : choisissez une image plus récente"
+            ),
+        }
+    if code in (126, 127) or "not found" in raw.lower():
+        return {
+            "ok": False,
+            "exit": code,
+            "message": (
+                f"le binaire n'a pas pu démarrer dans la VM (code {code}) : "
+                "chargeur ou bibliothèque introuvable"
+            ),
+        }
+    return {"ok": code == 0, "exit": code, "glibc_provided": provided,
+            "message": "" if code == 0 else f"le binaire a rendu le code {code}"}
+
+
+def alive_plan(ip: str, profile: dict[str, Any], step_maker: Any = None) -> list[VmStep]:
+    """Contrôle de vivacité : le processus du mineur est-il encore là ?"""
+    from app import miners as M
+
+    make = step_maker or vm_step
+    return [make(
+        "processus du mineur dans la VM (vivacité)", ip,
+        ["sh", "-c", 'ps -eo pid=,args= | grep -F "$1" | grep -v grep || true',
+         "fossor", M.binary_path(profile)],
+        allow_fail=True)]
+
+
+def parse_alive(text: str, profile: dict[str, Any]) -> dict[str, Any]:
+    from app import miners as M
+
+    needle = M.binary_path(profile)
+    lines = [line.strip() for line in (text or "").splitlines() if needle in line]
+    return {"alive": bool(lines), "processes": lines[:5]}
+
+
+def miner_log_tail_plan(ip: str, profile: dict[str, Any],
+                        step_maker: Any = None) -> list[VmStep]:
+    from app import miners as M
+
+    make = step_maker or vm_step
+    return [make("fin du journal du mineur", ip,
+                 ["sh", "-c", 'tail -n 40 -- "$1" 2>/dev/null || true',
+                  "fossor", M.log_file(profile)], allow_fail=True)]
 
 
 def collect_plan(name: str, ip: str, profile: dict[str, Any] | None = None) -> list[VmStep]:

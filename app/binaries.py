@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 
 MAX_BINARY_BYTES = 512 * 1024 * 1024
+BINARY_SUFFIXES = {"elf": "elf", "tar.gz": "tar.gz", "tar.xz": "tar.xz", "zip": "zip"}
 
 
 class BinaryError(RuntimeError):
@@ -24,11 +25,33 @@ def binary_dir() -> Path:
     return base
 
 
+def detect_kind(blob: bytes) -> str:
+    """Type du dépôt **par les octets**, jamais par le nom du fichier."""
+    if blob[:4] == b"\x7fELF":
+        return "elf"
+    if blob[:2] == b"\x1f\x8b":
+        return "tar.gz"
+    if blob[:6] == b"\xfd7zXZ\x00":
+        return "tar.xz"
+    if blob[:4] in (b"PK\x03\x04", b"PK\x05\x06"):
+        return "zip"
+    raise BinaryError(
+        "format non reconnu : ELF brut, .tar.gz, .tar.xz ou .zip attendu "
+        "(le nom du fichier n'est pas utilisé)"
+    )
+
+
 def stored_path(profile: dict) -> Path:
     uuid = str(profile.get("uuid") or "").strip()
     if not uuid or "/" in uuid or "\\" in uuid or uuid.startswith("."):
         raise BinaryError("profil sans uuid valide : archive Fossor impossible")
-    return binary_dir() / f"{uuid}.tar.gz"
+    stored = str(profile.get("binary_stored") or "").strip()
+    if stored:
+        candidate = Path(stored)
+        if candidate.is_file():
+            return candidate
+    kind = str(profile.get("binary_kind") or "tar.gz").strip().lower()
+    return binary_dir() / f"{uuid}.{BINARY_SUFFIXES.get(kind, 'tar.gz')}"
 
 
 def _digest(path: Path) -> str:
@@ -44,11 +67,15 @@ def save_binary(uuid: str, blob: bytes) -> dict:
         raise BinaryError("archive vide")
     if len(blob) > MAX_BINARY_BYTES:
         raise BinaryError(f"archive trop volumineuse ({len(blob)} octets, 512 Mo max)")
-    path = stored_path({"uuid": uuid})
+    kind = detect_kind(blob)
+    path = binary_dir() / f"{uuid}.{BINARY_SUFFIXES[kind]}"
+    for old in binary_dir().glob(f"{uuid}.*"):
+        if old != path:
+            old.unlink(missing_ok=True)
     part = path.with_name(path.name + ".part")
     part.write_bytes(blob)
     part.replace(path)
-    return {"sha256": _digest(path), "size": len(blob), "path": str(path)}
+    return {"sha256": _digest(path), "size": len(blob), "path": str(path), "kind": kind}
 
 
 def verified_path(profile: dict) -> tuple[Path, str]:
@@ -72,4 +99,5 @@ def metadata(profile: dict) -> dict:
         "size": path.stat().st_size if present else 0,
         "sha256": (_digest(path) if present else str(profile.get("sha256") or "")),
         "source": str(profile.get("binary_source") or "url"),
+        "kind": str(profile.get("binary_kind") or ""),
     }

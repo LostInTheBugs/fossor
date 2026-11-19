@@ -177,6 +177,24 @@ class LibvirtBackend:
 
         return await VR.stop_miner(host, profile, row.ip, simulated=simulated)
 
+    async def check_binary(self, host: Any, model: dict, profile: dict, row: Any,
+                           simulated: bool) -> dict:
+        from app import vm_remote as VR
+
+        return await VR.check_binary(host, row.ip, profile, simulated=simulated)
+
+    async def check_alive(self, host: Any, model: dict, profile: dict, row: Any,
+                          simulated: bool) -> dict:
+        from app import vm_remote as VR
+
+        return await VR.check_alive(host, row.ip, profile, simulated=simulated)
+
+    async def miner_log_tail(self, host: Any, model: dict, profile: dict, row: Any,
+                             simulated: bool) -> dict:
+        from app import vm_remote as VR
+
+        return await VR.miner_log_tail(host, row.ip, profile, simulated=simulated)
+
     async def collect(self, host: Any, model: dict, row: Any, profile: dict | None,
                       simulated: bool) -> dict:
         from app import vm_remote as VR
@@ -314,6 +332,27 @@ class PveBackend:
         from app import pve_remote as PR
 
         return await PR.stop_miner(host, profile, row.ip, simulated=simulated)
+
+    async def check_binary(self, host: Any, model: dict, profile: dict, row: Any,
+                           simulated: bool) -> dict:
+        from app import pve_remote as PR
+
+        return await PR.check_binary(host, row.ip, profile, simulated=simulated,
+                                     bridge=str(model.get("bridge") or ""))
+
+    async def check_alive(self, host: Any, model: dict, profile: dict, row: Any,
+                          simulated: bool) -> dict:
+        from app import pve_remote as PR
+
+        return await PR.check_alive(host, row.ip, profile, simulated=simulated,
+                                    bridge=str(model.get("bridge") or ""))
+
+    async def miner_log_tail(self, host: Any, model: dict, profile: dict, row: Any,
+                             simulated: bool) -> dict:
+        from app import pve_remote as PR
+
+        return await PR.miner_log_tail(host, row.ip, profile, simulated=simulated,
+                                       bridge=str(model.get("bridge") or ""))
 
     async def collect(self, host: Any, model: dict, row: Any, profile: dict | None,
                       simulated: bool) -> dict:

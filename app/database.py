@@ -95,6 +95,8 @@ def _migrate_miner_binary_columns():
     _add_column_if_missing("miner_profiles", "binary_stored", "binary_stored VARCHAR(300) NOT NULL DEFAULT ''")
     _add_column_if_missing("miner_profiles", "binary_size", "binary_size INTEGER NOT NULL DEFAULT 0")
     _add_column_if_missing("miner_profiles", "wallet_mode", "wallet_mode VARCHAR(16) NOT NULL DEFAULT 'file'")
+    _add_column_if_missing("miner_profiles", "binary_kind", "binary_kind VARCHAR(10) NOT NULL DEFAULT ''")
+    _add_column_if_missing("miner_profiles", "worker", "worker VARCHAR(32) NOT NULL DEFAULT ''")
 
 
 def _migrate_spec_vm_hashrate_columns():

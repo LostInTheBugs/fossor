@@ -176,6 +176,12 @@ def validate_profile(data: dict[str, Any]) -> dict[str, Any]:
     _require(wallet_mode in ("file", "pool_address"),
              "wallet : file (fichier local) ou pool_address (adresse de pool seule)")
 
+    worker = str(data.get("worker") or "").strip()
+    _require(
+        not worker or bool(re.fullmatch(PATTERNS["worker"], worker)),
+        "worker : 1 à 32 caractères (lettres, chiffres, _ ou -)",
+    )
+
     return {
         "name": name,
         "coin": coin,
@@ -193,6 +199,7 @@ def validate_profile(data: dict[str, Any]) -> dict[str, Any]:
         "wallet_mode": wallet_mode,
         "execution_mode": mode,
         "threads": int(_validated("threads", str(data.get("threads")))) if data.get("threads") else 0,
+        "worker": worker,
     }
 
 
@@ -254,7 +261,7 @@ def render_argv(profile: dict[str, Any], values: dict[str, str]) -> list[str]:
 def build_values(
     profile: dict[str, Any],
     *,
-    worker: str,
+    worker: str = "",
     gpus: Iterable[int] = (),
     threads: int | None = None,
     api_port: int | None = None,
@@ -266,9 +273,11 @@ def build_values(
     values: dict[str, str] = {
         "wallet": profile["wallet"],
         "pool": profile["pool"],
-        "worker": worker,
+        # {worker} = champ du profil, sinon nom de la machine.
+        "worker": str(profile.get("worker") or worker or "fossor"),
         "gpus": ",".join(gpu_list),
-        "threads": str(threads or profile.get("threads") or 0),
+        # {threads} = réglage du profil, sinon vCPU (vm) ou device (host).
+        "threads": str(profile.get("threads") or threads or 0),
         "api_port": str(api_port if api_port is not None else profile.get("api_port") or 0),
         "vm_node": str(vm_node or ""),
     }

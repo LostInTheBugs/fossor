@@ -223,7 +223,8 @@ async def push_guest_binary(host: Any, profile: dict[str, Any]) -> dict[str, Any
     from app import binaries as B
 
     path, digest = B.verified_path(profile)
-    dest = f"{V.INSTALL_DIR}/miner.tar.gz"
+    kind = str(profile.get("binary_kind") or "tar.gz").strip().lower()
+    dest = f"{V.INSTALL_DIR}/miner.{V.BINARY_SUFFIXES.get(kind, 'tar.gz')}"
     await _run(host, V.VmStep(
         "copie du binaire : cible vidée",
         ("sh", "-c", 'p="$1"; install -d -m 0700 "$(dirname "$p")" && rm -f "$p"', "fossor", dest)))
@@ -274,6 +275,38 @@ async def stop_miner(host: Any, profile: dict[str, Any], ip: str, *, simulated: 
     for step in plan:
         await _run(host, step)
     return {"simulated": False, "stopped": True, "commands": [s.command() for s in plan]}
+
+
+async def check_binary(host: Any, ip: str, profile: dict[str, Any], *,
+                       simulated: bool) -> dict[str, Any]:
+    """Lance ``--version`` dans la VM **avant** d'écrire campaign-started."""
+    plan = V.binary_probe_plan(ip, profile)
+    if simulated:
+        return _simulated(plan, {"ok": True, "message": ""})
+    result = await _run(host, plan[0])
+    verdict = V.parse_binary_probe(result["stdout"] + "\n" + result["stderr"])
+    verdict["commands"] = [plan[0].command()]
+    return verdict
+
+
+async def check_alive(host: Any, ip: str, profile: dict[str, Any], *,
+                      simulated: bool) -> dict[str, Any]:
+    plan = V.alive_plan(ip, profile)
+    if simulated:
+        return _simulated(plan, {"alive": True, "processes": []})
+    result = await _run(host, plan[0])
+    verdict = V.parse_alive(result["stdout"], profile)
+    verdict["commands"] = [plan[0].command()]
+    return verdict
+
+
+async def miner_log_tail(host: Any, ip: str, profile: dict[str, Any], *,
+                         simulated: bool) -> dict[str, Any]:
+    plan = V.miner_log_tail_plan(ip, profile)
+    if simulated:
+        return _simulated(plan, {"tail": ""})
+    result = await _run(host, plan[0])
+    return {"tail": result["stdout"][-4000:], "commands": [plan[0].command()]}
 
 
 async def shutdown(host: Any, name: str, *, simulated: bool) -> dict[str, Any]:
