@@ -95,12 +95,7 @@ def password_of(machine: Machine) -> str:
 
 def public(machine: Machine, state: dict | None, thresholds: dict | None = None) -> dict:
     state = state or {}
-    if state.get("power_w") is not None:
-        source = "mesurée par l'ASIC"
-    elif machine.asic_power_w:
-        source = "saisie"
-    else:
-        source = "non mesurée"
+    source = asic.power_label(state, machine.asic_power_w)
     return {
         "id": machine.id,
         "uuid": machine.uuid,
@@ -193,27 +188,24 @@ async def _probe_for_add(
     """Rend (pilote, état, empreinte du certificat, https)."""
     if driver == "iceriver":
         found = await asic_client.iceriver_probe(host, username, password)
-        if found["payload"] is None:
-            state = {
-                "driver": "iceriver",
-                "online": True,
-                "requires_login": True,
-                "model": "",
-                "firmware": "",
-                "hashrate_hs": None,
-                "power_w": None,
-                "algorithm": "kHeavyHash",
-                "coin": "KAS",
-                "read_only": True,
-                "format_verified": True,
-                "cert_sha256": found.get("cert_sha256") or "",
-                "error": LOGIN_REQUIRED,
-            }
-        else:
-            state = asic.parse_iceriver(found["payload"])
-        return "iceriver", state, found.get("cert_sha256"), bool(found.get("https"))
+        return (
+            "iceriver",
+            asic_client.iceriver_state(found),
+            found.get("cert_sha256"),
+            bool(found.get("https")),
+        )
     if driver == "axeos":
-        return "axeos", asic.parse_axeos(await asic_client.fetch_axeos(host)), None, False
+        try:
+            return "axeos", asic.parse_axeos(await asic_client.fetch_axeos(host)), None, False
+        except asic_client.AsicError as exc:
+            # Un IceRiver n'expose pas /api/system/info : le dire franchement
+            # plutôt que de rendre le 404 brut de la sonde AxeOS.
+            if await asic_client.iceriver_identity(host):
+                raise asic_client.AsicError(
+                    "ce n'est pas un AxeOS (pas de /api/system/info) : "
+                    "le panneau répond comme un IceRiver"
+                ) from exc
+            raise
     if driver == "cgminer":
         payload = await asic_client.fetch_cgminer(host, asic_client.CGMINER_PORT)
         return "cgminer", asic.parse_cgminer(payload, payload, payload), None, False

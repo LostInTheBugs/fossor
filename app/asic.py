@@ -383,6 +383,191 @@ def driver_from_payload(payload: dict[str, Any]) -> str:
     return ""
 
 
+#: Santé publiée par le firmware pbv081 dans ``/overview`` : quatre booléens.
+ICERIVER_STATES: dict[str, str] = {
+    "powstate": "alimentation",
+    "netstate": "réseau",
+    "fanstate": "ventilateurs",
+    "tempstate": "températures",
+}
+
+
+def iceriver_overview_like(payload: dict[str, Any]) -> bool:
+    """Reconnaît ``GET /overview`` (pbv081) face à ``post=4`` (ICM168).
+
+    Le firmware pbv081 publie ``fancount`` et un ``chiptmp`` par carte ; l'ancien
+    panneau n'a ni l'un ni l'autre.  C'est le seul discriminant : aucun réglage
+    n'est demandé à l'exploitant.
+    """
+    if not isinstance(payload, dict):
+        return False
+    raw = payload.get("data")
+    data: dict[str, Any] = raw if isinstance(raw, dict) else payload
+    if "fancount" in data:
+        return True
+    return any(
+        isinstance(board, dict) and "chiptmp" in board
+        for board in (data.get("boards") or [])
+    )
+
+
+def _measured_power_w(data: dict[str, Any]) -> float | None:
+    """Puissance réellement mesurée, ``None`` si elle ne l'est pas.
+
+    Le KS0 Ultra ne mesure pas sa consommation : ``powerdraw`` ne contient que
+    des zéros.  Une puissance nulle n'est **jamais** rendue comme ``0 W`` : elle
+    est « non mesurée », et c'est la valeur saisie sur la fiche qui s'applique.
+    """
+    for key in ("powerdraw", "power", "power_w", "wattage", "series"):
+        value = data.get(key)
+        if isinstance(value, (list, tuple)):
+            numbers = [n for n in (_num(item) for item in value) if n is not None]
+            positive = [n for n in numbers if n > 0]
+            if positive:
+                return positive[-1]
+            continue
+        number = _num(value)
+        if number is not None and number > 0:
+            return number
+    return None
+
+
+def parse_iceriver_overview(payload: dict[str, Any]) -> dict[str, Any]:
+    """État normalisé d'un IceRiver depuis ``GET /overview`` (firmware pbv081).
+
+    Format **vérifié** sur la réponse réelle d'un KS0 Ultra
+    (``softver1`` = ``pbv081_ks0ultra_miner``) : ``rtpow``/``avgpow`` avec
+    ``unit``, ``boards[].chiptmp``/``intmp``/``outtmp``, ``fans`` et
+    ``fancount``, ``pools[]`` (``connect``, ``accepted``, ``rejected``,
+    ``user``), quatre états ``*state`` et ``uptime`` en secondes.
+
+    ``pools[].user`` n'est rendu que **masqué** ; ``pools[].pass`` n'est jamais
+    lu.  ``powerdraw`` à zéro ou absent -> ``power_w`` vaut ``None``.
+    """
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else payload or {}
+    unit = str(data.get("unit") or "").strip() or "G"
+    rt_hs = parse_rate(data.get("rtpow"), unit)
+    avg_hs = parse_rate(data.get("avgpow"), unit)
+    softver = str(data.get("softver1") or "")
+    model = str(data.get("model") or "").strip()
+    label, nominal_hs = iceriver_model(softver)
+    if not label:
+        label, nominal_hs = iceriver_model(model)
+    reference = avg_hs if avg_hs else rt_hs
+    nominal_pct = None
+    if nominal_hs and reference:
+        nominal_pct = round(100.0 * reference / nominal_hs, 1)
+
+    boards = [b for b in (data.get("boards") or []) if isinstance(b, dict)]
+    chip_temps = [v for v in (_num(b.get("chiptmp")) for b in boards) if v is not None]
+    in_temps = [v for v in (_num(b.get("intmp")) for b in boards) if v is not None]
+    out_temps = [v for v in (_num(b.get("outtmp")) for b in boards) if v is not None]
+    freqs = [v for v in (_num(b.get("freq")) for b in boards) if v]
+    chips = [v for v in (_num(b.get("chipnum")) for b in boards) if v]
+    board_rows = [
+        {
+            "no": _num(board.get("no")),
+            "freq_mhz": _num(board.get("freq")),
+            "rtpow_hs": parse_rate(board.get("rtpow"), unit),
+            "avgpow_hs": parse_rate(board.get("avgpow"), unit),
+            "chiptmp_c": _num(board.get("chiptmp")),
+            "intmp_c": _num(board.get("intmp")),
+            "outtmp_c": _num(board.get("outtmp")),
+            "chipnum": _num(board.get("chipnum")),
+            "chipvoltage_v": _num(board.get("chipvoltage")),
+        }
+        for board in boards
+    ]
+
+    fans = [v for v in (_num(v) for v in (data.get("fans") or [])) if v is not None]
+    running = [v for v in fans if v > 0]
+    fancount = _num(data.get("fancount"))
+    fans_active = int(fancount) if fancount is not None else len(running)
+    fan_state = data.get("fanstate")
+
+    pools = [p for p in (data.get("pools") or []) if isinstance(p, dict)]
+    connected = [p for p in pools if _num(p.get("connect")) == 1 or p.get("connect") is True]
+    active_pool = connected[0] if connected else (pools[0] if pools else {})
+    accepted = int(sum(_num(p.get("accepted")) or 0 for p in pools)) if pools else None
+    rejected = int(sum(_num(p.get("rejected")) or 0 for p in pools)) if pools else None
+    reject_pct = _num(data.get("reject"))
+    if reject_pct is None and accepted and rejected is not None and (accepted + rejected):
+        reject_pct = round(100.0 * rejected / (accepted + rejected), 3)
+
+    states_seen = {name: data[name] for name in ICERIVER_STATES if name in data}
+    faults = [ICERIVER_STATES[name] for name, value in states_seen.items() if value is False]
+
+    uptime = _num(data.get("uptime"))
+    if uptime is None:
+        uptime = parse_runtime(data.get("runtime"))
+    power = _measured_power_w(data)
+
+    return {
+        "driver": "iceriver",
+        "online": bool(data.get("online", True)),
+        "source": "overview",
+        "model": model or label,
+        "firmware": softver,
+        "board_version": str(data.get("firmtype") or ""),
+        "asic_model": model or label,
+        "hashrate_hs": rt_hs if rt_hs is not None else avg_hs,
+        "hashrate_1h_hs": avg_hs,
+        "expected_hashrate_hs": nominal_hs,
+        "nominal_hs": nominal_hs,
+        "nominal_pct": nominal_pct,
+        "power_w": power,
+        "power_measured": power is not None,
+        "temp_c": max(chip_temps + out_temps) if (chip_temps or out_temps) else None,
+        "vr_temp_c": None,
+        "intemp_c": max(in_temps) if in_temps else None,
+        "outtemp_c": max(out_temps) if out_temps else None,
+        "chip_temps_c": chip_temps,
+        "fan_rpm": max(running) if running else None,
+        "fan_pct": None,
+        "fan_state": fan_state,
+        "fans": fans,
+        "fans_active": fans_active,
+        "fans_zero": (bool(fans) and not running) or fan_state is False,
+        "freq_mhz": max(freqs) if freqs else None,
+        "chipnum": sum(chips) if chips else None,
+        "boards": board_rows,
+        "pool": str(active_pool.get("addr") or ""),
+        "pool_port": None,
+        "pool_connected": bool(connected) if pools else None,
+        "pool_user_masked": _mask_user(active_pool.get("user")),
+        "pool_priority": _num(active_pool.get("priority")),
+        "difficulty": str(active_pool.get("diff") or ""),
+        "shares_accepted": accepted,
+        "shares_rejected": rejected,
+        "reject_pct": reject_pct,
+        "best_diff": None,
+        "best_session_diff": None,
+        "uptime_s": uptime,
+        "runtime": str(data.get("runtime") or ""),
+        "states": states_seen,
+        "state_faults": faults,
+        "powstate": data.get("powstate"),
+        "netstate": data.get("netstate"),
+        "fanstate": data.get("fanstate"),
+        "tempstate": data.get("tempstate"),
+        "domains_total": 0,
+        "domains_inactive": 0,
+        "algorithm": "kHeavyHash",
+        "coin": "KAS",
+        "read_only": True,
+        "format_verified": True,
+    }
+
+
+def power_label(state: dict[str, Any] | None, typed_w: float | None) -> str:
+    """Source de la puissance affichée : mesurée, saisie, ou non mesurée."""
+    if (state or {}).get("power_w") is not None:
+        return "mesurée par l'ASIC"
+    if typed_w:
+        return "saisie"
+    return "non mesurée"
+
+
 def state_from_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
     """État normalisé depuis une réponse brute, quel que soit le pilote."""
     driver = driver_from_payload(payload)
@@ -391,6 +576,8 @@ def state_from_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
     if driver == "cgminer":
         return parse_cgminer(payload, payload, payload)
     if driver == "iceriver":
+        if iceriver_overview_like(payload):
+            return parse_iceriver_overview(payload)
         return parse_iceriver(payload)
     return None
 
@@ -427,6 +614,12 @@ def health(state: dict[str, Any] | None, settings: dict[str, Any] | None = None)
             "status": "orange",
             "reason": "identifiants requis pour lire le panneau",
             "detail": state.get("error") or "",
+        }
+    faults = state.get("state_faults") or []
+    if faults:
+        return {
+            "status": "orange",
+            "reason": "état signalé par le firmware : " + ", ".join(str(fault) for fault in faults),
         }
     if state.get("fans_zero"):
         return {

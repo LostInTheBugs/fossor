@@ -1013,7 +1013,7 @@ async function loadAsics() {
         <td class="num">${fmtHs(s.hashrate_hs)}</td>
         <td class="num">${s.nominal_pct === null || s.nominal_pct === undefined ? '—' : s.nominal_pct.toFixed(0) + ' %'}</td>
         <td class="num">${s.domains_total ? (s.domains_total - (s.domains_inactive || 0)) + '/' + s.domains_total : '—'}</td>
-        <td class="num">${s.power_w ? Math.round(s.power_w) + ' W' : (a.power_w ? a.power_w + ' W' : '—')}</td>
+        <td class="num">${s.power_w ? Math.round(s.power_w) + ' W' : (a.power_w ? a.power_w + ' W (saisie)' : 'non mesurée')}</td>
         <td>${dot} ${esc(h.reason || '')}</td>
         <td><button class="btn sm outline" onclick="probeAsic(${a.id})">Relire</button>
           <button class="btn sm outline" onclick="editAsic(${a.id})">Modifier</button>

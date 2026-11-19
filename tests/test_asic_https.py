@@ -333,14 +333,15 @@ async def test_old_firmware_http_needs_no_login(plain_panel):
     assert not [row for row in _PanelHandler.records if row["path"] == "/user/login"]
 
 
-async def test_detect_falls_through_a_failing_driver(plain_panel):
-    # IceRiver répond 404 sur son panneau : la détection passe à AxeOS.
+async def test_detect_never_falls_back_to_axeos_on_an_iceriver(plain_panel):
+    # Panneau cassé, mais il se présente comme un IceRiver (GET / -> loginpage) :
+    # aucun repli AxeOS, même si /api/system/info répondrait.
     _PanelHandler.panel_enabled = False
     _PanelHandler.serve_axeos = True
-    found = await asic_client.detect(plain_panel)
-    assert found["driver"] == "axeos"
-    assert found["state"]["driver"] == "axeos"
-    assert found["errors"], found
+    with pytest.raises(asic_client.AsicError) as failed:
+        await asic_client.detect(plain_panel)
+    assert "pilote non reconnu" not in str(failed.value)
+    assert not [row for row in _PanelHandler.records if row["path"] == "/api/system/info"]
 
 
 def test_health_without_credentials_says_so():

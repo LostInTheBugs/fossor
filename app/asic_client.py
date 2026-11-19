@@ -52,6 +52,15 @@ class AsicCertError(AsicError):
     """Le certificat HTTPS de l'ASIC n'est plus celui qui a été épinglé."""
 
 
+class IceRiverSessionError(AsicError):
+    """Panneau IceRiver à session : l'étape qui a échoué est connue.
+
+    Distincte d'``AsicError`` pour que la sonde **ne retombe pas** sur l'ancien
+    mode ``post=4`` : sur un firmware pbv081, une session refusée doit se lire
+    telle quelle, pas se déguiser en panne d'un autre firmware.
+    """
+
+
 def clean_host(value: str) -> str:
     """Nettoie et valide une cible : IP (v4/v6) ou nom d'hôte, port optionnel.
 
@@ -298,6 +307,180 @@ async def _login_then_panel(
     )
 
 
+LOGIN_REQUIRED_TEXT = (
+    "identifiants requis : le panneau IceRiver est servi en HTTPS et exige une connexion"
+)
+OVERVIEW_PATH = "/overview"
+_UA = {"User-Agent": "Fossor/0.1"}
+
+
+async def _single(session: _Session, method: str, url: str, **kwargs: Any):
+    """Une requête, redirections **non** suivies : on veut constater l'étape."""
+    import httpx
+
+    if url.startswith("https://"):
+        await session._note_certificate(url)
+    try:
+        return await session.client.request(method, url, **kwargs)
+    except (httpx.HTTPError, OSError) as exc:
+        raise AsicError(
+            f"{_origin_text(url)} injoignable : {type(exc).__name__}: {exc}"
+        ) from exc
+
+
+def _cookie_count(session: _Session) -> int:
+    """Nombre de cookies reçus — jamais leur valeur, jamais leur nom en clair."""
+    try:
+        return len(list(session.client.cookies.jar))
+    except Exception:
+        return 0
+
+
+def _step_line(status: int, location: str, cookie: bool) -> str:
+    target = f" → {location}" if location else ""
+    return f"étape GET / : {status}{target}, cookie reçu {'oui' if cookie else 'non'}"
+
+
+async def _root(session: _Session, base: str):
+    """``GET /`` puis la seule montée ``http -> https`` du même hôte."""
+    url = base + "/"
+    response = await _single(session, "GET", url, headers=_UA)
+    for _hop in range(MAX_REDIRECTS):
+        location = response.headers.get("location") or ""
+        if response.status_code in (301, 302, 303, 307, 308) and location.startswith("https://"):
+            target = urljoin(url, location)
+            if not _same_host(url, target):
+                raise AsicError(f"redirection vers un autre hôte refusée : {target}")
+            url = target
+            response = await _single(session, "GET", url, headers=_UA)
+            continue
+        break
+    return response, url
+
+
+async def _open_panel(
+    session: _Session, base: str, username: str, password: str
+) -> tuple[list[str], str]:
+    """``GET /`` (session) puis ``POST /user/login`` ; rend (trace, base https)."""
+    response, used = await _root(session, base)
+    # Une fois la montée ``http -> https`` faite, tout le reste s'adresse à
+    # l'origine HTTPS : le port 80 du firmware ne fait que rediriger.
+    panel_base = used.rstrip("/")
+    location = response.headers.get("location") or ""
+    cookie = _cookie_count(session) > 0
+    step = _step_line(response.status_code, location, cookie)
+    if response.status_code >= 400:
+        raise AsicError(step)
+    if not cookie:
+        raise AsicError(step + " — aucune session posée par le panneau")
+    response = await _single(
+        session,
+        "POST",
+        panel_base + "/user/login",
+        data={"username": username, "password": password},
+    )
+    payload = _json_or_none(response)
+    if payload is None:
+        raise AsicAuthError(f"login : réponse non JSON ({response.status_code})")
+    error = payload.get("error")
+    if error not in (None, 0, "0", False, ""):
+        message = str(payload.get("message") or "").strip()
+        raise AsicAuthError(
+            f"login : error={error}" + (f", message={message}" if message else "")
+        )
+    return [step, "login : error=0"], panel_base
+
+
+async def _read_overview(session: _Session, base: str) -> tuple[dict[str, Any] | None, str]:
+    """``GET /overview`` ; rend (charge JSON, échec lisible)."""
+    url = base + OVERVIEW_PATH
+    response = await _single(session, "GET", url, headers=_UA)
+    if response.status_code in (301, 302, 303, 307, 308):
+        location = response.headers.get("location") or ""
+        target = urljoin(url, location)
+        if location.startswith("https://") and _same_host(url, target):
+            url = target
+            response = await _single(session, "GET", url, headers=_UA)
+    location = response.headers.get("location") or ""
+    if response.status_code in (301, 302, 303, 307, 308):
+        return None, f"/overview : {response.status_code}" + (f" → {location}" if location else "")
+    if response.status_code != 200:
+        return None, f"/overview : {response.status_code}"
+    payload = _json_or_none(response)
+    if payload is None:
+        return None, f"/overview : réponse non JSON ({response.status_code})"
+    return payload, ""
+
+
+async def _overview_flow(
+    session: _Session, base: str, username: str, password: str
+) -> dict[str, Any]:
+    """GET / → login → /overview ; **un seul** nouvel essai si la session tombe."""
+    try:
+        steps, panel_base = await _open_panel(session, base, username, password)
+    except (AsicAuthError, IceRiverSessionError):
+        raise
+    except AsicError as exc:
+        # Panneau sans cookie : ancien firmware (pas de /overview) ou session
+        # refusée sur un firmware qui a /overview.  C'est /overview qui tranche.
+        _payload, failure = await _read_overview(session, base)
+        if failure.startswith("/overview : 404"):
+            raise
+        raise IceRiverSessionError(f"{exc} ; {failure}") from exc
+    payload, failure = await _read_overview(session, panel_base)
+    if payload is not None:
+        return {"payload": payload, "steps": steps}
+    steps.append(failure)
+    more, panel_base = await _open_panel(session, base, username, password)
+    steps.extend(more)
+    payload, failure = await _read_overview(session, panel_base)
+    if payload is not None:
+        return {"payload": payload, "steps": steps}
+    steps.append(failure)
+    raise AsicAuthError(
+        f"session refusée : {failure} après un nouveau login (GET / + login)"
+    )
+
+
+def _observed_certificate(session: _Session, host: str) -> str | None:
+    hostname, port = split_host(host)
+    certificate = session.certificate_for(hostname, port) if session.https_seen else None
+    if certificate is None:
+        observed = list(session.certificates.values())
+        certificate = observed[0] if observed else None
+    return certificate
+
+
+def _verify_pin(certificate: str | None, cert_sha256: str | None) -> None:
+    if cert_sha256 and certificate and _normalized(certificate) != _normalized(cert_sha256):
+        raise AsicCertError(
+            f"{CERT_CHANGED} : épinglé {cert_sha256}, présenté {certificate} — "
+            "ré-épinglez le certificat après vérification"
+        )
+
+
+def iceriver_state(found: dict[str, Any]) -> dict[str, Any]:
+    """État normalisé d'une sonde IceRiver, selon le firmware rencontré."""
+    payload = found.get("payload")
+    if payload is None:
+        return _login_state(found.get("cert_sha256"), found.get("error") or LOGIN_REQUIRED_TEXT)
+    if found.get("mode") == "overview" or asic.iceriver_overview_like(payload):
+        return asic.parse_iceriver_overview(payload)
+    return asic.parse_iceriver(payload)
+
+
+async def iceriver_identity(host: str, timeout: float = TIMEOUT_S) -> bool:
+    """``GET /`` se présente-t-il comme un panneau IceRiver (``用户界面``) ?"""
+    base = _url(host, "")
+    async with _Session(timeout) as session:
+        response, _used = await _root(session, base)
+        location = (response.headers.get("location") or "").lower()
+        if response.status_code in (301, 302, 303, 307, 308) and "loginpage" in location:
+            return True
+        text = (response.text or "")[:4000]
+        return any(marker in text for marker in LOGIN_MARKERS)
+
+
 async def iceriver_probe(
     host: str,
     username: str = "",
@@ -305,32 +488,49 @@ async def iceriver_probe(
     cert_sha256: str | None = None,
     timeout: float = TIMEOUT_S,
 ) -> dict[str, Any]:
-    """Sonde IceRiver : panneau sans login (ancien firmware) ou HTTPS + login.
+    """Sonde IceRiver : ``/overview`` (pbv081) ou panneau ``post=4`` (ICM168).
 
-    Rend ``payload`` (``None`` si la connexion est requise mais absente),
-    ``https``, ``login_required`` et ``cert_sha256`` (empreinte observée).
+    Le firmware pbv081 exige une session : ``GET /`` (cookie) ->
+    ``POST /user/login`` -> ``GET /overview``.  Un panneau qui ne pose pas de
+    cookie ou n'a pas ``/overview`` fait retomber sur l'ancien mode, conservé
+    pour l'ancien firmware.  Chaque échec porte l'étape et l'état observé,
+    jamais le mot de passe ni le cookie.
     """
     base = _url(host, "")
     async with _Session(timeout) as session:
+        steps: list[str] = []
+        if username and password:
+            try:
+                opened = await _overview_flow(session, base, username, password)
+            except (AsicAuthError, IceRiverSessionError):
+                raise
+            except AsicError:
+                # Pas de session, pas de /overview : ancien firmware ci-dessous.
+                pass
+            else:
+                certificate = _observed_certificate(session, host)
+                _verify_pin(certificate, cert_sha256)
+                return {
+                    "payload": opened["payload"],
+                    "mode": "overview",
+                    "https": session.https_seen,
+                    "login_required": True,
+                    "cert_sha256": certificate,
+                    "steps": opened["steps"],
+                }
         response = await session.request("POST", base + "/user/userpanel", data={"post": "4"})
         https = session.https_seen
-        hostname, port = split_host(host)
-        certificate = session.certificate_for(hostname, port) if https else None
-        if certificate is None:
-            observed = list(session.certificates.values())
-            certificate = observed[0] if observed else None
-        if https and cert_sha256 and certificate and _normalized(certificate) != _normalized(cert_sha256):
-            raise AsicCertError(
-                f"{CERT_CHANGED} : épinglé {cert_sha256}, présenté {certificate} — "
-                "ré-épinglez le certificat après vérification"
-            )
+        certificate = _observed_certificate(session, host)
+        _verify_pin(certificate, cert_sha256)
         payload = _json_or_none(response)
         if payload is not None:
             return {
                 "payload": payload,
+                "mode": "panel",
                 "https": https,
                 "login_required": False,
                 "cert_sha256": certificate,
+                "steps": steps,
             }
         if not _looks_like_login(response):
             raise AsicError(
@@ -339,16 +539,21 @@ async def iceriver_probe(
         if not (username and password):
             return {
                 "payload": None,
+                "mode": "panel",
                 "https": https,
                 "login_required": True,
                 "cert_sha256": certificate,
+                "error": LOGIN_REQUIRED_TEXT,
+                "steps": steps,
             }
         panel = await _login_then_panel(session, base, username, password)
         return {
             "payload": panel,
+            "mode": "panel",
             "https": True,
             "login_required": True,
             "cert_sha256": certificate,
+            "steps": steps,
         }
 
 
@@ -501,28 +706,23 @@ async def detect(
     """
     errors: list[str] = []
     try:
+        is_iceriver = await iceriver_identity(host, timeout)
+    except AsicError as exc:
+        errors.append(str(exc))
+        is_iceriver = False
+    if is_iceriver:
+        # Un panneau IceRiver n'expose pas /api/system/info : **aucun** repli
+        # AxeOS, même quand la lecture échoue — l'erreur dit où ça coince.
         found = await iceriver_probe(host, username, password, cert_sha256, timeout)
-        state = (
-            asic.parse_iceriver(found["payload"])
-            if found["payload"] is not None
-            else _login_state(
-                found.get("cert_sha256"),
-                "identifiants requis : le panneau IceRiver est servi en HTTPS et exige une connexion",
-            )
-        )
         return {
             "driver": "iceriver",
-            "state": state,
+            "state": iceriver_state(found),
             "payload": found["payload"],
             "https": found["https"],
             "login_required": found["login_required"],
             "cert_sha256": found.get("cert_sha256"),
             "errors": errors,
         }
-    except (AsicAuthError, AsicCertError):
-        raise
-    except AsicError as exc:
-        errors.append(str(exc))
     try:
         payload = await fetch_axeos(host, timeout)
         state = asic.parse_axeos(payload)
@@ -567,10 +767,12 @@ async def poll(
     if driver == "axeos":
         return asic.parse_axeos(await fetch_axeos(host))
     if driver == "iceriver":
-        payload = await fetch_iceriver(
+        found = await iceriver_probe(
             host, username=username, password=password, cert_sha256=cert_sha256
         )
-        return asic.parse_iceriver(payload)
+        if found["payload"] is None:
+            raise AsicAuthError(LOGIN_REQUIRED_TEXT)
+        return iceriver_state(found)
     if driver == "cgminer":
         payload = await fetch_cgminer(host, int(port or CGMINER_PORT))
         return asic.parse_cgminer(payload, payload, payload)
