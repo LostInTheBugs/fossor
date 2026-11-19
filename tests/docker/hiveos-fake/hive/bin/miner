@@ -1,0 +1,30 @@
+#!/bin/bash
+# Faux « miner » HiveOS (cible jetable) — start/stop/status du faux mineur.
+# Il simule le watchdog : si WD_ENABLED=1 et que `wd stop` n'a pas été appelé,
+# un arrêt volontaire est annulé 2 s plus tard (relance du mineur).
+BIN=/hive/miners/custom/hivefake/hivefake
+case "${1:-status}" in
+  stop)
+    pkill -f "$BIN" 2>/dev/null
+    rm -f /run/hive/last_stat.json
+    if grep -q '^WD_ENABLED=1' /hive-config/rig.conf 2>/dev/null && [ ! -f /run/hive/wd.stopped ]; then
+      ( sleep 2; /hive/bin/miner start >/dev/null 2>&1 ) &
+      echo "miner stopped (watchdog HiveOS pending)"
+    else
+      echo "miner stopped"
+    fi
+    ;;
+  start)
+    mkdir -p /run/hive/miners/hivefake
+    pkill -f "$BIN" 2>/dev/null
+    setsid nohup "$BIN" >/run/hive/miners/hivefake/miner.log 2>&1 &
+    echo "miner started"
+    ;;
+  status)
+    if pgrep -f "$BIN" >/dev/null; then echo "miner is running"; else echo "miner is not running"; fi
+    ;;
+  *)
+    echo "usage: miner start|stop|status"; exit 2
+    ;;
+esac
+exit 0

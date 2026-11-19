@@ -80,6 +80,14 @@ def _migrate_asic_login() -> None:
                 conn.exec_driver_sql(f"ALTER TABLE machines ADD COLUMN {name} {ddl}")
 
 
+def _migrate_machine_hiveos_column() -> None:
+    """§4.1 ter / 3e : dernière sonde HiveOS masquée, par machine."""
+    with engine.begin() as conn:
+        columns = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(machines)")}
+        if "hiveos_json" not in columns:
+            conn.exec_driver_sql("ALTER TABLE machines ADD COLUMN hiveos_json TEXT")
+
+
 def init_db():
     _migrate_asic_login()
     Base.metadata.create_all(bind=engine)
@@ -101,6 +109,7 @@ def init_db():
     _migrate_device_role_columns()
     _migrate_asic_columns()
     _migrate_campaign_execution_mode()
+    _migrate_machine_hiveos_column()
     _migrate_machine_fossor_host_column()
 
 

@@ -1,0 +1,9 @@
+#!/bin/bash
+# Faux watchdog HiveOS : `wd stop` dépose un drapeau, `wd start` le retire.
+case "${1:-status}" in
+  stop)  touch /run/hive/wd.stopped; echo "wd stopped" ;;
+  start) rm -f /run/hive/wd.stopped; echo "wd started" ;;
+  status) [ -f /run/hive/wd.stopped ] && echo "wd is stopped" || echo "wd is running" ;;
+  *) exit 2 ;;
+esac
+exit 0

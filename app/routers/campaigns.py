@@ -372,6 +372,27 @@ def _clean_devices(db: Session, devices: list[dict]) -> list[dict]:
                 "label": label,
             }
         )
+    # §3e : sur un rig HiveOS, le mineur de la flight sheet s'arrête en entier.
+    from app import hiveos as HV
+
+    for machine_id in sorted({entry["machine_id"] for entry in clean}):
+        machine = db.query(Machine).filter(Machine.id == machine_id).first()
+        if machine is None or not HV.is_hiveos(machine):
+            continue
+        every = db.query(Device).filter(Device.machine_id == machine.id).all()
+        total = len(HV.gpu_indices(every))
+        requested: list[int] = []
+        for entry in clean:
+            if entry["machine_id"] != machine.id or entry["kind"] != "gpu":
+                continue
+            device = db.query(Device).filter(Device.uuid == entry["device_uuid"]).first()
+            if device is not None and device.index is not None:
+                requested.append(int(device.index))
+        if not requested:
+            continue  # campagne CPU seule : le mineur HiveOS garde ses GPU
+        reason = HV.partial_refusal(requested, total)
+        if reason:
+            raise HTTPException(status_code=409, detail=reason)
     return clean
 
 

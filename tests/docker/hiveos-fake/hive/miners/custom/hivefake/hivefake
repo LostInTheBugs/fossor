@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+"""Faux mineur de flight sheet HiveOS : écrit last_stat.json toutes les 2 s."""
+import json
+import signal
+import sys
+import time
+
+RUNNING = True
+
+
+def stop(*_args):
+    # Sortie immédiate, comme un mineur qui reçoit SIGTERM de `miner stop`.
+    sys.exit(0)
+
+
+signal.signal(signal.SIGTERM, stop)
+signal.signal(signal.SIGINT, stop)
+
+GPU_HS = [68538879630, 68471219000, 68550028912, 68539715754, 54829685687]
+while RUNNING:
+    payload = {
+        "method": "stats",
+        "params": {
+            "v": 2,
+            "rig_id": "RIG-FAKE-3E",
+            "passwd": "S3CR3T-HIVE-PASS",
+            "meta": {"hivefake": {"coin": "PEARL", "algo": "pearlhash"}},
+            "miner": "hivefake",
+            "total_khs": sum(GPU_HS),
+            "miner_stats": {"status": "running", "total_khs": sum(GPU_HS),
+                            "hs": GPU_HS, "hs_units": "khs"},
+        },
+    }
+    with open("/run/hive/last_stat.json", "w", encoding="utf-8") as handle:
+        json.dump(payload, handle)
+    time.sleep(2)
+sys.exit(0)

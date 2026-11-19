@@ -146,6 +146,23 @@ tr.absent td{opacity:.5}
     </div>
     <pre id="minerOut" style="display:none;white-space:pre-wrap;word-break:break-all;background:#0e1218;border:1px solid #2c3544;border-radius:8px;padding:10px;margin-top:12px;max-height:320px;overflow:auto;font-family:ui-monospace,Consolas,monospace;font-size:11.5px;color:#8b98a9"></pre>
   </div>
+
+  <div id="hiveosPanel" data-hiveos-screen="1" style="display:none;margin-top:18px;background:#1a2029;border:1px solid #2c3544;border-radius:12px;padding:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <h2 style="font-size:15px;font-weight:700">🐝 Pilotage HiveOS — <span id="hiveosMachineName"></span></h2>
+      <button class="btn sm outline" onclick="closeHiveos()">Fermer</button>
+    </div>
+    <div id="hiveosSummary" class="empty" style="font-size:12.5px;line-height:1.6"></div>
+    <div id="hiveosRefusal" class="pending-warning" style="display:none;margin-top:10px"></div>
+    <div class="actions" style="margin-top:10px">
+      <button class="btn outline" onclick="probeHiveos()" title="Sonde en lecture seule : wallet.conf, cur_miner, miner status, rig.conf (masqué), last_stat.json">🔍 Sonder HiveOS (lecture seule)</button>
+      <label style="font-size:12px;display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="hiveosAck" onchange="setHiveosAck(this.checked)">
+        Arrêter le watchdog HiveOS pendant les campagnes (option explicite)
+      </label>
+    </div>
+    <pre id="hiveosOut" style="display:none;white-space:pre-wrap;word-break:break-all;background:#0e1218;border:1px solid #2c3544;border-radius:8px;padding:10px;margin-top:12px;max-height:320px;overflow:auto;font-family:ui-monospace,Consolas,monospace;font-size:11.5px;color:#8b98a9"></pre>
+  </div>
 </div>
 
 <!-- Modal -->
@@ -510,6 +527,62 @@ const detailRow=(m)=>{
 };
 // ── Mineur (§4.5, §4.6) : profil, GPU cochés, démarrer/arrêter, statut ──
 let MINER={};
+let HIVEOS={};
+const closeHiveos=()=>{$('#hiveosPanel').style.display='none';HIVEOS={};};
+const renderHiveos=(d)=>{
+  HIVEOS.view=d;
+  const wd=d.watchdog||{};
+  const devs=(d.devices||[]);
+  const lines=[];
+  lines.push('<b>Mineur HiveOS détecté</b> : '+(d.miner?`<span class="mono">${d.miner}</span>${d.coin?' · '+d.coin:''}`:'<i>aucun</i>')
+    +(d.miner_bin?' · '+d.miner_bin:''));
+  lines.push('<b>Watchdog HiveOS</b> : '+(wd.enabled?'<b>actif</b>':'inactif')
+    +(wd.reason?' — '+wd.reason:'')
+    +(wd.parade?'<br><span class="masked">Parade : '+wd.parade+'</span>':''));
+  lines.push('<b>Devices pris en charge</b> : '+(devs.length?('tous les GPU du rig ('+devs.join(', ')+')'):'aucun GPU autorisé')
+    +(d.gpu_total?' — '+d.gpu_total+' GPU sur le rig':'')+(d.mining_gpus?' ('+d.mining_gpus+' en minage)':''));
+  lines.push('<b>État</b> : '+(d.running?'mineur en marche':'mineur arrêté')+' · hashrate '+(d.hashrate_hs!=null?d.hashrate_hs+' H/s':'inconnu'));
+  if(d.refusal)lines.push('<b>Campagne partielle</b> : <span style="color:#ff7676">'+d.refusal+'</span>');
+  else lines.push('<b>Campagne</b> : tous les GPU engagés — arrêt par « miner stop », reprise par « miner start »');
+  if(d.commands&&d.commands.stop&&d.commands.stop.length){
+    lines.push('<b>Commandes d\'arrêt</b> : '+d.commands.stop.map(c=>'<span class="mono">'+c+'</span>').join(' · '));
+    lines.push('<b>Commandes de reprise</b> : '+(d.commands.start||[]).map(c=>'<span class="mono">'+c+'</span>').join(' · '));
+  }
+  $('#hiveosSummary').innerHTML=lines.join('<br>');
+  $('#hiveosRefusal').style.display=d.refusal?'block':'none';
+  $('#hiveosRefusal').textContent=d.refusal||'';
+  $('#hiveosAck').checked=!!d.watchdog_ack;
+  $('#hiveosPanel').style.display='block';
+};
+const openHiveos=async(id)=>{
+  const d=await api('/api/machines/'+id+'/hiveos');
+  if(!d)return;
+  HIVEOS={machineId:id};
+  $('#hiveosMachineName').textContent=(MACHINES[id]||{}).name||('#'+id);
+  $('#hiveosOut').style.display='none';
+  renderHiveos(d);
+};
+const probeHiveos=async()=>{
+  if(!HIVEOS.machineId)return;
+  const r=await fetch('/api/machines/'+HIVEOS.machineId+'/hiveos/probe',{method:'POST',credentials:'include'});
+  if(r.status===401){location.href='/';return;}
+  const d=await r.json().catch(()=>({}));
+  const out=$('#hiveosOut');out.style.display='block';
+  if(!r.ok){out.textContent='Refusé : '+(d.detail||'erreur');return;}
+  out.textContent=JSON.stringify(d.probe,null,2);
+  renderHiveos(d.pilotage);
+};
+const setHiveosAck=async(ack)=>{
+  const body={ack:ack};
+  if(ack)body.confirm='VALIDER';
+  const r=await fetch('/api/hiveos/watchdog-ack',{method:'PUT',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(r.status===401){location.href='/';return;}
+  const d=await r.json().catch(()=>({}));
+  const out=$('#hiveosOut');out.style.display='block';
+  out.textContent=JSON.stringify(d,null,2);
+  if(HIVEOS.machineId)openHiveos(HIVEOS.machineId);
+};
 const closeMiner=()=>{$('#minerPanel').style.display='none';MINER={};};
 const openMiner=async(id)=>{
   const view=await api('/api/machines/'+id+'/miner');
@@ -587,6 +660,7 @@ const loadMachines=async()=>{
         <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
           ${m.auth_type!=='provision_pending'?`<button class="btn sm outline" onclick="detectMachine(${m.id},this)">🔍 Détecter le matériel</button>`:'<span class="chip off" style="font-size:9px">Préparation requise</span>'}
           <button class="btn sm outline" onclick="openMiner(${m.id})" title="Profil, GPU et démarrage du mineur sur cette machine">⛏️ Mineur</button>
+          ${(m.os_kind==='hiveos'||m.os_kind_detected==='hiveos')?`<button class="btn sm outline" onclick="openHiveos(${m.id})" title="Mineur de la flight sheet, watchdog, devices pris en charge">🐝 Pilotage HiveOS</button>`:''}
           ${m.auth_type==='fossor_key'?`<button class="btn sm outline" onclick="deprovisionMachine(${m.id},this)" title="Retirer la clé publique, le fichier sudoers et l'accès Fossor">🔒 Retirer l'accès Fossor</button>`:''}
         </div></td>
     </tr>`+detailRow(m);

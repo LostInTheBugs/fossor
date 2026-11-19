@@ -83,6 +83,8 @@ class Machine(Base):
     asic_scheme: Mapped[str | None] = mapped_column(String(10), nullable=True)
     # §4.1 ter : type choisi à l'ajout (os_kind) vs OS réellement détecté.
     os_kind_detected: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # §3e : dernière sonde HiveOS **masquée** (aucun RIG_PASSWD, aucun wallet).
+    hiveos_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     host_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     host_key_public: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Last external miners seen (JSON list, masked) — dashboard + machine card.

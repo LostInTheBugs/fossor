@@ -100,6 +100,37 @@ WHITELISTED_COMMANDS: dict[str, str] = {
         cat /proc/uptime 2>/dev/null
         exit 0
     """).strip(),
+    # Pilotage compatible HiveOS (§4.1 ter, §4.6, §4.7) : sonde **lecture seule**
+    # de la flight sheet, du watchdog et du mineur en cours.  Aucun fichier n'est
+    # modifié ; `miner status` et `wd status` sont sans effet de bord.  Les
+    # secrets (`RIG_PASSWD`) sont masqués par `app.hiveos.parse_probe`.
+    "hiveos_probe": textwrap.dedent("""\
+        echo '### HIVE_ROOT'
+        test -d /hive && echo HIVEOS=1
+        test -x /hive/bin/miner && echo MINER_BIN=/hive/bin/miner
+        test -d /hive/miners/custom && echo CUSTOM_DIR=1
+        echo '### WALLET_CONF'
+        cat /hive-config/wallet.conf 2>/dev/null || sudo -n cat /hive-config/wallet.conf 2>/dev/null
+        echo '### RIG_CONF'
+        cat /hive-config/rig.conf 2>/dev/null || sudo -n cat /hive-config/rig.conf 2>/dev/null
+        echo '### CUR_MINER'
+        cat /run/hive/cur_miner 2>/dev/null
+        echo '### MINER_DIRS'
+        ls -1 /run/hive/miners 2>/dev/null
+        echo '### CUSTOM'
+        ls -1 /hive/miners/custom 2>/dev/null
+        echo '### MINER_STATUS'
+        sudo -n /hive/bin/miner status 2>/dev/null || /hive/bin/miner status 2>/dev/null || sudo -n miner status 2>/dev/null
+        echo '### WD_STATUS'
+        sudo -n /hive/bin/wd status 2>/dev/null || /hive/bin/wd status 2>/dev/null
+        echo '### MINER_PS'
+        ps -eo pid,pcpu,etimes,args 2>/dev/null | grep -F '/hive/miners/' | grep -v grep
+        echo '### HIVE_STAT'
+        cat /run/hive/last_stat.json 2>/dev/null
+        echo '### HIVE_GPU'
+        cat /run/hive/gpu-stats.json 2>/dev/null
+        exit 0
+    """).strip(),
     # Read-only inventory of the *other* components (§4.2 bis): RAM, disks,
     # non-GPU PCI cards and HiveOS fans.  sudo -n never prompts; a missing tool
     # leaves its section empty and the command still exits 0.

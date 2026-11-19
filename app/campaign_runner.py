@@ -478,6 +478,44 @@ def restore_timeout(db: Any) -> int:
     return number if number > 0 else C.DEFAULT_RESTORE_TIMEOUT_S
 
 
+def hiveos_ack(db: Any) -> bool:
+    """Option explicite « arrêter le watchdog HiveOS » (§3e), validée par Fred."""
+    from app.ai_config import get_setting
+
+    return bool(get_setting(db, "hiveos_watchdog_ack", False))
+
+
+async def hiveos_probe_data(db: Any, machine: Any, gpus: list[int], simulated: bool) -> dict:
+    """Sonde HiveOS : enregistrée, sinon réelle (lecture seule), simulée sans I/O."""
+    import json
+
+    from app import hiveos as HV
+    from app import hiveos_remote as HR
+
+    raw = getattr(machine, "hiveos_json", None)
+    if raw:
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict) and data.get("detected"):
+                return data
+        except (TypeError, ValueError):
+            pass
+    if simulated:
+        return {
+            "detected": True,
+            "simulated": True,
+            "miner": "",
+            "miner_bin": "/hive/bin/miner",
+            "gpu_total": len(gpus),
+            "hashrate_hs": None,
+            "rig": {"watchdog": False, "maintenance": False, "keys": [], "values": {}},
+        }
+    data = await HR.probe(machine)
+    machine.hiveos_json = json.dumps(HV.mask_probe(data), ensure_ascii=False)
+    db.commit()
+    return data
+
+
 def log_event(
     db: Any,
     campaign: Any,
@@ -728,11 +766,45 @@ async def _start(db: Any, campaign: Any, moment: datetime, backend: Any, simulat
         notify(db, "campaign_failed", f"{C.summary_line(campaign)} : {campaign.note}")
         return {"campaign": campaign.id, "action": "refused", "reasons": messages}
 
+    # 0. Rig HiveOS : arrêt du mineur de la flight sheet, vérifié par `ps`.
+    from app import hiveos as HV
+    from app import hiveos_remote as HR
+
+    if not _step_done(db, campaign, "hiveos-stopped"):
+        for target in targets:
+            if not HV.is_hiveos(target.machine):
+                continue
+            probe_data = await hiveos_probe_data(db, target.machine, target.gpus, simulated)
+            reason = HV.partial_refusal(target.gpus, int(probe_data.get("gpu_total") or 0))
+            if reason:
+                log_event(db, campaign, "hiveos-refused", reason, result="fail", simulated=simulated)
+                return _fail(db, campaign, "hiveos-partial", reason, simulated)
+            try:
+                verdict_h = await HR.stop(
+                    target.machine, probe_data, ack_watchdog=hiveos_ack(db), simulated=simulated
+                )
+            except HV.HiveosError as exc:
+                log_event(db, campaign, "hiveos-refused", str(exc)[:600], result="fail", simulated=simulated)
+                return _fail(db, campaign, "hiveos-watchdog", str(exc), simulated)
+            log_event(
+                db,
+                campaign,
+                "hiveos-stopped",
+                f"{target.machine.name} : mineur HiveOS arrêté (miner stop)"
+                + (", watchdog HiveOS arrêté (wd stop)" if hiveos_ack(db) else "")
+                + (" (simulé)" if simulated else ""),
+                simulated=simulated,
+                detail={"commands": verdict_h.get("commands") or []},
+            )
+            db.commit()
+
     # 1. Arrêt de ce que **Fossor** fait tourner sur ces devices.
     if not _step_done(db, campaign, "default-stopped"):
         commands: list[str] = []
         stopped: list[str] = []
         for target in targets:
+            if HV.is_hiveos(target.machine):
+                continue  # le minage de ce rig est tenu par HiveOS, pas par un profil Fossor
             default_row = default_profile_for(db, target.machine)
             if default_row is None:
                 continue
@@ -840,8 +912,11 @@ async def _restore(db: Any, campaign: Any, moment: datetime, backend: Any, simul
     attempt = int(campaign.attempts or 0)
     start_key = f"default-started:{attempt}"
     failed_key = f"default-start-failed:{attempt}"
+    from app import hiveos as HV
+    from app import hiveos_remote as HR
 
-    if not any(defaults.values()):
+    hiveos_targets = [t for t in targets if HV.is_hiveos(t.machine)]
+    if not any(defaults.values()) and not hiveos_targets:
         log_event(
             db,
             campaign,
@@ -851,10 +926,38 @@ async def _restore(db: Any, campaign: Any, moment: datetime, backend: Any, simul
         )
         return _finish(db, campaign, moment, None, None, "aucun token par défaut", simulated)
 
+    hiveos_verdict: dict[str, Any] | None = None
     if not _step_done(db, campaign, start_key) and not _event_exists(db, campaign, failed_key):
         commands: list[str] = []
         errors: list[str] = []
+        resumed_hiveos: list[str] = []
         for target in targets:
+            if HV.is_hiveos(target.machine):
+                probe_data = await hiveos_probe_data(db, target.machine, target.gpus, simulated)
+                try:
+                    resumed = await HR.resume(
+                        target.machine, probe_data, ack_watchdog=hiveos_ack(db), simulated=simulated
+                    )
+                except HV.HiveosError as exc:
+                    errors.append(f"{target.machine.name} : {exc}")
+                    continue
+                commands.extend(resumed.get("commands") or [])
+                resumed_hiveos.append(target.machine.name)
+                if resumed.get("verified") and resumed.get("hashrate_hs"):
+                    hiveos_verdict = {
+                        "hashrate_hs": resumed["hashrate_hs"],
+                        "source": resumed.get("source") or "last_stat.json",
+                    }
+                log_event(
+                    db,
+                    campaign,
+                    f"hiveos-resumed:{attempt}",
+                    f"{target.machine.name} : reprise par HiveOS (miner start)"
+                    + (" (simulé)" if simulated else ""),
+                    simulated=simulated,
+                    detail={"commands": resumed.get("commands") or []},
+                )
+                continue
             default_row = defaults[id(target.machine)]
             if default_row is None:
                 continue
@@ -874,7 +977,12 @@ async def _restore(db: Any, campaign: Any, moment: datetime, backend: Any, simul
                 db,
                 campaign,
                 start_key,
-                f"token par défaut relancé (tentative {attempt + 1})",
+                (
+                    "reprise par HiveOS (miner start) : "
+                    + ", ".join(resumed_hiveos)
+                    if resumed_hiveos
+                    else f"token par défaut relancé (tentative {attempt + 1})"
+                ),
                 simulated=simulated,
                 detail={"commands": commands},
             )
@@ -883,6 +991,20 @@ async def _restore(db: Any, campaign: Any, moment: datetime, backend: Any, simul
         db.commit()
         if errors:
             return {"campaign": campaign.id, "action": "default-start-failed", "attempt": attempt, "errors": errors}
+
+    # §3e : sur un rig HiveOS, la reprise est vérifiée sur last_stat.json —
+    # inutile d'attendre une collecte Fossor qui ne voit que les mineurs lancés ici.
+    if hiveos_verdict is not None:
+        log_event(
+            db,
+            campaign,
+            "restore-verified",
+            f"hashrate revenu : {hiveos_verdict['hashrate_hs']:.0f} H/s "
+            f"({hiveos_verdict['source']}) — reprise par HiveOS (miner start)",
+            detail=hiveos_verdict,
+        )
+        return _finish(db, campaign, moment, True, hiveos_verdict["hashrate_hs"],
+                       hiveos_verdict["source"], simulated)
 
     if simulated:
         log_event(

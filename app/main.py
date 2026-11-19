@@ -4,6 +4,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from app.database import init_db
 from app.auth import router as auth_router
 from app.routers.machines import router as machines_router
+from app.routers.hiveos import router as hiveos_router, router_settings as hiveos_settings_router
 from app.routers.audit import router as audit_router
 from app.routers.devices import router as devices_router
 from app.routers.config import router as config_router
@@ -41,6 +42,8 @@ app.add_middleware(
 # Include routers
 app.include_router(auth_router)
 app.include_router(machines_router)
+app.include_router(hiveos_router)
+app.include_router(hiveos_settings_router)
 app.include_router(audit_router)
 app.include_router(devices_router)
 app.include_router(config_router)

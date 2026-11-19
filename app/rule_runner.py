@@ -235,6 +235,25 @@ async def verify_resume(
         await asyncio.sleep(interval_s)
 
 
+def _hiveos_ack(db: Session) -> bool:
+    from app.ai_config import get_setting
+
+    return bool(get_setting(db, "hiveos_watchdog_ack", False))
+
+
+def _hiveos_stored(machine: Any) -> dict[str, Any] | None:
+    import json
+
+    raw = getattr(machine, "hiveos_json", None)
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return data if isinstance(data, dict) and data.get("detected") else None
+
+
 async def evaluate(
     db: Session,
     *,
@@ -304,6 +323,39 @@ async def evaluate(
         for machine in db.query(Machine).all():
             if last_state(db, machine.id) != "stopped":
                 continue
+            from app import hiveos as HV
+
+            if HV.is_hiveos(machine):
+                from app import hiveos_remote as HR
+
+                probe_data = _hiveos_stored(machine)
+                if probe_data is None:
+                    _journal(db, "error", machine_id=machine.id, simulated=False, now=moment,
+                             detail="reprise HiveOS impossible : aucune sonde enregistrée")
+                    continue
+                try:
+                    hive = await HR.resume(machine, probe_data, ack_watchdog=_hiveos_ack(db))
+                except HV.HiveosError as exc:
+                    _journal(db, "error", machine_id=machine.id, simulated=False, now=moment,
+                             detail=f"reprise HiveOS échouée : {exc}")
+                    executed.append({"machine_id": machine.id, "action": "resume", "ok": False,
+                                     "detail": str(exc)})
+                    continue
+                _journal(
+                    db, "resume", machine_id=machine.id, simulated=False, now=moment,
+                    detail=(
+                        "reprise par HiveOS (miner start) — hashrate vérifié : "
+                        f"{hive.get('hashrate_hs')} H/s"
+                        if hive.get("verified") else
+                        f"reprise par HiveOS (miner start) — non vérifiée ({hive.get('note')})"
+                    ),
+                )
+                resumed.append({"machine_id": machine.id, "name": machine.name,
+                                "verified": hive.get("verified"),
+                                "hashrate_hs": hive.get("hashrate_hs"),
+                                "source": hive.get("source")})
+                continue
+
             profile = _profile(db, machine)
             if profile is None:
                 _journal(db, "error", machine_id=machine.id, simulated=False, now=moment,
@@ -358,6 +410,45 @@ async def evaluate(
             reduced = decision["mode"] == "reduce" and keeps
             gpus = [int(a.get("index")) for a in keeps if a.get("index") is not None] if reduced else None
             action = "restart" if reduced else "stop"
+            from app import hiveos as HV
+
+            if HV.is_hiveos(machine):
+                if reduced:
+                    _journal(db, "error", machine_id=machine.id, simulated=False, now=moment,
+                             detail=HV.PARTIAL_REFUSAL)
+                    executed.append({"machine_id": machine.id, "name": machine.name,
+                                     "action": "stop", "ok": False, "detail": HV.PARTIAL_REFUSAL})
+                    continue
+                from app import hiveos_remote as HR
+
+                probe_data = _hiveos_stored(machine)
+                if probe_data is None:
+                    _journal(db, "error", machine_id=machine.id, simulated=False, now=moment,
+                             detail="arrêt HiveOS impossible : aucune sonde enregistrée")
+                    executed.append({"machine_id": machine.id, "name": machine.name,
+                                     "action": "stop", "ok": False,
+                                     "detail": "aucune sonde HiveOS"})
+                    continue
+                try:
+                    hive = await HR.stop(machine, probe_data, ack_watchdog=_hiveos_ack(db))
+                except HV.HiveosError as exc:
+                    _journal(db, "error", machine_id=machine.id, simulated=False, now=moment,
+                             detail=f"arrêt HiveOS échoué : {exc}")
+                    executed.append({"machine_id": machine.id, "name": machine.name,
+                                     "action": "stop", "ok": False, "detail": str(exc)})
+                    continue
+                _journal(
+                    db, "action", machine_id=machine.id, simulated=False, now=moment,
+                    detail=(
+                        "mineur HiveOS arrêté (miner stop) — "
+                        + ("hashrate tombé" if hive.get("hashrate_dropped")
+                           else f"hashrate encore lu ({hive.get('note')})")
+                        + f" — {machine_entry['reason']}"
+                    ),
+                )
+                executed.append({"machine_id": machine.id, "name": machine.name,
+                                 "action": "stop", "ok": True, "result": hive})
+                continue
             try:
                 result = await runner(machine, profile, action, gpus=gpus) if reduced \
                     else await runner(machine, profile, action)
