@@ -135,12 +135,17 @@ async def read_pve_cache(db: Session = Depends(get_db), _user=Depends(require_lo
 
     model = stored_pve_model(db)
     if not model:
-        raise HTTPException(status_code=400, detail="Aucun modèle Proxmox enregistré")
+        # Aucun modèle Proxmox : pas de cache à montrer, et pas d'erreur console
+        # dans l'UI quand l'hôte est libvirt.
+        return {"configured": False, "path": P.PVE_TMP_DIR, "bytes": 0, "files": [],
+                "keep_image_cache": False}
     machine = db.query(Machine).filter(Machine.id == model["host_id"]).first()
     if machine is None:
         raise HTTPException(status_code=400, detail="Machine hôte introuvable")
     try:
-        return await PR.cache_info(machine, model, simulated=simulation_enabled(db))
+        info = await PR.cache_info(machine, model, simulated=simulation_enabled(db))
+        info["configured"] = True
+        return info
     except Exception as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 

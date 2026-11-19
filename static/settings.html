@@ -1370,7 +1370,7 @@ async function loadPve(){
   pveField('pveNodePort').value=m.node_port||19333;
   pveField('pveBackupPath').value=m.wallet_backup_path||'/home/specminer/data/wallet.dat';
   pveField('pveKeepCache').checked=!!m.keep_image_cache;
-  refreshPveCache();
+  if(m.host_id){refreshPveCache();}else{pveField('pveCacheInfo').textContent='aucun modèle Proxmox';}
   pveField('pveNodeUrl').value=m.node_url||'';
   pveField('pveNodeSha').value=m.node_sha256||'';
   pveField('pveNodeBin').value=m.node_binary||'';
@@ -1402,6 +1402,7 @@ async function refreshPveCache(){
     const r=await fetch('/api/spec/pve/cache',{credentials:'include'});
     const d=await r.json();
     if(!r.ok){box.textContent=d.detail||'cache illisible';return;}
+    if(d.configured===false){box.textContent='aucun modèle Proxmox';return;}
     const mb=(d.bytes/1048576).toFixed(1);
     box.textContent=d.path+' — '+(d.bytes?mb+' Mo':'vide')+' — cache '+(d.keep_image_cache?'conservé':'supprimé après usage');
   }catch(e){box.textContent='cache illisible';}
