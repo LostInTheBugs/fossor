@@ -71,7 +71,10 @@ async def test_creation_supprime_le_dossier_de_travail(monkeypatch, tmp_path):
     result = await PR.create(object(), pve_model(), "fossor-gaps-abc", 9900,
                              ssh_public_key=KEY, private_key="cle", simulated=False)
     assert result["cache_kept"] is False
-    assert f"rm -rf {tmp_path / 'fossor-pve'}" in result["commands"]
+    # La clé de rebond vit dans ce dossier : l'image part, le dossier reste
+    # jusqu'à la destruction de la dernière VM (5e essai).
+    assert not any(f"rm -rf {tmp_path / 'fossor-pve'}" in command for command in result["commands"])
+    assert any("images" in command and "rm -f" in command for command in result["commands"])
 
     kept = await PR.create(object(), pve_model(keep_image_cache=True), "fossor-gaps-abc", 9900,
                            ssh_public_key=KEY, private_key="cle", simulated=False)

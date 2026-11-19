@@ -52,8 +52,10 @@ DEFAULT_CI_STORAGE = "local"
 PVE_TMP_DIR = "/var/tmp/fossor-pve"
 IMAGE_DIR = f"{PVE_TMP_DIR}/images"
 PUBKEY_PATH = f"{PVE_TMP_DIR}/fossor.pub"
-KEY_PATH = "/root/.ssh/fossor-vm"
-KNOWN_HOSTS = "/root/.ssh/known_hosts.fossor-vm"
+# Clé privée de rebond **dans le dossier de travail du pilote**, jamais dans
+# /root/.ssh : elle disparaît avec le dossier (ou avec la dernière VM).
+KEY_PATH = f"{PVE_TMP_DIR}/fossor-vm"
+KNOWN_HOSTS = f"{PVE_TMP_DIR}/known_hosts.fossor-vm"
 CHECKSUM_ALGOS = ("sha256", "sha512")
 GUEST_AGENT_PACKAGE = "qemu-guest-agent"
 LOCAL_SNIPPET_DIR = "/var/lib/vz/snippets"
@@ -891,8 +893,55 @@ def detect_plan() -> list[VmStep]:
     ]
 
 
+def image_cleanup_plan(model: dict[str, Any]) -> list[VmStep]:
+    """Retire l'image et la clé publique, **garde** le dossier et la clé de rebond.
+
+    Appelé juste après la création quand le cache d'image est désactivé :
+    supprimer tout ``PVE_TMP_DIR`` emporterait la clé privée dont le
+    provisionnement et le démarrage du mineur ont encore besoin.
+    """
+    script = 'p="$1"; k="$2"; d="$3"; rm -f "$p" "$k"; rmdir "$d" 2>/dev/null || true'
+    return [
+        VmStep(
+            "retrait de l'image du pilote (clé de rebond conservée)",
+            _sh(script, image_path(model), PUBKEY_PATH, IMAGE_DIR),
+            allow_fail=True,
+        )
+    ]
+
+
+def key_remove_plan() -> list[VmStep]:
+    """Clé privée de rebond et ``known_hosts`` dédiés — jamais laissés sur l'hôte."""
+    return [
+        VmStep(
+            "retrait de la clé de rebond et du known_hosts",
+            _sh('rm -f "$1" "$2"', KEY_PATH, KNOWN_HOSTS),
+            allow_fail=True,
+        )
+    ]
+
+
+def last_vm_cleanup_plan(remaining: list[str], keep_cache: bool = False) -> list[VmStep]:
+    """Après destruction : rien tant qu'une VM Fossor subsiste, sinon clé + cache.
+
+    La clé de rebond ne reste jamais sur l'hôte à la fin d'une campagne :
+    elle part avec la dernière VM, et le cache d'image seulement s'il est
+    désactivé.
+    """
+    if remaining:
+        return []
+    steps = key_remove_plan()
+    if not keep_cache:
+        steps += cleanup_plan()
+    return steps
+
+
 def cleanup_plan(model: dict[str, Any] | None = None) -> list[VmStep]:
-    """Ménage : image téléchargée et dossier temporaire — chemins fixes, jamais saisis."""
+    """Ménage complet : dossier de travail et clé de rebond — chemins fixes.
+
+    Réservé à la fin de la dernière VM Fossor (ou à la purge explicite du
+    cache) : en cours de campagne, la clé privée vit dans ce dossier.
+    """
     return [VmStep("suppression du dossier temporaire du pilote", ("rm", "-rf", PVE_TMP_DIR))]
 
 
@@ -955,6 +1004,7 @@ __all__ = [
     "DEFAULT_VMID_MAX", "DEFAULT_VMID_MIN", "IMAGE_DIR", "KEY_PATH", "KNOWN_HOSTS",
     "OWNER_MARKER", "PUBKEY_PATH", "PVE_TAG", "PVE_TMP_DIR", "VM_USER",
     "choose_vmid", "cleanup_plan", "config_plan", "create_plan", "description_text",
+    "image_cleanup_plan", "key_remove_plan", "last_vm_cleanup_plan",
     "destroy_plan", "detect_plan", "eligible_storages", "ensure_destroyable",
     "ensure_owned", "image_path", "image_plan", "in_range", "inspect_plan", "ip_plan",
     "is_fossor_name", "is_owned", "parse_cluster_resources", "parse_detect",

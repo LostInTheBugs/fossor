@@ -94,6 +94,12 @@ async def test_electricity_tariffs_rule_and_power_controller(e2e_server):
             await page.locator("#tabEnergy").click()
             await page.wait_for_selector("#panel-energy", state="visible", timeout=10000)
             await page.wait_for_selector("#enPriceNow", state="visible", timeout=10000)
+            # Le texte est posé par loadEnergy() : attendre le CONTENU attendu,
+            # pas un délai fixe (lecture de « … » avant remplissage).
+            await page.wait_for_function(
+                "document.querySelector('#enPriceNow').textContent.includes('€/kWh')",
+                timeout=15000,
+            )
             assert "€/kWh" in await page.inner_text("#enPriceNow")
 
             await page.select_option("#enMode", "ranges")

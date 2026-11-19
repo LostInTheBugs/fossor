@@ -230,6 +230,20 @@ async def _vm_liveness_startup(
     return None
 
 
+def _log_ssh_retries(db: Any, campaign: Any, simulated: bool) -> None:
+    """Écrit au journal de campagne chaque nouvel essai SSH (constat n°1)."""
+    from app import pve_remote as PR
+
+    for item in PR.drain_retries():
+        log_event(
+            db, campaign, "vm-ssh-retry",
+            f"{item['title']} : essai {item['attempt']}/{item['attempts']} "
+            f"après « {item['error']} »",
+            result="warn", simulated=simulated, detail=item,
+        )
+    db.commit()
+
+
 async def _spec_start_steps(
     db: Any,
     campaign: Any,
@@ -345,6 +359,7 @@ async def _spec_start_steps(
             detail={"commands": result.get("commands") or [], "address": address},
         )
         db.commit()
+        _log_ssh_retries(db, campaign, simulated)
 
     # 3 bis. Compatibilité du binaire **avant** campaign-started : un chargeur
     # qui refuse GLIBC doit faire échouer la campagne sans attendre le mineur.
@@ -408,6 +423,7 @@ async def _spec_start_steps(
             detail={"commands": commands, "mode": mode, "vm": row.name, "hypervisor": vm.kind},
         )
         db.commit()
+        _log_ssh_retries(db, campaign, simulated)
         if mode == "vm" and not simulated:
             failure = await _vm_liveness_startup(
                 db, campaign, vm, host, model, profile, row)

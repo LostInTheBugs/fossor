@@ -1427,6 +1427,7 @@ async function saveSpecHost(){
   if(r.ok){const d=await r.json();applySpecHostKind(d.spec_host_kind||'');}
 }
 async function loadSpec(){
+  loadVmList();
   const r=await fetch('/api/spec/settings',{credentials:'include'});
   if(!r.ok){vmField('vmState').textContent='lecture impossible';return;}
   const d=await r.json(); specInfo=d;
@@ -1507,13 +1508,16 @@ async function loadVmList(){
   });
 }
 async function vmAction(id,verb){
-  const path=verb==='destroy'?'/api/vms/'+id+'/destroy':('/api/vms/'+id+'/'+verb);
+  // La route réelle est /backup-check : le bouton « Contrôle sauvegarde »
+  // appelait /backup, inexistant (404). La liste est rafraîchie même en échec.
+  const route=verb==='backup'?'backup-check':verb;
+  const path='/api/vms/'+id+'/'+route;
   const body=verb==='destroy'?JSON.stringify({confirm:(document.getElementById('vmConfirm'+id)||{}).value||''}):'{}';
   const r=await fetch(path,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:body});
   const d=await r.json();
+  await loadVmList();
   if(!r.ok){alert(d.detail||'action refusée');return;}
   if(verb==='backup'){alert(d.verified?'Sauvegarde vérifiée : '+(d.reason||''):'Sauvegarde refusée : '+(d.reason||''));}
-  loadVmList();
 }
 document.addEventListener('click',(e)=>{
   const b=e.target.closest('button[data-vmact]');

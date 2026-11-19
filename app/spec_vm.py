@@ -776,8 +776,31 @@ def binary_probe_plan(ip: str, profile: dict[str, Any],
                  timeout=60)]
 
 
+def _version_tuple(text: str) -> tuple[int, ...]:
+    """« 2.39 » → (2, 39) ; chaîne vide → () (version inconnue)."""
+    parts = re.findall(r"\d+", text or "")
+    return tuple(int(part) for part in parts[:3])
+
+
+def _loader_detail(raw: str) -> str:
+    """Ligne du chargeur (sortie brute), sans les marqueurs de la sonde."""
+    for line in (raw or "").splitlines():
+        text = line.strip()
+        if text.startswith(("GLIBC:", "EXIT:")):
+            continue
+        if "GLIBC_" in text and ("not found" in text or "version" in text):
+            return text[:300]
+    return ""
+
+
 def parse_binary_probe(text: str) -> dict[str, Any]:
-    """Verdict du lancement : chargeur manquant ou GLIBC insuffisante → refus."""
+    """Verdict du lancement : chargeur manquant ou GLIBC insuffisante → refus.
+
+    Le conseil « image plus récente » n'a de sens que si la VM fournit une
+    GLIBC **plus ancienne** que celle exigée. Quand la VM est déjà plus
+    récente, l'écart vient d'ailleurs : on rend la sortie brute du chargeur
+    au lieu d'un conseil faux (constat n°5 du 5e essai).
+    """
     raw = text or ""
     match = re.search(r"GLIBC:([0-9][0-9.]*)", raw)
     provided = match.group(1) if match else ""
@@ -785,15 +808,25 @@ def parse_binary_probe(text: str) -> dict[str, Any]:
     code = int(exit_match.group(1)) if exit_match else 0
     needed = re.search(r"GLIBC_([0-9][0-9.]*)", raw)
     if needed:
+        required = needed.group(1)
+        detail = _loader_detail(raw)
+        older = bool(
+            provided
+            and _version_tuple(provided)
+            and _version_tuple(required) > _version_tuple(provided)
+        )
+        base = (f"le binaire exige GLIBC_{required}, la VM fournit "
+                f"{provided or 'une version inconnue'}")
+        message = (f"{base} : choisissez une image plus récente" if older
+                   else f"{base} : sortie du chargeur — {detail or raw.strip()[:200]}")
         return {
             "ok": False,
             "exit": code,
-            "glibc_required": needed.group(1),
+            "glibc_required": required,
             "glibc_provided": provided,
-            "message": (
-                f"le binaire exige GLIBC_{needed.group(1)}, la VM fournit "
-                f"{provided or 'une version inconnue'} : choisissez une image plus récente"
-            ),
+            "advise_newer_image": older,
+            "loader_output": detail or raw.strip()[:200],
+            "message": message,
         }
     if code in (126, 127) or "not found" in raw.lower():
         return {
