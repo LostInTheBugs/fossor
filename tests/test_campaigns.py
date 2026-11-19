@@ -25,11 +25,12 @@ class TestStateMachine:
         expected = {
             "proposed": {"approved", "cancelled"},
             "approved": {"running", "cancelled"},
-            "running": {"stopping", "failed", "cancelled"},
+            "running": {"stopping", "failed", "cancelled", "miner_stopped"},
             "stopping": {"done", "failed", "cancelled"},
             "done": set(),
             "failed": set(),
             "cancelled": set(),
+            "miner_stopped": set(),
         }
         for source, targets in expected.items():
             assert set(C.next_statuses(source)) == targets, source
