@@ -674,3 +674,117 @@ def _db():
     from app.database import SessionLocal
 
     return SessionLocal()
+
+
+class TestHashrateEtBinaireFossor:
+    """Binaire déposé dans Fossor, hashrate **dans** la VM, cache absent après usage."""
+
+    async def test_binaire_fossor_hashrate_api_et_journal_puis_cache(self, harness, monkeypatch, tmp_path):
+        import asyncio
+        import io
+        import tarfile
+        from pathlib import Path
+
+        from app import binaries as B
+        from app import campaign_runner as RUN
+        from app import pve_remote as PR
+        from app.models import MinerProfile, SpecVm
+        from app.routers.campaigns import campaign_to_dict
+        from app.routers.miners import profile_to_dict
+
+        monkeypatch.setenv("FOSSOR_DATA_DIR", str(tmp_path / "data"))
+        db = _db()
+        try:
+            campaign, host, model = _seed(db, harness)
+            profile = db.query(MinerProfile).filter(MinerProfile.id == campaign.profile_id).one()
+
+            miner = '''#!/usr/bin/env python3
+import http.server, json, threading, time
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = json.dumps({"hashrate": {"total": [4242.0]}}).encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *a):
+        pass
+srv = http.server.ThreadingHTTPServer(("127.0.0.1", 4048), H)
+threading.Thread(target=srv.serve_forever, daemon=True).start()
+while True:
+    print("hashrate: 4242.0 H/s", flush=True)
+    time.sleep(1)
+'''
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+                info = tarfile.TarInfo("mineur")
+                info.size = len(miner)
+                info.mode = 0o755
+                tar.addfile(info, io.BytesIO(miner.encode()))
+            saved = B.save_binary(profile.uuid, buf.getvalue())
+            print("### archive Fossor:", saved)
+
+            profile.binary_source = "fossor"
+            profile.binary_url = ""
+            profile.binary_stored = saved["path"]
+            profile.binary_size = saved["size"]
+            profile.sha256 = saved["sha256"]
+            profile.api_port = 4048
+            profile.api_kind = "cpuminer"
+            profile.wallet_mode = "pool_address"
+            db.commit()
+            await _guest(f"rm -f /home/{SSH_USER}/data/wallet*")
+
+            print("\n### ETAPE 1 — campagne vm avec binaire envoyé par Fossor")
+            await RUN.tick(db, now=RUN.C.now_utc(), simulated=False)
+            db.refresh(campaign)
+            print("statut:", campaign.status, "| note:", campaign.note)
+            assert campaign.status == "running", campaign.note
+            vm = db.query(SpecVm).filter(SpecVm.campaign_id == campaign.id).one()
+            print("VM:", vm.name, "vmid", vm.vmid, "ip", vm.ip)
+            assert not Path(harness["P"].PVE_TMP_DIR).exists(), "dossier de travail laissé après création"
+            print("### /var/tmp/fossor-pve après création :", Path(harness["P"].PVE_TMP_DIR).exists())
+            data_listing = await _guest(f"ls -A /home/{SSH_USER}/data")
+            print("### dossier data de la VM:", data_listing.split())
+            assert "wallet" not in data_listing
+
+            await asyncio.sleep(2)
+            info = profile_to_dict(profile)
+            print("\n### ETAPE 2 — hashrate par l'API du mineur (cpuminer /summary)")
+            api = await PR.collect(host, vm.vmid, vm.ip, info, simulated=False)
+            print("hashrate:", api["hashrate_hs"], "| source:", api["hashrate_source"])
+            assert api["hashrate_hs"] == 4242.0 and api["hashrate_source"].startswith("API")
+
+            print("\n### ETAPE 3 — hashrate par le journal de la VM (sans api_port)")
+            profile.api_port = 0
+            db.commit()
+            journal = await PR.collect(host, vm.vmid, vm.ip, profile_to_dict(profile), simulated=False)
+            print("hashrate:", journal["hashrate_hs"], "| source:", journal["hashrate_source"])
+            assert journal["hashrate_hs"] == 4242.0 and journal["hashrate_source"].startswith("journal")
+
+            print("\n### ETAPE 4 — relevé lisible par /api/campaigns/{id}")
+            vm.hashrate_hs = journal["hashrate_hs"]
+            vm.hashrate_source = journal["hashrate_source"]
+            campaign.status = "running"
+            db.commit()
+            data = campaign_to_dict(db, campaign)
+            print("campagne:", json.dumps({k: data[k] for k in ("id", "hashrate_hs", "hashrate_source")}))
+            assert data["hashrate_hs"] == 4242.0
+
+            print("\n### ETAPE 5 — wallet de pool : contrôle et destruction")
+            verdict = await PR.check_backup(host, vm.ip, f"/home/{SSH_USER}/data/wallet.dat",
+                                            now_epoch=int(RUN.C.now_utc().timestamp()),
+                                            max_age_days=7, simulated=False,
+                                            wallet_mode="pool_address")
+            print("verdict:", json.dumps(verdict))
+            assert verdict["verified"] is True and verdict["mode"] == "pool_address"
+
+            destroyed = await PR.destroy(host, model, vm.vmid, backup=verdict,
+                                         now_epoch=int(RUN.C.now_utc().timestamp()),
+                                         max_age_days=7, simulated=False)
+            print("destruction:", json.dumps({k: v for k, v in destroyed.items() if k != "commands"}))
+            assert destroyed["destroyed"] is True
+            assert not Path(harness["P"].PVE_TMP_DIR).exists(), "cache laissé après destruction"
+            print("### /var/tmp/fossor-pve après destruction :", Path(harness["P"].PVE_TMP_DIR).exists())
+        finally:
+            db.close()

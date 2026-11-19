@@ -189,7 +189,7 @@ class LibvirtBackend:
 
         return await VR.check_backup(
             host, row.ip, path, now_epoch=now_epoch, max_age_days=max_age_days,
-            simulated=simulated,
+            simulated=simulated, wallet_mode=str(model.get("_wallet_mode") or "file"),
         )
 
     async def shutdown(self, host: Any, model: dict, row: Any, simulated: bool) -> dict:
@@ -210,6 +210,7 @@ class LibvirtBackend:
         return await VR.destroy(
             host, row.name, description, backup=backup, now_epoch=now_epoch,
             max_age_days=max_age_days, simulated=simulated,
+            keep_cache=bool(model.get("keep_image_cache")),
         )
 
     async def list(self, host: Any, simulated: bool) -> dict:
@@ -329,7 +330,7 @@ class PveBackend:
 
         return await PR.check_backup(
             host, row.ip, path, now_epoch=now_epoch, max_age_days=max_age_days,
-            simulated=simulated,
+            simulated=simulated, wallet_mode=str(model.get("_wallet_mode") or "file"),
         )
 
     async def ensure_owned_live(self, host: Any, model: dict, row: Any) -> dict:

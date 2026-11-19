@@ -140,8 +140,14 @@ def validate_vm_model(data: dict[str, Any] | None) -> dict[str, Any]:
         _require(bool(_RE_ABS_PATH.match("/" + node_binary)), "nœud : chemin relatif simple")
         _require(".." not in node_binary.split("/"), "nœud : « .. » interdit")
 
+    keep_cache = data.get("keep_image_cache")
+    if isinstance(keep_cache, str):
+        keep_cache = keep_cache.strip().lower() in ("1", "true", "yes", "on")
+    keep_cache = bool(keep_cache)
+
     return {
         "host_id": host_id,
+        "keep_image_cache": keep_cache,
         "base_image_url": url,
         "base_image_sha256": sha,
         "base_image_name": name,
@@ -556,6 +562,7 @@ def provision_plan(
     *,
     coin: str,
     step_maker: Any = None,
+    binary_pushed: bool = False,
 ) -> list[VmStep]:
     """Installation dans la VM : nœud, mineur, wallet — SHA256 vérifié **dans la VM**.
 
@@ -608,14 +615,23 @@ def provision_plan(
         ]
     binary_dir = M.install_dir(profile["software"], profile["version"])
     miner_archive = f"{INSTALL_DIR}/miner.tar.gz"
-    steps += [
-        make("répertoire du mineur", ip, ["sudo", "-n", "install", "-d", "-m", "0755", binary_dir]),
-        make(
+    steps.append(make("répertoire du mineur", ip, ["sudo", "-n", "install", "-d", "-m", "0755", binary_dir]))
+    if str(profile.get("binary_source") or "url") == "fossor":
+        # Jamais d'exécution sans somme vérifiée : l'archive a été poussée par
+        # Fossor (somme vérifiée à l'envoi), le pas suivant la revérifie ici.
+        _require(binary_pushed,
+                 "binaire fourni par Fossor : l'archive doit être poussée et vérifiée avant le provisionnement")
+        steps.append(make(
+            "archive du mineur envoyée par Fossor (déjà vérifiée à l'envoi)",
+            ip, ["test", "-s", miner_archive]))
+    else:
+        steps.append(make(
             "téléchargement du mineur dans la VM",
             ip,
             ["sh", "-c", download, "fossor", miner_archive, profile["binary_url"]],
             timeout=600,
-        ),
+        ))
+    steps += [
         make(
             "SHA256 du mineur vérifié dans la VM",
             ip,
@@ -626,7 +642,7 @@ def provision_plan(
         make("binaire du mineur exécutable",
                 ip, ["sudo", "-n", "chmod", "0755", M.binary_path(profile)]),
     ]
-    if model.get("wallet_create_cmd"):
+    if model.get("wallet_create_cmd") and str(profile.get("wallet_mode") or "file") != "pool_address":
         values = {"datadir": DATA_DIR, "coin": coin}
         argv = render_template(model["wallet_create_cmd"], values)
         steps.append(
@@ -713,15 +729,73 @@ def guest_collect_plan(
         )
     ]
     if profile and profile.get("api_port"):
+        kind = str(profile.get("api_kind") or "").lower()
+        path = "/summary" if kind == "cpuminer" else "/"
         steps.append(
             make(
                 "hashrate du mineur dans la VM",
                 ip,
-                ["curl", "-s", "--max-time", "3", f"http://127.0.0.1:{profile['api_port']}/"],
+                ["curl", "-s", "--max-time", "3", f"http://127.0.0.1:{profile['api_port']}{path}"],
+                allow_fail=True,
+            )
+        )
+    elif profile:
+        # Pas d'API déclarée : dernière ligne de hashrate du journal, comme la sonde hôte.
+        steps.append(
+            make(
+                "hashrate du mineur dans la VM",
+                ip,
+                ["sh", "-c", 'tail -n 80 -- "$1" 2>/dev/null || true', "fossor", M.log_file(profile)],
                 allow_fail=True,
             )
         )
     return steps
+
+
+_RE_LOG_HS = re.compile(
+    r"(?i)(?:hashrate|speed|total)?[^0-9\n]{0,24}([0-9]+(?:\.[0-9]+)?)\s*([kKmMgGtT]?)\s*(?:h/s|hash/s|hps)"
+)
+_LOG_FACTOR = {"": 1.0, "k": 1e3, "m": 1e6, "g": 1e9, "t": 1e12}
+
+
+def parse_log_hashrate(text: str) -> float | None:
+    """Dernière ligne de hashrate d'un journal de mineur, unités normalisées en H/s."""
+    found: float | None = None
+    for raw in (text or "").splitlines():
+        match = _RE_LOG_HS.search(raw)
+        if match:
+            found = float(match.group(1)) * _LOG_FACTOR[match.group(2).lower()]
+    return found
+
+
+def parse_cpuminer_summary(text: str) -> float | None:
+    """``cpuminer -b 127.0.0.1:4048`` → ``summary.hashrate.total`` (liste, H/s)."""
+    import json
+
+    try:
+        payload = json.loads(text or "")
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    hashrate = payload.get("hashrate")
+    if not isinstance(hashrate, dict):
+        return None
+    total = hashrate.get("total")
+    if isinstance(total, (int, float)):
+        return float(total)
+    if isinstance(total, list):
+        values = [float(item) for item in total if isinstance(item, (int, float))]
+        if values:
+            return values[-1]
+    return None
+
+
+def parse_vm_hashrate(text: str) -> float | None:
+    """Hashrate dans la VM : API (cpuminer/générique) d'abord, journal ensuite."""
+    from app.miner_remote import parse_hashrate
+
+    return parse_cpuminer_summary(text) or parse_hashrate(text) or parse_log_hashrate(text)
 
 
 def state_plan(name: str) -> list[VmStep]:
@@ -787,6 +861,43 @@ def backup_check_plan(ip: str, path: str, step_maker: Any = None) -> list[VmStep
     make = step_maker or vm_step
     return [make("contrôle de la sauvegarde du wallet (stat, sans lecture)", ip,
                     backup_stat_argv(path), allow_fail=True)]
+
+
+def pool_wallet_list_argv(directory: str) -> list[str]:
+    """Liste le dossier data : aucun fichier wallet ne doit y exister."""
+    _require(bool(_RE_ABS_PATH.match(directory or "")), "dossier data invalide")
+    return ["sh", "-c", 'ls -A -- "$1" 2>/dev/null || true', "fossor", directory]
+
+
+def pool_wallet_check_plan(ip: str, directory: str, step_maker: Any = None) -> list[VmStep]:
+    make = step_maker or vm_step
+    return [make("wallet de pool : aucun fichier local (liste du dossier data)", ip,
+                 pool_wallet_list_argv(directory), allow_fail=True)]
+
+
+def parse_dir_listing(text: str) -> list[str]:
+    return [line.strip() for line in (text or "").splitlines() if line.strip()]
+
+
+_WALLET_FILE = re.compile(r"(?i)(wallet|\.dat$|\.keys$|\.wallet$)")
+
+
+def evaluate_pool_wallet(entries: list[str], now_epoch: int) -> dict[str, Any]:
+    """Vérifié quand le dossier data ne contient **aucun** fichier wallet."""
+    found = [name for name in entries if _WALLET_FILE.search(name)]
+    verified = not found
+    return {
+        "verified": verified,
+        "mode": "pool_address",
+        "reason": (
+            "wallet de pool : aucun fichier local à sauvegarder"
+            if verified else
+            f"wallet de pool : fichier local inattendu ({', '.join(found[:5])})"
+        ),
+        "entries": len(entries),
+        "wallet_files": found[:10],
+        "checked_at_epoch": int(now_epoch),
+    }
 
 
 def parse_backup_stat(text: str) -> dict[str, Any]:

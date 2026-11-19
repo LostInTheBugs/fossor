@@ -266,6 +266,11 @@ async def create(
                 f"{pushed['algo']} vérifiée sur l'hôte)"
             )
         commands.append(step.command())
+    cache_kept = bool(model.get("keep_image_cache"))
+    if not cache_kept:
+        # Cache désactivé : l'image ne reste pas sur l'hôte après la création.
+        await _run(host, P.cleanup_plan()[0])
+        commands.append(P.cleanup_plan()[0].command())
     return {
         "simulated": False,
         "name": name,
@@ -273,6 +278,7 @@ async def create(
         "state": "running",
         "image": P.image_path(model),
         "image_source": image_source,
+        "cache_kept": cache_kept,
         "note": note,
         "commands": commands,
     }
@@ -386,13 +392,17 @@ async def destroy(
     # La VM emporte son snippet cloud-init ``fossor-user-<vmid>.yaml`` : le
     # laisser dans ``snippets/`` est un résidu du test réel (voir RAPPORT).
     plan = P.destroy_plan(vmid) + P.snippet_remove_plan(model, vmid)
+    if not bool(model.get("keep_image_cache")):
+        # Cache désactivé : la clé publique et l'image du pilote quittent l'hôte.
+        plan += P.cleanup_plan()
     if simulated:
         return _simulated(plan, {"destroyed": False})
     commands: list[str] = []
     for step in plan:
         await _run(host, step)
         commands.append(step.command())
-    return {"simulated": False, "destroyed": True, "commands": commands}
+    return {"simulated": False, "destroyed": True,
+            "cache_kept": bool(model.get("keep_image_cache")), "commands": commands}
 
 
 async def list_guests(host: Any, *, simulated: bool) -> dict[str, Any]:
@@ -475,7 +485,13 @@ async def provision(
     """Nœud, wallet et mineur dans la VM — plan de :mod:`app.spec_vm`, SSH Proxmox."""
     from app import spec_vm as V
 
-    plan = V.provision_plan(model, profile, ip, coin=coin, step_maker=P.vm_step)
+    pushed = False
+    if str(profile.get("binary_source") or "url") == "fossor":
+        if not simulated:
+            await push_guest_binary(host, ip, profile, bridge=str(model.get("bridge") or ""))
+        pushed = True
+    plan = V.provision_plan(model, profile, ip, coin=coin, step_maker=P.vm_step,
+                            binary_pushed=pushed)
     if simulated:
         return _simulated(plan, {"address": expected_address, "verified": False})
     from app.vm_remote import _address_from_stdout
@@ -545,24 +561,115 @@ async def collect(host: Any, vmid: int, ip: str, profile: dict[str, Any] | None,
         elif step.title == "processus du mineur dans la VM":
             processes = parse_ps(result["stdout"])
         elif step.title == "hashrate du mineur dans la VM":
-            hashrate = parse_hashrate(result["stdout"])
+            from app.spec_vm import parse_vm_hashrate
+
+            hashrate = parse_vm_hashrate(result["stdout"])
+    source = ""
+    if hashrate is not None:
+        source = "API du mineur (VM)" if (profile or {}).get("api_port") else "journal du mineur (VM)"
     return {"simulated": False, "state": state, "hashrate_hs": hashrate,
-            "processes": processes, "commands": [s.command() for s in plan]}
+            "hashrate_source": source, "processes": processes,
+            "commands": [s.command() for s in plan]}
 
 
 async def check_backup(host: Any, ip: str, path: str, *, now_epoch: int,
-                       max_age_days: int, simulated: bool) -> dict[str, Any]:
+                       max_age_days: int, simulated: bool,
+                       wallet_mode: str = "file") -> dict[str, Any]:
     """§10.11 : taille et date seulement, jamais le contenu du wallet."""
+    import posixpath
+
     from app import spec_vm as V
 
-    plan = V.backup_check_plan(ip, path, step_maker=P.vm_step)
+    if wallet_mode == "pool_address":
+        plan = V.pool_wallet_check_plan(ip, posixpath.dirname(path) or V.DATA_DIR,
+                                        step_maker=P.vm_step)
+    else:
+        plan = V.backup_check_plan(ip, path, step_maker=P.vm_step)
     if simulated:
         return _simulated(plan, {"verified": False, "reason": "simulation"})
     result = await _run(host, plan[0])
-    stat = V.parse_backup_stat(result["stdout"])
-    verdict = V.evaluate_backup(stat, now_epoch, max_age_days)
+    if wallet_mode == "pool_address":
+        verdict = V.evaluate_pool_wallet(V.parse_dir_listing(result["stdout"]), now_epoch)
+    else:
+        stat = V.parse_backup_stat(result["stdout"])
+        verdict = V.evaluate_backup(stat, now_epoch, max_age_days)
     verdict["commands"] = [plan[0].command()]
     return verdict
+
+
+async def cache_info(host: Any, model: dict[str, Any], *, simulated: bool) -> dict[str, Any]:
+    """Taille et contenu du dossier de travail du pilote (lecture seule)."""
+    script = (
+        'p="$1"; if [ -d "$p" ]; then '
+        'echo "SIZE:$(du -sk "$p" 2>/dev/null | cut -f1)"; '
+        'find "$p" -type f | while read -r f; do echo "FILE:$f:$(stat -c %s "$f")"; done; '
+        'else echo SIZE:0; fi'
+    )
+    plan = [P.VmStep("cache du pilote Proxmox", ("sh", "-c", script, "fossor", P.PVE_TMP_DIR),
+                     allow_fail=True)]
+    if simulated:
+        return {"simulated": True, "path": P.PVE_TMP_DIR, "bytes": 0, "files": [],
+                "keep_image_cache": bool(model.get("keep_image_cache"))}
+    result = await _run(host, plan[0])
+    size_kb = 0
+    files: list[dict[str, Any]] = []
+    for raw in (result["stdout"] or "").splitlines():
+        line = raw.strip()
+        if line.startswith("SIZE:") and line[5:].isdigit():
+            size_kb = int(line[5:])
+        elif line.startswith("FILE:"):
+            _, path, size = line.split(":", 2)
+            files.append({"name": path.rsplit("/", 1)[-1],
+                          "size": int(size) if size.isdigit() else 0})
+    return {"simulated": False, "path": P.PVE_TMP_DIR, "bytes": size_kb * 1024,
+            "files": files, "keep_image_cache": bool(model.get("keep_image_cache")),
+            "commands": [plan[0].command()]}
+
+
+async def clear_cache(host: Any, *, simulated: bool) -> dict[str, Any]:
+    plan = P.cleanup_plan()
+    if simulated:
+        return _simulated(plan, {"cleared": False})
+    for step in plan:
+        await _run(host, step)
+    return {"simulated": False, "cleared": True, "path": P.PVE_TMP_DIR,
+            "commands": [step.command() for step in plan]}
+
+
+async def push_guest_binary(host: Any, ip: str, profile: dict[str, Any], *,
+                            bridge: str = "") -> dict[str, Any]:
+    """Archive du mineur poussée dans la VM — même canal que l'image.
+
+    La somme est vérifiée côté Fossor **avant** l'envoi, puis recalculée dans la
+    VM : sans ces deux verdicts, le provisionnement refuse de continuer.
+    """
+    from app import binaries as B
+    from app import spec_vm as V
+
+    path, digest = B.verified_path(profile)
+    dest = f"{V.INSTALL_DIR}/miner.tar.gz"
+    await _run(host, P.vm_step(
+        "copie du binaire : cible vidée", ip,
+        ["sh", "-c", 'p="$1"; install -d -m 0700 "$(dirname "$p")" && rm -f "$p"', "fossor", dest],
+        bridge=bridge))
+    sent = 0
+    with path.open("rb") as fh:
+        while True:
+            chunk = fh.read(PUSH_CHUNK)
+            if not chunk:
+                break
+            await _run(host, P.vm_step(
+                "copie du binaire (fragment)", ip,
+                ["sh", "-c", 'p="$1"; base64 -d >> "$p"', "fossor", dest],
+                bridge=bridge, stdin=base64.b64encode(chunk).decode("ascii"), timeout=600))
+            sent += len(chunk)
+    check = await _run(host, P.vm_step(
+        "somme du binaire reçu dans la VM", ip,
+        ["sh", "-c", 'echo "$2  $1" | sha256sum -c -', "fossor", dest, digest],
+        bridge=bridge, allow_fail=True, timeout=600))
+    if "OK" not in (check["stdout"] or ""):
+        raise PveRemoteError("copie du binaire : SHA256 non confirmé dans la VM — exécution refusée")
+    return {"verified": True, "sha256": digest, "bytes": sent, "path": dest}
 
 
 def backup_verdict(stat: dict[str, Any], now_epoch: int | None = None,

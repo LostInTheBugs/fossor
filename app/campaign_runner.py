@@ -1125,6 +1125,54 @@ def _fail(db: Any, campaign: Any, kind: str, message: str, simulated: bool) -> d
 
 
 # ── Boucle et ticks ───────────────────────────────────────────────────
+HASHRATE_REFRESH_S = 60
+
+
+async def refresh_vm_hashrates(db: Any, moment: datetime, simulated: bool) -> list[dict[str, Any]]:
+    """Hashrate d'une campagne ``vm`` : le mineur **dans la VM**, jamais l'hôte.
+
+    La sonde de la machine hôte ne voit pas le mineur ; on interroge la VM
+    (API du profil, sinon journal) au plus une fois par minute et on enregistre
+    le relevé sur ``spec_vms`` — lu par la campagne, le tableau de bord et le Suivi.
+    """
+    from app.models import Campaign, MinerProfile, SpecVm
+    from app.routers.miners import profile_to_dict
+    from app.routers.vms import _vm_backend
+
+    rows = (
+        db.query(SpecVm)
+        .join(Campaign, Campaign.id == SpecVm.campaign_id)
+        .filter(Campaign.status.in_(["running", "stopping"]))
+        .filter(SpecVm.destroyed_at.is_(None))
+        .all()
+    )
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        last = C.parse_iso(row.hashrate_at)
+        if last is not None and (moment - last).total_seconds() < HASHRATE_REFRESH_S:
+            continue
+        profile = None
+        campaign = db.query(Campaign).filter(Campaign.id == row.campaign_id).first()
+        if campaign is not None and campaign.profile_id:
+            found = db.query(MinerProfile).filter(MinerProfile.id == campaign.profile_id).first()
+            profile = profile_to_dict(found) if found is not None else None
+        try:
+            machine, backend, model = _vm_backend(db, row)
+            result = await backend.collect(machine, model, row, profile, simulated)
+        except Exception as exc:  # une VM muette ne bloque pas les autres campagnes
+            logger.info("hashrate VM %s indisponible : %s", row.name, exc)
+            continue
+        if result.get("hashrate_hs") is None:
+            continue
+        row.hashrate_hs = float(result["hashrate_hs"])
+        row.hashrate_source = result.get("hashrate_source") or ""
+        row.hashrate_at = C.iso(moment)
+        db.commit()
+        out.append({"campaign": row.campaign_id, "action": "hashrate",
+                    "hashrate_hs": row.hashrate_hs, "source": row.hashrate_source})
+    return out
+
+
 def due_campaigns(db: Any, moment: datetime) -> list[Any]:
     from app.models import Campaign
 
@@ -1170,6 +1218,7 @@ async def tick(
     if _LOCK is None:
         _LOCK = asyncio.Lock()
     async with _LOCK:
+        results.extend(await refresh_vm_hashrates(db, moment, sim))
         for campaign in due_campaigns(db, moment):
             if timeout_s:
                 campaign.restore_timeout_s = int(timeout_s)

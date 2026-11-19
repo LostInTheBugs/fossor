@@ -104,6 +104,19 @@ td{padding:8px 6px;border-bottom:1px solid #232b37;vertical-align:top}
       <div class="help">Vérifié par <span class="mono">sha256sum</span> sur la machine cible <b>avant</b> extraction ; différent ⇒ refus et archive supprimée.</div></div>
     <div class="field"><label>Chemin de l'exécutable dans l'archive</label><input id="fBinaryPath" placeholder="SRBMiner-MULTI">
       <div class="help" id="binaryHint">Installé dans /opt/fossor/miners/&lt;logiciel&gt;/&lt;version&gt;/</div></div>
+    <div class="field"><label>Type d'API du mineur</label>
+      <select id="fApiKind"><option value="">aucune</option><option value="cpuminer">cpuminer (-b, /summary)</option><option value="srbminer">SRBMiner</option><option value="xmrig">XMRig</option><option value="generic">générique</option></select>
+      <div class="help">Avec un port d'API, la campagne <span class="mono">vm</span> interroge le mineur <b>dans la VM</b> (sinon : dernière ligne de hashrate de son journal).</div></div>
+    <div class="field"><label>Wallet</label>
+      <select id="fWalletMode"><option value="file">fichier local à sauvegarder</option><option value="pool_address">wallet de pool : adresse seule</option></select>
+      <div class="help">Adresse seule : le contrôle vérifie qu'aucun fichier wallet n'existe dans le dossier data de la VM et l'écrit au journal.</div></div>
+    <div class="field"><label>Source du binaire</label>
+      <select id="fBinarySource"><option value="url">release publique (URL + SHA256)</option><option value="fossor">binaire envoyé par Fossor</option></select>
+      <div class="help">Binaire Fossor : archive déposée ici, SHA256 calculé et affiché, poussée dans la VM par le même canal que l'image et vérifiée des deux côtés. Jamais exécuté sans somme vérifiée.</div></div>
+    <div class="field"><label>Archive du binaire (dépôt Fossor)</label>
+      <input type="file" id="fBinaryFile"><input type="hidden" id="fProfileId">
+      <button class="btn outline" onclick="uploadBinary()">Envoyer l'archive</button>
+      <div class="help mono" id="fBinaryInfo">—</div></div>
     <div class="field"><label>Gabarit de ligne de commande</label><textarea id="fCmdline" placeholder="/opt/fossor/miners/srbminer/2.4.7/SRBMiner-MULTI --algorithm pearl --pool {pool} --wallet {wallet} --worker {worker} --gpu-id {gpus} --api-port {api_port}"></textarea>
       <div class="help">Le premier mot doit être le binaire installé (chemin exact). Aucun métacaractère de shell dans le gabarit.</div></div>
     <div class="row">
@@ -178,6 +191,11 @@ const openForm=(p)=>{
   $('#fBinaryPath').value=p?p.binary_path:'';
   $('#fCmdline').value=p?p.cmdline:'';
   $('#fApiPort').value=p?p.api_port:0;
+  $('#fApiKind').value=p?(p.api_kind||''):'';
+  $('#fWalletMode').value=p?(p.wallet_mode||'file'):'file';
+  $('#fBinarySource').value=p?(p.binary_source||'url'):'url';
+  $('#fProfileId').value=p?p.id:'';
+  $('#fBinaryInfo').textContent=p?(p.binary_size?(p.binary_size+' octets — '+p.sha256):'aucune archive déposée'):'—';
   $('#fThreads').value=p?p.threads:0;
   $('#fMode').value=p?p.execution_mode:'host';
   $('#fEnabled').checked=p?p.enabled:true;
@@ -201,6 +219,9 @@ $('#saveBtn').onclick=async()=>{
     sha256:$('#fSha').value.trim(),binary_path:$('#fBinaryPath').value.trim(),
     cmdline:$('#fCmdline').value.trim(),
     api_port:parseInt($('#fApiPort').value,10)||0,
+    api_kind:$('#fApiKind').value,
+    wallet_mode:$('#fWalletMode').value,
+    binary_source:$('#fBinarySource').value,
     threads:parseInt($('#fThreads').value,10)||0,
     execution_mode:$('#fMode').value,enabled:$('#fEnabled').checked
   };
@@ -213,6 +234,22 @@ $('#saveBtn').onclick=async()=>{
   await load();
 };
 
+const uploadBinary=async()=>{
+  const id=$('#editId').value||'';
+  if(!id){$('#fBinaryInfo').textContent="Enregistrez le profil avant d'envoyer le binaire.";return;}
+  const input=$('#fBinaryFile');
+  if(!input.files||!input.files.length){$('#fBinaryInfo').textContent='Choisissez une archive .tar.gz.';return;}
+  const file=input.files[0];
+  const reader=new FileReader();
+  reader.onload=async function(){
+    const b64=String(reader.result||'').split(',')[1]||'';
+    const r=await fetch('/api/miner/profiles/'+id+'/binary',{method:'POST',credentials:'include',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({content_b64:b64})});
+    const d=await r.json();
+    $('#fBinaryInfo').textContent=r.ok?('SHA256 '+d.sha256+' — '+d.size+' octets'):(d.detail||'dépôt impossible');
+  };
+  reader.readAsDataURL(file);
+};
 const del=async(id,name)=>{
   if(!confirm('Supprimer le profil « '+name+' » ?'))return;
   const r=await api('/api/miner/profiles/'+id,{method:'DELETE'});

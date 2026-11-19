@@ -128,6 +128,14 @@ class MinerProfile(Base):
     version: Mapped[str] = mapped_column(String(32), nullable=False)
     cmdline: Mapped[str] = mapped_column(Text, nullable=False)
     api_port: Mapped[int] = mapped_column(Integer, default=0)
+    # Type d'API du mineur (cpuminer: -b 127.0.0.1:port, ``/summary``).
+    api_kind: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    # ``url`` = release publique ; ``fossor`` = archive déposée dans Fossor.
+    binary_source: Mapped[str] = mapped_column(String(10), default="url", server_default="url")
+    binary_stored: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    binary_size: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # ``file`` = wallet local à sauvegarder ; ``pool_address`` = adresse seule.
+    wallet_mode: Mapped[str] = mapped_column(String(16), default="file", server_default="file")
     execution_mode: Mapped[str] = mapped_column(String(10), default="host")
     threads: Mapped[int] = mapped_column(Integer, default=0)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -590,6 +598,10 @@ class SpecVm(Base):
     # Verdict du §10.11 (taille et date seulement, jamais le contenu).
     backup_state: Mapped[str | None] = mapped_column(Text, nullable=True)
     backup_checked_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # Hashrate du mineur **dans** la VM (API ou journal), rafraîchi par le planificateur.
+    hashrate_hs: Mapped[float | None] = mapped_column(Float, nullable=True)
+    hashrate_source: Mapped[str] = mapped_column(String(60), default="", server_default="")
+    hashrate_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())

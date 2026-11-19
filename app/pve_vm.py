@@ -145,10 +145,16 @@ def validate_pve_model(data: dict[str, Any] | None) -> dict[str, Any]:
         _require(bool(_RE_ABS_PATH.match("/" + node_binary)), "nœud : chemin relatif simple")
         _require(".." not in node_binary.split("/"), "nœud : « .. » interdit")
 
+    keep_cache = data.get("keep_image_cache")
+    if isinstance(keep_cache, str):
+        keep_cache = keep_cache.strip().lower() in ("1", "true", "yes", "on")
+    keep_cache = bool(keep_cache)
+
     from app import spec_vm as SV
 
     return {
         "host_id": host_id,
+        "keep_image_cache": keep_cache,
         "node": node,
         "disk_storage": disk_storage,
         "ci_storage": ci_storage,

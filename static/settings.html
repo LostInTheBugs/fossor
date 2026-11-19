@@ -293,6 +293,11 @@ header h1{font-size:26px}
       <div class="row" style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px">
         <div class="field"><label for="pveNodePort">Port du nœud dans la VM ({vm_node})</label><input id="pveNodePort" type="number" min="1024" max="65535"></div>
         <div class="field"><label for="pveBackupPath">Sauvegarde du wallet (chemin dans la VM)</label><input id="pveBackupPath" placeholder="/home/specminer/data/wallet.dat"></div>
+        <div class="field"><label><input type="checkbox" id="pveKeepCache"> Garder l'image en cache sur l'hôte (désactivé par défaut)</label>
+          <div class="help">Désactivé : <span class="mono">/var/tmp/fossor-pve</span> est supprimé après la création et à la destruction. Activé : l'image reste pour éviter un re-téléchargement à chaque campagne.</div></div>
+        <div class="field"><label>Cache du pilote</label>
+          <div class="sub" id="pveCacheInfo">—</div>
+          <button class="btn outline" id="pveCacheClear" onclick="clearPveCache()">Vider le cache</button></div>
       </div>
       <hr style="border:none;border-top:1px solid var(--border);margin:14px 0">
       <div class="sub">Nœud (facultatif) : binaire téléchargé <b>dans la VM</b> et vérifié par SHA256 — même logique que libvirt, le mode hybride mine sur l'hôte vers <code>{vm_node}</code>.</div>
@@ -1338,7 +1343,8 @@ function pvePayload(){
     node_sha256:pveField('pveNodeSha').value.trim().toLowerCase(),
     node_binary:pveField('pveNodeBin').value.trim(),
     node_start_cmd:pveField('pveNodeStart').value.trim(),
-    wallet_create_cmd:pveField('pveWalletCmd').value.trim()};
+    wallet_create_cmd:pveField('pveWalletCmd').value.trim(),
+    keep_image_cache:pveField('pveKeepCache').checked};
 }
 async function loadPve(){
   const r=await fetch('/api/spec/pve/settings',{credentials:'include'});
@@ -1363,6 +1369,8 @@ async function loadPve(){
   pveField('pveAlgo').value=m.checksum_algo||def.checksum_algo||'sha512';
   pveField('pveNodePort').value=m.node_port||19333;
   pveField('pveBackupPath').value=m.wallet_backup_path||'/home/specminer/data/wallet.dat';
+  pveField('pveKeepCache').checked=!!m.keep_image_cache;
+  refreshPveCache();
   pveField('pveNodeUrl').value=m.node_url||'';
   pveField('pveNodeSha').value=m.node_sha256||'';
   pveField('pveNodeBin').value=m.node_binary||'';
@@ -1387,6 +1395,22 @@ async function inspectPve(){
   pveField('pveReport').textContent='Proxmox '+(d.version||'?')+' — VMID pris : '+(d.taken||[]).join(', ')+
     (d.free_vmid?' — premier libre : '+d.free_vmid:'')+
     ' — stockages images : '+eligible.map(s=>s.name+' ('+s.avail_gb+' Go libres)').join(', ');
+}
+async function refreshPveCache(){
+  const box=pveField('pveCacheInfo');
+  try{
+    const r=await fetch('/api/spec/pve/cache',{credentials:'include'});
+    const d=await r.json();
+    if(!r.ok){box.textContent=d.detail||'cache illisible';return;}
+    const mb=(d.bytes/1048576).toFixed(1);
+    box.textContent=d.path+' — '+(d.bytes?mb+' Mo':'vide')+' — cache '+(d.keep_image_cache?'conservé':'supprimé après usage');
+  }catch(e){box.textContent='cache illisible';}
+}
+async function clearPveCache(){
+  const r=await fetch('/api/spec/pve/cache/clear',{method:'POST',credentials:'include'});
+  const d=await r.json();
+  pveField('pveState').textContent=r.ok?('cache vidé : '+d.path):(d.detail||'vidage impossible');
+  refreshPveCache();
 }
 function applySpecHostKind(kind){
   const pve=(kind==='proxmox');

@@ -88,6 +88,22 @@ def _migrate_machine_hiveos_column() -> None:
             conn.exec_driver_sql("ALTER TABLE machines ADD COLUMN hiveos_json TEXT")
 
 
+def _migrate_miner_binary_columns():
+    """Binaire fourni par Fossor et wallet de pool (profil mineur)."""
+    _add_column_if_missing("miner_profiles", "api_kind", "api_kind VARCHAR(20) NOT NULL DEFAULT ''")
+    _add_column_if_missing("miner_profiles", "binary_source", "binary_source VARCHAR(10) NOT NULL DEFAULT 'url'")
+    _add_column_if_missing("miner_profiles", "binary_stored", "binary_stored VARCHAR(300) NOT NULL DEFAULT ''")
+    _add_column_if_missing("miner_profiles", "binary_size", "binary_size INTEGER NOT NULL DEFAULT 0")
+    _add_column_if_missing("miner_profiles", "wallet_mode", "wallet_mode VARCHAR(16) NOT NULL DEFAULT 'file'")
+
+
+def _migrate_spec_vm_hashrate_columns():
+    """Hashrate relevé dans la VM, visible par la campagne, le tableau de bord et le Suivi."""
+    _add_column_if_missing("spec_vms", "hashrate_hs", "hashrate_hs FLOAT")
+    _add_column_if_missing("spec_vms", "hashrate_source", "hashrate_source VARCHAR(60) NOT NULL DEFAULT ''")
+    _add_column_if_missing("spec_vms", "hashrate_at", "hashrate_at VARCHAR(40)")
+
+
 def init_db():
     _migrate_asic_login()
     Base.metadata.create_all(bind=engine)
@@ -112,6 +128,8 @@ def init_db():
     _migrate_machine_hiveos_column()
     _migrate_machine_fossor_host_column()
     _migrate_spec_vm_pve_columns()
+    _migrate_miner_binary_columns()
+    _migrate_spec_vm_hashrate_columns()
 
 
 def _migrate_spec_vm_pve_columns():

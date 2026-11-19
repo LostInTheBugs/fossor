@@ -126,6 +126,47 @@ def write_pve_settings(data: dict, db: Session = Depends(get_db), user=Depends(r
     return read_pve_settings(db, _user=user)
 
 
+@router.get("/spec/pve/cache")
+async def read_pve_cache(db: Session = Depends(get_db), _user=Depends(require_login)):
+    """Cache d'image du pilote : taille, chemin, contenu (lecture seule)."""
+    from app import pve_remote as PR
+    from app.models import Machine
+    from app.routers.miners import simulation_enabled
+
+    model = stored_pve_model(db)
+    if not model:
+        raise HTTPException(status_code=400, detail="Aucun modèle Proxmox enregistré")
+    machine = db.query(Machine).filter(Machine.id == model["host_id"]).first()
+    if machine is None:
+        raise HTTPException(status_code=400, detail="Machine hôte introuvable")
+    try:
+        return await PR.cache_info(machine, model, simulated=simulation_enabled(db))
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.post("/spec/pve/cache/clear")
+async def clear_pve_cache(db: Session = Depends(get_db), user=Depends(require_login)):
+    """« Vider le cache » : supprime le dossier de travail du pilote sur l'hôte."""
+    from app import pve_remote as PR
+    from app.models import Machine
+    from app.routers.miners import simulation_enabled
+
+    model = stored_pve_model(db)
+    if not model:
+        raise HTTPException(status_code=400, detail="Aucun modèle Proxmox enregistré")
+    machine = db.query(Machine).filter(Machine.id == model["host_id"]).first()
+    if machine is None:
+        raise HTTPException(status_code=400, detail="Machine hôte introuvable")
+    try:
+        result = await PR.clear_cache(machine, simulated=simulation_enabled(db))
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    _audit(db, user, "spec-pve-cache-clear", result.get("path") or "",
+           "ok" if result.get("cleared") else "simulated", "cache vidé par l'utilisateur")
+    return result
+
+
 @router.post("/spec/pve/plan")
 def preview_plan(data: dict, db: Session = Depends(get_db), _user=Depends(require_login)):
     """Plan Proxmox complet (create → shutdown → destroy), **sans exécution**."""

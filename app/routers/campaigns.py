@@ -131,6 +131,7 @@ def campaign_to_dict(db: Session, campaign: Campaign) -> dict:
     mode = V.normalize_mode(getattr(campaign, "execution_mode", "") or "", "host")
     profile = db.query(MinerProfile).filter(MinerProfile.id == campaign.profile_id).first()
     hashrate = None
+    hashrate_source = ""
     live_power = None
     machine_ids = sorted({row["machine_id"] for row in devices})
     if campaign.status in ("running", "stopping") and machine_ids:
@@ -147,6 +148,19 @@ def campaign_to_dict(db: Session, campaign: Campaign) -> dict:
                 total += float(row.total_hashrate_hs)
                 seen = True
         hashrate = total if seen else None
+
+    if mode in ("vm", "hybrid"):
+        from app.models import SpecVm
+
+        vm_row = (
+            db.query(SpecVm)
+            .filter(SpecVm.campaign_id == campaign.id)
+            .order_by(SpecVm.id.desc())
+            .first()
+        )
+        if vm_row is not None and vm_row.hashrate_hs is not None:
+            hashrate = float(vm_row.hashrate_hs)
+            hashrate_source = vm_row.hashrate_source or "mineur dans la VM"
 
     cost_running = None
     started = C.parse_iso(campaign.started_at)
@@ -187,6 +201,7 @@ def campaign_to_dict(db: Session, campaign: Campaign) -> dict:
         "cost_eur": campaign.cost_eur,
         "cost_running_eur": cost_running,
         "hashrate_hs": hashrate,
+        "hashrate_source": hashrate_source,
         "verified": campaign.verified,
         "attempts": campaign.attempts,
         "stop_requested": bool(campaign.stop_requested),

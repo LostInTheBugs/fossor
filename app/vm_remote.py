@@ -134,7 +134,13 @@ async def create(
         raise VmRemoteError(probe["message"] or KVM_MISSING_MESSAGE)
     for step in plan:
         await _run(host, step)
-    return {"simulated": False, "name": name, "state": "running", "commands": [s.command() for s in plan]}
+    if not model.get("keep_image_cache"):
+        # Cache désactivé : l'image de base ne reste pas sur l'hôte libvirt.
+        await _run(host, V.VmStep("cache d'image libvirt vidé",
+                                  ("rm", "-rf", f"{V.IMAGE_ROOT}/images"), allow_fail=True))
+    return {"simulated": False, "name": name, "state": "running",
+            "cache_kept": bool(model.get("keep_image_cache")),
+            "commands": [s.command() for s in plan]}
 
 
 async def wait_address(host: Any, name: str, *, simulated: bool, attempts: int = 12,
@@ -185,7 +191,12 @@ async def provision(
     simulated: bool,
     expected_address: str = "",
 ) -> dict[str, Any]:
-    plan = V.provision_plan(model, profile, ip, coin=coin)
+    pushed = False
+    if str(profile.get("binary_source") or "url") == "fossor":
+        if not simulated:
+            await push_guest_binary(host, profile)
+        pushed = True
+    plan = V.provision_plan(model, profile, ip, coin=coin, binary_pushed=pushed)
     if simulated:
         return _simulated(plan, {"address": expected_address, "verified": False})
     commands: list[str] = []
@@ -203,6 +214,37 @@ async def provision(
             if found:
                 address = found
     return {"simulated": False, "address": address, "verified": bool(address), "commands": commands}
+
+
+async def push_guest_binary(host: Any, profile: dict[str, Any]) -> dict[str, Any]:
+    """Archive Fossor poussée dans la VM libvirt, SHA256 vérifié des deux côtés."""
+    import base64
+
+    from app import binaries as B
+
+    path, digest = B.verified_path(profile)
+    dest = f"{V.INSTALL_DIR}/miner.tar.gz"
+    await _run(host, V.VmStep(
+        "copie du binaire : cible vidée",
+        ("sh", "-c", 'p="$1"; install -d -m 0700 "$(dirname "$p")" && rm -f "$p"', "fossor", dest)))
+    sent = 0
+    with path.open("rb") as fh:
+        while True:
+            chunk = fh.read(256 * 1024)
+            if not chunk:
+                break
+            await _run(host, V.VmStep(
+                "copie du binaire (fragment)",
+                ("sh", "-c", 'p="$1"; base64 -d >> "$p"', "fossor", dest),
+                stdin=base64.b64encode(chunk).decode("ascii"), timeout=600))
+            sent += len(chunk)
+    check = await _run(host, V.VmStep(
+        "somme du binaire reçu dans la VM",
+        ("sh", "-c", 'echo "$2  $1" | sha256sum -c -', "fossor", dest, digest),
+        allow_fail=True, timeout=600))
+    if "OK" not in (check["stdout"] or ""):
+        raise VmRemoteError("copie du binaire : SHA256 non confirmé dans la VM — exécution refusée")
+    return {"verified": True, "sha256": digest, "bytes": sent, "path": dest}
 
 
 def _address_from_stdout(stdout: str) -> str:
@@ -252,10 +294,14 @@ async def destroy(
     now_epoch: int,
     max_age_days: int,
     simulated: bool,
+    keep_cache: bool = True,
 ) -> dict[str, Any]:
     """Destruction : propriété puis sauvegarde vérifiée, **avant** toute commande."""
     V.ensure_destroyable(name, description, backup, now_epoch, max_age_days)
     plan = V.destroy_plan(name)
+    if not keep_cache:
+        plan = plan + [V.VmStep("cache d'image libvirt vidé",
+                                ("rm", "-rf", f"{V.IMAGE_ROOT}/images"), allow_fail=True)]
     if simulated:
         return _simulated(plan, {"destroyed": False})
     commands = []
@@ -301,13 +347,22 @@ async def hypervisor(host: Any, *, simulated: bool) -> dict[str, Any]:
 
 
 async def check_backup(host: Any, ip: str, path: str, *, now_epoch: int,
-                       max_age_days: int, simulated: bool) -> dict[str, Any]:
-    plan = V.backup_check_plan(ip, path)
+                       max_age_days: int, simulated: bool,
+                       wallet_mode: str = "file") -> dict[str, Any]:
+    import posixpath
+
+    if wallet_mode == "pool_address":
+        plan = V.pool_wallet_check_plan(ip, posixpath.dirname(path) or V.DATA_DIR)
+    else:
+        plan = V.backup_check_plan(ip, path)
     if simulated:
         return _simulated(plan, {"verified": False, "reason": "simulation"})
     result = await _run(host, plan[0])
-    stat = V.parse_backup_stat(result["stdout"])
-    verdict = V.evaluate_backup(stat, now_epoch, max_age_days)
+    if wallet_mode == "pool_address":
+        verdict = V.evaluate_pool_wallet(V.parse_dir_listing(result["stdout"]), now_epoch)
+    else:
+        stat = V.parse_backup_stat(result["stdout"])
+        verdict = V.evaluate_backup(stat, now_epoch, max_age_days)
     verdict["commands"] = [plan[0].command()]
     return verdict
 
@@ -330,13 +385,15 @@ async def collect(host: Any, name: str, ip: str, profile: dict[str, Any] | None,
         elif step.title == "processus du mineur dans la VM":
             processes = parse_ps(result["stdout"])
         elif step.title == "hashrate du mineur dans la VM":
-            from app.miner_remote import parse_hashrate
-
-            hashrate = parse_hashrate(result["stdout"])
+            hashrate = V.parse_vm_hashrate(result["stdout"])
+    source = ""
+    if hashrate is not None:
+        source = "API du mineur (VM)" if (profile or {}).get("api_port") else "journal du mineur (VM)"
     return {
         "simulated": False,
         "state": state,
         "hashrate_hs": hashrate,
+        "hashrate_source": source,
         "processes": processes,
         "vcpus": info.get("vcpus"),
         "memory_kb": info.get("memory_kb"),

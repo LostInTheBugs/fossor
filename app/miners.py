@@ -115,8 +115,16 @@ def validate_profile(data: dict[str, Any]) -> dict[str, Any]:
     software = str(data.get("software") or "").strip().lower()
     _require(software in SOFTWARES, f"logiciel : {', '.join(SOFTWARES)}")
 
+    binary_source = str(data.get("binary_source") or "url").strip().lower()
+    _require(binary_source in ("url", "fossor"),
+             "source du binaire : url (release publique) ou fossor (archive déposée)")
+
     binary_url = str(data.get("binary_url") or "").strip()
-    _require(bool(_RE_URL.match(binary_url)), "binaire : URL http(s) de l'archive, sans espace")
+    if binary_source == "fossor":
+        _require(not binary_url or bool(_RE_URL.match(binary_url)),
+                 "binaire Fossor : URL vide ou http(s) ; l'archive est déposée dans Fossor")
+    else:
+        _require(bool(_RE_URL.match(binary_url)), "binaire : URL http(s) de l'archive, sans espace")
 
     sha256 = str(data.get("sha256") or "").strip().lower()
     _require(bool(_RE_SHA256.match(sha256)), "SHA256 obligatoire : 64 caractères hexadécimaux")
@@ -160,6 +168,14 @@ def validate_profile(data: dict[str, Any]) -> dict[str, Any]:
         raise ProfileError("port d'API : nombre entier")
     _require(api_port == 0 or 1024 <= api_port <= 65535, "port d'API : 0 (aucun) ou 1024-65535")
 
+    api_kind = str(data.get("api_kind") or "").strip().lower()
+    _require(api_kind in ("", "cpuminer", "srbminer", "xmrig", "generic"),
+             "type d'API : cpuminer, srbminer, xmrig, generic ou aucun")
+
+    wallet_mode = str(data.get("wallet_mode") or "file").strip().lower()
+    _require(wallet_mode in ("file", "pool_address"),
+             "wallet : file (fichier local) ou pool_address (adresse de pool seule)")
+
     return {
         "name": name,
         "coin": coin,
@@ -172,6 +188,9 @@ def validate_profile(data: dict[str, Any]) -> dict[str, Any]:
         "version": version,
         "cmdline": cmdline,
         "api_port": api_port,
+        "api_kind": api_kind,
+        "binary_source": binary_source,
+        "wallet_mode": wallet_mode,
         "execution_mode": mode,
         "threads": int(_validated("threads", str(data.get("threads")))) if data.get("threads") else 0,
     }

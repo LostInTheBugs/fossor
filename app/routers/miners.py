@@ -34,6 +34,11 @@ PROFILE_FIELDS = (
     "version",
     "cmdline",
     "api_port",
+    "api_kind",
+    "binary_source",
+    "binary_stored",
+    "binary_size",
+    "wallet_mode",
     "execution_mode",
     "threads",
     "enabled",
@@ -211,6 +216,46 @@ def create_profile(data: dict, db: Session = Depends(get_db), _user=Depends(requ
     db.refresh(profile)
     _audit(db, None, "miner-profile-create", "ok", f"{profile.name} ({profile.coin})")
     return profile_to_dict(profile)
+
+
+@router.post("/miner/profiles/{profile_id}/binary")
+async def upload_profile_binary(
+    profile_id: int, data: dict, db: Session = Depends(get_db), user=Depends(require_login)
+):
+    """Archive du mineur déposée dans Fossor : SHA256 calculé, affiché et vérifié."""
+    import base64
+    import binascii
+
+    from app import binaries as B
+
+    profile = _get_profile(db, profile_id)
+    raw = str(data.get("content_b64") or "")
+    try:
+        blob = base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=400, detail="contenu base64 invalide")
+    try:
+        saved = B.save_binary(profile.uuid, blob)
+    except B.BinaryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    profile.binary_source = "fossor"
+    profile.binary_stored = saved["path"]
+    profile.binary_size = saved["size"]
+    profile.sha256 = saved["sha256"]
+    profile.updated_at = _now()
+    db.commit()
+    db.refresh(profile)
+    _audit(db, None, "miner-profile-binary", "ok",
+           f"{profile.name} : {saved['size']} octets, sha256 {saved['sha256']}")
+    return {"profile_id": profile.id, **saved}
+
+
+@router.get("/miner/profiles/{profile_id}/binary")
+def read_profile_binary(profile_id: int, db: Session = Depends(get_db), _user=Depends(require_login)):
+    from app import binaries as B
+
+    profile = _get_profile(db, profile_id)
+    return B.metadata(profile_to_dict(profile))
 
 
 @router.get("/miner/profiles/{profile_id}")

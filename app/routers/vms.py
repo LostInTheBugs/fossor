@@ -166,6 +166,9 @@ def vm_to_dict(db: Session, row: SpecVm) -> dict:
         "backup_path": row.backup_path,
         "backup": backup,
         "backup_checked_at": row.backup_checked_at,
+        "hashrate_hs": row.hashrate_hs,
+        "hashrate_source": row.hashrate_source,
+        "hashrate_at": row.hashrate_at,
         "destroyable": bool(backup and backup.get("verified")),
         "note": row.note,
         "created_at": row.created_at,
@@ -312,9 +315,15 @@ async def collect_vm(vm_id: int, db: Session = Depends(get_db), _user=Depends(re
         result = await backend.collect(machine, model, row, profile, simulated)
     except VB.VmBackendError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
-    if not simulated and result.get("state"):
-        row.state = "running" if result["state"] == "running" else result["state"]
-        row.updated_at = datetime.now(timezone.utc).isoformat()
+    if not simulated:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if result.get("state"):
+            row.state = "running" if result["state"] == "running" else result["state"]
+        if result.get("hashrate_hs") is not None:
+            row.hashrate_hs = float(result["hashrate_hs"])
+            row.hashrate_source = result.get("hashrate_source") or ""
+            row.hashrate_at = now_iso
+        row.updated_at = now_iso
         db.commit()
     return result
 
@@ -327,6 +336,14 @@ async def check_backup(vm_id: int, db: Session = Depends(get_db), user=Depends(r
         raise HTTPException(status_code=400, detail="Aucun chemin de sauvegarde enregistré")
     machine, backend, model = _vm_backend(db, row)
     simulated = simulation_enabled(db)
+    wallet_mode = "file"
+    if row.campaign_id:
+        campaign = db.query(Campaign).filter(Campaign.id == row.campaign_id).first()
+        if campaign is not None and campaign.profile_id:
+            profile = db.query(MinerProfile).filter(MinerProfile.id == campaign.profile_id).first()
+            wallet_mode = str(getattr(profile, "wallet_mode", "file") or "file")
+    model = dict(model or {})
+    model["_wallet_mode"] = wallet_mode
     verdict = await backend.check_backup(
         machine,
         model,
