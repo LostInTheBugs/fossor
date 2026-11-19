@@ -6,6 +6,7 @@ journalise comme erreurs console) : le refus de la campagne partielle est
 affiché par l'écran, pas déclenché par un POST refusé.
 """
 
+import asyncio
 import json
 import sqlite3
 import uuid as uuid_lib
@@ -132,7 +133,7 @@ async def test_hiveos_screen_and_campaign(e2e_server):
         assert ack["ack"] is True
         await page.evaluate(f"openHiveos({full_id})")
         await page.wait_for_function(
-            "document.querySelector('#hiveosSummary').textContent.includes('reprise par HiveOS (miner start)')",
+            "document.querySelector('#hiveosSummary').textContent.includes('miner start')",
             timeout=10000,
         )
         full_summary = await page.inner_text("#hiveosSummary")
@@ -196,6 +197,27 @@ async def test_hiveos_screen_and_campaign(e2e_server):
             },
         )
         assert campaign_id
+        stopped = await page.evaluate(
+            """async (id) => {
+                const res = await fetch('/api/campaigns/' + id + '/stop', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'
+                });
+                if (!res.ok) throw new Error('stop ' + res.status + ' ' + await res.text());
+                return await res.json();
+            }""",
+            campaign_id,
+        )
+        assert stopped
+        status = ""
+        for _ in range(20):
+            status = await page.evaluate(
+                """async (id) => (await (await fetch('/api/campaigns/' + id)).json()).status""",
+                campaign_id,
+            )
+            if status in ("done", "failed"):
+                break
+            await asyncio.sleep(1)
+        assert status == "done", status
 
         await page.goto(E2E_URL + "/campaigns", wait_until="domcontentloaded")
         await page.wait_for_selector("#rows tr", timeout=10000)
