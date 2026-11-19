@@ -2,6 +2,28 @@
 
 ## 2026.11.011 (en cours)
 
+### Règles d'analyse et API Hermes (étape 4a)
+
+- **Règles/triggers** (§4.8) : douze règles par défaut (fraîcheur 72 h, ASIC-only exclu,
+  CPU en VM, durée GPU 96 h adaptative, CPU sans limite, parallélisme, solo → pool 14 j,
+  part réseau 10 %, élec 0,20 €/kWh, notifications, veille 6 h). Paramètres validés par un
+  schéma pydantic : une valeur invalide renvoie 422 avec le champ fautif, sans écriture.
+- **Historique** : chaque changement (interrupteur ou paramètres) écrit une ligne
+  `rule_changes` (acteur, avant/après) et une entrée d'audit.
+- **API Hermes** (§5.4) : `GET /api/hermes/context` (règles actives, campagnes, catalogue,
+  capacité libre CPU/GPU, dernière analyse — aucun wallet, secret ni IP),
+  `POST /api/hermes/analyses`, `POST /api/hermes/proposals`. Un jeton Hermes valide sur une
+  route d'administration répond 403.
+- **Propositions** : validées contre les règles (rôle des devices §4.19, profil, fenêtre,
+  fraîcheur, part réseau, durée GPU, parallélisme, capacité libre) puis déposées en
+  `proposed`, `origin=hermes`. Un refus est un 422 motivé. Aucun lancement automatique :
+  la règle reste à l'étape 4b.
+- **Écran « Analyse des tokens »** : règles, interrupteurs, formulaire généré par le
+  schéma, historique, journal des analyses (verdict, pour/contre), import avec
+  prévisualisation.
+- **Import `mining-analyses.json`** : empreinte SHA-256 du contenu normalisé → second
+  import = 0 doublon. Fixture anonymisée (aucune IP, aucun wallet).
+
 ### Hashrate CPU — unité de cpuminer-opt
 
 - **Unité prouvée** : le binaire cpuminer-opt 26.1 de Korsh (yespower N=256, r=8)

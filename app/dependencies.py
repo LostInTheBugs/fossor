@@ -6,6 +6,23 @@ from app.auth import get_current_user
 async def require_login(request: Request):
     user = get_current_user(request)
     if not user:
+        # §5.4 : un jeton Hermes valide n'ouvre aucune route d'administration.
+        # On l'authentifie pour répondre 403 (droits insuffisants) au lieu de 401.
+        header = request.headers.get("authorization") or ""
+        if header.lower().startswith("bearer "):
+            from app.ai_config import check_token
+            from app.database import SessionLocal
+
+            db = SessionLocal()
+            try:
+                hermes = check_token(db, header[7:].strip())
+            finally:
+                db.close()
+            if hermes:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Jeton Hermes : droits insuffisants pour une route d'administration",
+                )
         raise HTTPException(status_code=401, detail="Not authenticated")
     return user
 

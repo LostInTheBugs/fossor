@@ -10,6 +10,7 @@ from app.routers.devices import router as devices_router
 from app.routers.config import router as config_router
 from app.routers.ai import router as ai_router
 from app.routers.hermes import router as hermes_router
+from app.routers.rules import router as rules_router
 from app.routers.update import router as update_router
 from app.routers.metrics import router as metrics_router
 from app.routers.coins import router as coins_router
@@ -49,6 +50,7 @@ app.include_router(devices_router)
 app.include_router(config_router)
 app.include_router(ai_router)
 app.include_router(hermes_router)
+app.include_router(rules_router)
 app.include_router(update_router)
 app.include_router(metrics_router)
 app.include_router(coins_router)
@@ -66,6 +68,16 @@ app.include_router(pve_router)
 app.include_router(asic_router)
 app.include_router(rentability_router)
 app.include_router(vms_router)
+
+
+@app.get("/analysis", response_class=HTMLResponse)
+def analysis_page(request: Request):
+    """Écran « Analyse des tokens » (§4.8/§4.9)."""
+    from app.auth import get_current_user
+
+    if not get_current_user(request):
+        return RedirectResponse(url="/", status_code=303)
+    return HTMLResponse((STATIC_DIR / "analysis.html").read_text())
 
 
 @app.get("/mined", response_class=HTMLResponse)

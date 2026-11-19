@@ -185,6 +185,7 @@ def campaign_to_dict(db: Session, campaign: Campaign) -> dict:
         "status": campaign.status,
         "status_label": C.STATUS_LABELS.get(campaign.status, campaign.status),
         "origin": campaign.origin,
+        "analysis_id": campaign.analysis_id,
         "execution_mode": mode,
         "execution_mode_label": V.MODE_LABELS.get(mode, mode),
         "vm": _vm_of(db, campaign),

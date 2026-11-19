@@ -106,10 +106,25 @@ def _migrate_spec_vm_hashrate_columns():
     _add_column_if_missing("spec_vms", "hashrate_at", "hashrate_at VARCHAR(40)")
 
 
+def _seed_rules():
+    """§4.8 : les règles par défaut existent dès le premier démarrage.
+
+    Fait ici, et non dans un GET : une lecture ne crée jamais de ligne.
+    """
+    from app.rules import seed_rules
+
+    db = SessionLocal()
+    try:
+        seed_rules(db)
+    finally:
+        db.close()
+
+
 def init_db():
     _migrate_asic_login()
     Base.metadata.create_all(bind=engine)
     _ensure_admin()
+    _seed_rules()
     _migrate_host_key_public_column()
     _migrate_machine_uuid_column()
     _migrate_device_integrated_column()
@@ -132,6 +147,7 @@ def init_db():
     _migrate_spec_vm_pve_columns()
     _migrate_miner_binary_columns()
     _migrate_spec_vm_hashrate_columns()
+    _migrate_campaign_analysis_id()
 
 
 def _migrate_spec_vm_pve_columns():
@@ -235,6 +251,11 @@ def _migrate_campaign_execution_mode():
         "execution_mode",
         "execution_mode VARCHAR(10) NOT NULL DEFAULT 'host'",
     )
+
+
+def _migrate_campaign_analysis_id():
+    """Add campaigns.analysis_id (§4.9/§5.4) — analyse Hermes d'origine."""
+    _add_column_if_missing("campaigns", "analysis_id", "analysis_id INTEGER")
 
 
 def _migrate_machine_status_api_error_column():

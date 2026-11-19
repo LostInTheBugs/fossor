@@ -1,0 +1,347 @@
+{
+ "analyses": [
+  {
+   "ts": "2026-11-19T17:07Z",
+   "run": "cron 18h00",
+   "action": "rien",
+   "action_detail": "Mode pearl. Scan ANN 72h + miningpoolstats + GitHub. NEB mainnet live 18/11 14Z (0.5j) = RETENU mais hardware -rigA/-rigB/-rigC KO → pas LANÇABLE. Monario 1j RandomX CPU mainnet 3 jan → SURVEILLANCE. TitanForge 18j hors fenêtre → SURVEILLANCE. YSKAR SHA-256d → REJETÉ. Aucun LANÇABLE. Rig -rigA/-rigB/-rigC injoignables.",
+   "delivered": false,
+   "candidates": [
+    {
+     "nom": "NEB (Neural Engine Byte)",
+     "algo": "NEBHASH v2/KEP1/RET2 CUDA (Suprminer + nebx-miner)",
+     "age": "0.5j (mainnet 18/11 14Z)",
+     "lien": "https://bitcointalk.org/index.php?topic=5600283.0",
+     "verdict": "retenu",
+     "pour": [
+      "mainnet live depuis 4h, pools Suprnova+NurseryPool actifs, ~25 GH/s, 64 miners",
+      "repo GitHub open-source (SilasEigen/neb), explorer actif",
+      "algo CUDA compatible RTX 30/40/50"
+     ],
+     "contre": [
+      "hardware -rigA/-rigB/-rigC tous KO → impossible de lancer",
+      "dev silas eigen : compte BCT récent, merit inconnu"
+     ]
+    },
+    {
+     "nom": "Monario (MONAR)",
+     "algo": "RandomX CPU",
+     "age": "1j (topic 18/11)",
+     "lien": "https://bitcointalk.org/index.php?topic=5600276.0",
+     "verdict": "surveillance",
+     "pour": [
+      "RandomX CPU, no premine, privacy coin (mont1/monz1)",
+      "annoncé mainnet 3 jan 2027"
+     ],
+     "contre": [
+      "mainnet trop loin (45j), pas minable maintenant",
+      "testnet non démarré"
+     ]
+    },
+    {
+     "nom": "TitanForge (TFN)",
+     "algo": "Shielded-only PoW (custom)",
+     "age": "18j (topic 1/11)",
+     "lien": "https://bitcointalk.org/index.php?topic=5598593.0",
+     "verdict": "surveillance",
+     "pour": [
+      "testnet privé actif, GPU miner annoncé, pas de premine"
+     ],
+     "contre": [
+      "hors fenêtre 72h",
+      "algo custom, testnet uniquement",
+      "audits pas faits"
+     ]
+    },
+    {
+     "nom": "YSKAR",
+     "algo": "SHA-256d",
+     "age": "2j (topic 17/11)",
+     "lien": "https://bitcointalk.org/index.php?topic=5596113.0",
+     "verdict": "rejete",
+     "pour": [],
+     "contre": [
+      "SHA-256d = ASIC-only, jamais minable par nos GPU ou CPU"
+     ]
+    }
+   ]
+  },
+  {
+   "ts": "2026-11-19T11:27Z",
+   "run": "cron 12h00",
+   "action": "rien",
+   "action_detail": "Mode=pearl. Rig -rigA/-rigB/-rigC injoignables (pas d'accès SSH). Scan ANN/miningpoolstats/releases: BOUND 3j CPU-only SURVEILLANCE (red flags: algo custom non audité, OP Newbie merit 0, code IA). QU 5j GPU Ethash SURVEILLANCE (réseau sain 2.83 GH/s, 25k+ blocs, mais centralisation miners >80%). SHEAR mainnet repoussé 21 déc. Aucun LANÇABLE (hardware inactif + candidats hors fenêtre ou red flags). spec-b/spec-a_spec actifs sur -rigA (inaccessible).",
+   "delivered": false,
+   "candidates": [
+    {
+     "nom": "BOUND",
+     "algo": "BoundHash CPU (custom)",
+     "age": "3j (16/11)",
+     "lien": "https://bitcointalk.org/index.php?topic=5600075.0",
+     "verdict": "surveillance",
+     "pour": [
+      "CPU-only, mainnet live, explorer explorer.bound.sarl, 2517 blocs, 16.88 MH/s, 61 nodes",
+      "Fair launch (no premine, no dev fee)",
+      "Binaire officiel vérifiable SHA256, releases attested GitHub CI",
+      "21M supply, Bitcoin-style"
+     ],
+     "contre": [
+      "OP Newbie 0 merit BCT, compte GitHub 1 star 0 fork",
+      "Algo custom BoundHash non audité, code IA (Claude Code)",
+      "Fenêtre close à 3j, pas de pool public",
+      "Rig -rigA/-rigB/-rigC injoignables"
+     ]
+    },
+    {
+     "nom": "Quinvium (QU)",
+     "algo": "Ethash GPU",
+     "age": "5j (14/11)",
+     "lien": "https://bitcointalk.org/index.php?topic=5600215.0",
+     "verdict": "surveillance",
+     "pour": [
+      "GPU Ethash, réseau 2.83 GH/s, ~25290 blocs, 101160 QU supply",
+      "Full EVM, MetaMask compatible",
+      "Fair launch, no premine, pool officiel 1%",
+      "Développeur Lakylife GitHub connu (28 repo, 2 followers)",
+      "Explorer actif, 19693 tx, 13.9s bloc moyen"
+     ],
+     "contre": [
+      "Hors fenêtre (5j), pas de prix/listing",
+      "Centralisation: top 5 miners = 80% blocks, 27 reorgs",
+      "Pas de marché (pas d'échange) -> revenu = 0 EUR",
+      "Rig -rigA/-rigB/-rigC injoignables"
+     ]
+    },
+    {
+     "nom": "Pinch (PINCH)",
+     "algo": "Ethash GPU/CPU",
+     "age": "1j (19/11)",
+     "lien": "https://bitcointalk.org/index.php?topic=5598995.0",
+     "verdict": "surveillance",
+     "pour": [
+      "GPU Ethash, annoncé aujourd'hui",
+      "Guide HiveOS existant",
+      "1% escrow"
+     ],
+     "contre": [
+      "ANN à peine publiée, pas de miner binaire disponible",
+      "Auteur inconnu, pas de GitHub",
+      "Pas de pool public",
+      "Rig -rigA/-rigB/-rigC injoignables"
+     ]
+    },
+    {
+     "nom": "PoolPayCoin (PPC)",
+     "algo": "RandomX CPU + ASERT",
+     "age": "15j (4/11)",
+     "lien": "https://bitcointalk.org/index.php?topic=5600316.0",
+     "verdict": "surveillance",
+     "pour": [
+      "CPU-only RandomX -> specbox possible",
+      "Fair launch, no premine, no dev fee"
+     ],
+     "contre": [
+      "Hors fenêtre (15j)",
+      "Pas d'activité réseau détectée sur miningpoolstats",
+      "VM -rigB injoignable"
+     ]
+    },
+    {
+     "nom": "SmartCore (SMC)",
+     "algo": "Ethash GPU",
+     "age": "2+ mois",
+     "lien": "https://bitcointalk.org/index.php?topic=5598084.0",
+     "verdict": "surveillance",
+     "pour": [
+      "1% pool live, 2.42 GH/s pool hashrate",
+      "GPU Ethash, pool smartcore.su:8009"
+     ],
+     "contre": [
+      "Hors fenêtre (2+ mois)",
+      "10.1M premine dans le genesis (non fair launch)",
+      "Rig -rigA/-rigB/-rigC injoignables"
+     ]
+    },
+    {
+     "nom": "SHEAR (SHE)",
+     "algo": "ShearHash-v3 CPU",
+     "age": "mainnet 21 déc 2026",
+     "verdict": "surveillance",
+     "pour": [
+      "CPU-only RandomX-based, mainnet 21 déc 14:00Z",
+      "Fair launch, pool pool.shear.digital:443"
+     ],
+     "contre": [
+      "Mainnet pas encore lancé",
+      "Jobs cron SHEAR 16/11 caducs -> à reconfigurer pour 21 déc"
+     ]
+    }
+   ]
+  },
+  {
+   "ts": "2026-11-19T05:13Z",
+   "run": "cron 06h00",
+   "action": "rien",
+   "action_detail": "Scan complet des 3 dernières sources. Aucun candidat dans la fenêtre 72h ne passe le filtre. BOUND (3j, custom algo, AI-generated) rejeté ; PSYROB (2j) est un scam impersonation ; Spek est PoS ; aucun algo nouveau chez SRBMiner/lolMiner/bzMiner. WAM et KORSH en cours sur -rigA, pas de changement.",
+   "delivered": false,
+   "candidates": [
+    {
+     "nom": "BOUND",
+     "algo": "BoundHash (CPU)",
+     "age": "3 jours (16/11)",
+     "lien": "https://bitcointalk.org/index.php?topic=5600075.0",
+     "verdict": "rejete",
+     "pour": [
+      "Pas de premine, pas de dev fee",
+      "MIT license, open source",
+      "Mainnet lancé, blocks actifs"
+     ],
+     "contre": [
+      "Dev AI-generated (co-auteur @claude sur GitHub), identité fake",
+      "Algo custom (BoundHash) : aucun miner tiers (SRBMiner/lolMiner/bzMiner), que le binaire officiel",
+      "0 stars, 0 forks GitHub, 2 watchers",
+      "Pas de pool connu, solo uniquement",
+      "Risque malwares avec le miner officiel non vérifié par la communauté"
+     ]
+    },
+    {
+     "nom": "PSYROB",
+     "algo": "Argon2d (CPU, GHOSTDAG)",
+     "age": "2 jours (17/11)",
+     "lien": "https://bitcointalk.org/index.php?topic=5600164.0",
+     "verdict": "rejete",
+     "pour": [
+      "Argon2d supporté par XMRig",
+      "GHOSTDAG consensus, 10s blocks",
+      "Max 1B supply, mining 36%"
+     ],
+     "contre": [
+      "SCAM/impersonation expose par la communauté",
+      "Repo officiel (psycho-v1/psyrob-node) encore en testnet",
+      "OP (merit 0) muet face aux accusations",
+      "36% NGO allocation, 12% dev fee",
+      "Pas de pool, pas de listing"
+     ]
+    },
+    {
+     "nom": "Spek",
+     "algo": "PoS (unbonded)",
+     "age": "< 48h",
+     "lien": "https://bitcointalk.org/index.php?topic=5600208.0",
+     "verdict": "rejete",
+     "pour": [
+      "Post-quantum",
+      "Unbonded PoS"
+     ],
+     "contre": [
+      "PoS uniquement, pas PoW → pas minable"
+     ]
+    },
+    {
+     "nom": "WAM",
+     "algo": "RandomX",
+     "age": "campaign active",
+     "verdict": "surveillance",
+     "pour": [
+      "Campaign active screen 'wam' sur -rigA"
+     ],
+     "contre": [
+      "Pas de nouveau signal ce tick"
+     ]
+    },
+    {
+     "nom": "KORSH",
+     "algo": "Yespower",
+     "age": "campaign active",
+     "verdict": "surveillance",
+     "pour": [
+      "Campaign active screen 'spec-a-miner' sur -rigA"
+     ],
+     "contre": [
+      "Pas de nouveau signal ce tick"
+     ]
+    }
+   ]
+  },
+  {
+   "ts": "2026-11-18T18:02Z",
+   "run": "cron 18h00",
+   "action": "rien",
+   "action_detail": "Scan ANN/miningpoolstats/releases. NEB retenu (mainnet 14Z today, GPU CUDA via Suprminer 1.9.46 + nebx-miner, pools Suprnova/NurseryPool live, 162.99 GH/s, 228 workers, 293 blocs, fair launch 10% carry-over). LANÇABLE mais BLOCKED: rig -rigA SSH KO (auth fail persistant), -rigC no route, -rigB no route. BOUND 2j SURVEILLANCE (CPU-only BoundHash, AI-generated code red flag, réseau en croissance mais 0 H/s sur miningpoolstats). Aucun LANÇABLE ce tick. Pearl intact.",
+   "delivered": false,
+   "candidates": [
+    {
+     "nom": "NEB",
+     "algo": "NEBHASH v2 (KEP1 convolutional, GPU CUDA)",
+     "age": "~4h",
+     "lien": "https://bitcointalk.org/index.php?topic=5599947.0",
+     "verdict": "retenu",
+     "pour": [
+      "Mainnet lancé aujourd'hui 14Z (4h), fenêtre idéale",
+      "Suprminer 1.9.46 + nebx-miner v0.9.4, 0% miner fee",
+      "Pools Suprnova + NurseryPool live, solo ports",
+      "162.99 GH/s réseau, 228 workers, 293 blocs",
+      "Fair launch, 10% testnet carry-over, GitHub vérifiable",
+      "RTX 3070/3080 supportés, algos CUDA connus"
+     ],
+     "contre": [
+      "Team SilasEigen BCT = Newbie, merit faible",
+      "Pas de prix/listing (normal, 4h mainnet)",
+      "Algo neural PoW jamais testé en live",
+      "5% fee projet sur chaque block",
+      "SSH rig -rigA KO → pas LANÇABLE"
+     ]
+    },
+    {
+     "nom": "BOUND",
+     "algo": "BoundHash (CPU-only, mémoire-dur)",
+     "age": "2j",
+     "lien": "https://bitcointalk.org/index.php?topic=5600075.0",
+     "verdict": "surveillance",
+     "pour": [
+      "Lancé 16 Nov, 2 jours",
+      "0% premine, 0% dev fee",
+      "GitHub avec SHA256SUMS et attestations",
+      "50 B/bloc, 10 min, supply 21M",
+      "Minable specbox CPU (si VM dispo)"
+     ],
+     "contre": [
+      "Code généré par Claude Code (red flag qualité/sécurité)",
+      "0 H/s sur miningpoolstats → réseau très faible",
+      "Pas de pools listés, solo uniquement",
+      "Pas de miner Linux/ARM64 vérifié hors release",
+      "Hors fenêtre 72h (2j)"
+     ]
+    },
+    {
+     "nom": "QU",
+     "algo": "Poseidon2-Goldilocks",
+     "age": "2 mois",
+     "verdict": "rejete",
+     "pour": [
+      "41 pools, 21.74 TH/s",
+      "Listé, prix connu"
+     ],
+     "contre": [
+      "Hors fenêtre 72h (2 mois)",
+      "Clos depuis historique"
+     ]
+    },
+    {
+     "nom": "QWC",
+     "algo": "RandomX",
+     "age": "2 mois",
+     "verdict": "surveillance",
+     "pour": [
+      "219.77 kH/s, 5 pools",
+      "Minable specbox CPU"
+     ],
+     "contre": [
+      "Hors fenêtre 72h (2 mois)",
+      "spec-b/KORSH déjà actifs sur CPU"
+     ]
+    }
+   ]
+  }
+ ]
+}

@@ -11,6 +11,7 @@
     ["/machines", "🖥️ Machines"],
     ["/profiles", "⛏️ Profils"],
     ["/campaigns", "🎯 Campagnes"],
+    ["/analysis", "🔎 Analyse des tokens"],
     ["/mined", "🪙 Tokens minés"],
     ["/followup", "📈 Suivi"],
     ["/settings", "⚙️ Configuration"],

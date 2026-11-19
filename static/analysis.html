@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fossor — Analyse des tokens</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#12161c;--card:#1a2029;--border:#2c3544;--txt:#e6edf3;--muted:#8b98a9;--accent:#4f8cff;--green:#3fb950;--red:#f85149;--yellow:#d29922}
+body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;min-height:100vh}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 18px 40px}
+header{display:flex;justify-content:space-between;align-items:center;margin-bottom:22px;gap:12px;flex-wrap:wrap}
+header h1{font-size:26px}
+.sub{color:var(--muted);font-size:13px}
+.nav-tabs{display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.nav-tabs a{color:var(--muted);padding:8px 16px;font-size:13.5px;font-weight:600;text-decoration:none;border:1px solid transparent;border-bottom:none;border-radius:10px 10px 0 0}
+.nav-tabs a:hover{color:var(--txt)}
+.nav-tabs a.active{background:var(--card);border-color:var(--border);color:var(--txt)}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px}
+.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:10px}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{text-align:left;color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;padding:6px;border-bottom:1px solid var(--border)}
+td{padding:7px 6px;border-bottom:1px solid #232b37;vertical-align:top}
+tr:last-child td{border-bottom:none}
+.chip{display:inline-block;font-size:10px;font-weight:700;padding:2px 9px;border-radius:999px;text-transform:uppercase;letter-spacing:.3px}
+.chip.on{background:#1a3a2a;color:var(--green);border:1px solid var(--green)}
+.chip.off{background:#3a1a1a;color:var(--red);border:1px solid var(--red)}
+.chip.retenu{background:#1a3a2a;color:var(--green);border:1px solid var(--green)}
+.chip.surveillance{background:#3a2f1a;color:var(--yellow);border:1px solid var(--yellow)}
+.chip.rejete{background:#3a1a1a;color:var(--red);border:1px solid var(--red)}
+.chip.scope{background:#1a2230;color:var(--accent);border:1px solid #2d4a7a;text-transform:none}
+button{font-family:inherit;cursor:pointer}
+.btn{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:7px 13px;font-size:12.5px;font-weight:600}
+.btn.sm{padding:4px 9px;font-size:11px}
+.btn.ghost{background:transparent;color:var(--muted);border:1px solid var(--border)}
+.btn.ghost:hover{color:var(--txt)}
+.btn.danger{background:#3a1a1a;color:var(--red);border:1px solid #6a2a2a}
+input[type=text],input[type=url],input[type=number],input[type=file]{background:#0f141b;color:var(--txt);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-family:inherit;font-size:13px;width:100%}
+input[type=checkbox]{width:auto;accent-color:var(--accent)}
+label{display:block;color:var(--muted);font-size:11px;font-weight:600;margin-bottom:3px;text-transform:none}
+.mono{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--muted);word-break:break-all}
+.err{margin-top:10px;padding:8px 10px;border:1px solid #5a2a2a;border-radius:8px;background:#241618;color:#f0a1a1;font-size:11.5px;white-space:pre-wrap}
+.ok{margin-top:10px;padding:8px 10px;border:1px solid #2a5a3a;border-radius:8px;background:#16241a;color:#9fe0b4;font-size:11.5px}
+.empty{color:var(--muted);font-size:13px;padding:22px;text-align:center;border:1px dashed var(--border);border-radius:12px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}
+.panel{background:#0f141b;border:1px solid var(--border);border-radius:10px;padding:12px;margin-top:10px}
+.panel h3{font-size:13px;margin-bottom:8px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.analysis{border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;background:#0f141b}
+.analysis .head{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+.analysis .detail{color:var(--muted);font-size:12px;margin-bottom:10px;white-space:pre-wrap}
+.cand{border-top:1px solid #232b37;padding-top:8px;margin-top:8px}
+.cand .name{font-weight:700;font-size:13px}
+.cand ul{margin:4px 0 0 18px;font-size:11.5px;color:var(--muted)}
+.cand .cols{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px}
+.cand .cols b{font-size:10.5px;text-transform:uppercase;letter-spacing:.3px;color:var(--muted)}
+.stage{font-size:10px;border:1px solid var(--yellow);color:var(--yellow);border-radius:999px;padding:1px 7px;margin-left:6px}
+.hist{font-size:11.5px;border-top:1px solid #232b37;padding:6px 0}
+</style>
+  <script src="/static/nav.js" defer></script>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div><h1>🔎 Analyse des tokens</h1><span class="sub">Règles/triggers, historique et journal des analyses de la veille</span></div>
+  </header>
+  <nav id="nav"></nav>
+
+  <div class="card">
+    <h2>Règles et triggers (§4.8)</h2>
+    <div id="rulesMsg"></div>
+    <div id="rulesWrap"><table><thead><tr>
+      <th>Règle</th><th>Portée</th><th>État</th><th>Paramètres</th><th></th>
+    </tr></thead><tbody id="rulesRows"></tbody></table></div>
+    <div id="ruleEditor"></div>
+    <div id="ruleHistory"></div>
+  </div>
+
+  <div class="card">
+    <h2>Journal des analyses</h2>
+    <div id="analysesMsg"></div>
+    <div id="analyses"></div>
+  </div>
+
+  <div class="card">
+    <h2>Import de l'historique (§4.9)</h2>
+    <p class="sub" style="margin-bottom:10px">URL d'un <code>mining-analyses.json</code> ou fichier téléversé. Prévisualisation d'abord, import idempotent ensuite (aucun doublon au second passage).</p>
+    <div class="grid2">
+      <div><label for="importUrl">URL</label><input id="importUrl" type="url" placeholder="http://hôte:port/mining-analyses.json"></div>
+      <div><label for="importFile">Ou fichier JSON</label><input id="importFile" type="file" accept="application/json,.json"></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn ghost" id="previewBtn">Prévisualiser</button>
+      <button class="btn" id="importBtn">Importer</button>
+      <span class="sub" id="importSource"></span>
+    </div>
+    <div id="importMsg"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (sel) { return document.querySelector(sel); };
+  var state = { rules: [], editing: null, schemas: {} };
+
+  function esc(value) {
+    return String(value == null ? "" : value).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function fmtDate(value) {
+    if (!value) { return "—"; }
+    var d = new Date(value);
+    return isNaN(d.getTime()) ? value : d.toLocaleString("fr-FR");
+  }
+  function msg(el, text, kind) {
+    el.innerHTML = text ? '<div class="' + (kind || "err") + '">' + esc(text) + "</div>" : "";
+  }
+
+  function loadRules() {
+    fetch("/api/rules", { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : r.json().then(function (e) { throw new Error(e.detail || r.status); }); })
+      .then(function (data) {
+        state.rules = data.rules || [];
+        state.rules.forEach(function (rule) { state.schemas[rule.id] = rule.schema || {}; });
+        renderRules();
+      })
+      .catch(function (err) { msg($("#rulesMsg"), "Chargement des règles impossible : " + err.message); });
+  }
+
+  function paramsSummary(params) {
+    return Object.keys(params || {}).map(function (key) {
+      var value = params[key];
+      return key + "=" + (value === null ? "∞" : JSON.stringify(value));
+    }).join(" · ");
+  }
+
+  function renderRules() {
+    var rows = state.rules.map(function (rule) {
+      var stage = rule.stage ? '<span class="stage">étape ' + esc(rule.stage) + '</span>' : "";
+      return "<tr data-rule=\"" + esc(rule.id) + "\">" +
+        "<td><b>" + esc(rule.name) + "</b>" + stage +
+        "<div class=\"mono\">" + esc(rule.description) + "</div></td>" +
+        "<td><span class=\"chip scope\">" + esc(rule.scope) + "</span></td>" +
+        "<td><span class=\"chip " + (rule.enabled ? "on" : "off") + "\">" + (rule.enabled ? "activée" : "désactivée") + "</span></td>" +
+        "<td class=\"mono\">" + esc(paramsSummary(rule.params)) + "</td>" +
+        "<td style=\"text-align:right;white-space:nowrap\">" +
+        "<button class=\"btn sm ghost\" data-act=\"toggle\" data-id=\"" + esc(rule.id) + "\">" + (rule.enabled ? "Désactiver" : "Activer") + "</button> " +
+        "<button class=\"btn sm\" data-act=\"edit\" data-id=\"" + esc(rule.id) + "\">Modifier</button> " +
+        "<button class=\"btn sm ghost\" data-act=\"history\" data-id=\"" + esc(rule.id) + "\">Historique</button>" +
+        "</td></tr>";
+    }).join("");
+    $("#rulesRows").innerHTML = rows || '<tr><td colspan="5" class="sub">Aucune règle.</td></tr>';
+  }
+
+  function fieldType(prop) {
+    if (prop.type) { return prop.type; }
+    if (prop.anyOf) {
+      for (var i = 0; i < prop.anyOf.length; i += 1) {
+        if (prop.anyOf[i].type && prop.anyOf[i].type !== "null") { return prop.anyOf[i].type; }
+      }
+    }
+    return "string";
+  }
+
+  function editorFor(rule) {
+    var schema = state.schemas[rule.id] || {};
+    var props = schema.properties || {};
+    var fields = Object.keys(props).map(function (name) {
+      var prop = props[name];
+      var type = fieldType(prop);
+      var value = rule.params ? rule.params[name] : prop.default;
+      var label = prop.description || name;
+      var input;
+      if (type === "boolean") {
+        input = '<input type="checkbox" data-param="' + esc(name) + '" data-type="boolean"' + (value ? " checked" : "") + ">";
+      } else if (type === "integer" || type === "number") {
+        var min = prop.minimum !== undefined ? ' min="' + prop.minimum + '"' : "";
+        var max = prop.maximum !== undefined ? ' max="' + prop.maximum + '"' : "";
+        var step = type === "integer" ? "1" : "0.01";
+        input = '<input type="number" step="' + step + '"' + min + max + ' data-param="' + esc(name) +
+          '" data-type="' + type + '" data-nullable="' + (prop.anyOf ? "1" : "0") +
+          '" value="' + esc(value === null || value === undefined ? "" : value) + '">';
+      } else {
+        input = '<input type="text" data-param="' + esc(name) + '" data-type="string" value="' + esc(value || "") + '">';
+      }
+      return "<div><label>" + esc(label) + "</label>" + input + "</div>";
+    }).join("");
+    var box = document.createElement("div");
+    box.className = "panel";
+    box.innerHTML = "<h3>Modifier — " + esc(rule.name) + "</h3>" +
+      "<div class=\"grid2\">" + fields + "</div>" +
+      "<div class=\"row\" style=\"margin-top:12px\">" +
+      "<button class=\"btn\" data-act=\"save\" data-id=\"" + esc(rule.id) + "\">Enregistrer</button>" +
+      "<button class=\"btn ghost\" data-act=\"close\">Fermer</button>" +
+      "<span class=\"sub\" id=\"editMsg\"></span></div>";
+    $("#ruleEditor").innerHTML = "";
+    $("#ruleEditor").appendChild(box);
+    state.editing = rule.id;
+  }
+
+  function collectParams(ruleId) {
+    var out = {};
+    var inputs = $("#ruleEditor").querySelectorAll("[data-param]");
+    for (var i = 0; i < inputs.length; i += 1) {
+      var input = inputs[i];
+      var name = input.getAttribute("data-param");
+      var type = input.getAttribute("data-type");
+      if (type === "boolean") {
+        out[name] = input.checked;
+      } else if (type === "integer" || type === "number") {
+        if (input.value === "" && input.getAttribute("data-nullable") === "1") {
+          out[name] = null;
+        } else if (input.value === "") {
+          return { error: "Champ vide : " + name };
+        } else {
+          out[name] = type === "integer" ? parseInt(input.value, 10) : parseFloat(input.value);
+        }
+      } else {
+        out[name] = input.value;
+      }
+    }
+    return { params: out };
+  }
+
+  function patchRule(ruleId, body) {
+    return fetch("/api/rules/" + encodeURIComponent(ruleId), {
+      method: "PATCH",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(function (r) {
+      return r.json().then(function (data) {
+        if (!r.ok) { throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail)); }
+        return data;
+      });
+    });
+  }
+
+  function showHistory(ruleId) {
+    var box = $("#ruleHistory");
+    fetch("/api/rules/" + encodeURIComponent(ruleId) + "/history", { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error(r.status)); })
+      .then(function (data) {
+        var items = (data.changes || []).map(function (change) {
+          return '<div class="hist"><span class="mono">' + esc(fmtDate(change.ts)) + "</span> — <b>" + esc(change.actor) + "</b><br>" +
+            "<span class=\"mono\">avant " + esc(JSON.stringify(change.before)) + "<br>après " + esc(JSON.stringify(change.after)) + "</span></div>";
+        }).join("");
+        box.innerHTML = '<div class="panel"><h3>Historique — ' + esc(ruleId) + "</h3>" + (items || '<div class="sub">Aucun changement.</div>') + "</div>";
+      })
+      .catch(function () { box.innerHTML = '<div class="err">Historique indisponible.</div>'; });
+  }
+
+  document.addEventListener("click", function (event) {
+    var target = event.target.closest("[data-act]");
+    if (!target) { return; }
+    var act = target.getAttribute("data-act");
+    var id = target.getAttribute("data-id");
+    if (act === "edit") {
+      var rule = state.rules.find(function (item) { return item.id === id; });
+      if (rule) { editorFor(rule); }
+    } else if (act === "close") {
+      $("#ruleEditor").innerHTML = "";
+      state.editing = null;
+    } else if (act === "save") {
+      var collected = collectParams(id);
+      if (collected.error) { msg($("#editMsg"), collected.error); return; }
+      patchRule(id, { params: collected.params })
+        .then(function () {
+          $("#ruleEditor").innerHTML = "";
+          msg($("#rulesMsg"), "Règle « " + id + " » enregistrée.", "ok");
+          loadRules();
+        })
+        .catch(function (err) { msg($("#editMsg"), err.message); });
+    } else if (act === "toggle") {
+      var current = state.rules.find(function (item) { return item.id === id; });
+      if (!current) { return; }
+      patchRule(id, { enabled: !current.enabled })
+        .then(function () { loadRules(); })
+        .catch(function (err) { msg($("#rulesMsg"), err.message); });
+    } else if (act === "history") {
+      showHistory(id);
+    }
+  });
+
+  function loadAnalyses() {
+    fetch("/api/analyses?limit=60", { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error(r.status)); })
+      .then(function (data) {
+        var items = (data.analyses || []).map(function (analysis) {
+          var cands = (analysis.candidates || []).map(function (cand) {
+            var links = (cand.links || []).map(function (link) {
+              return '<a href="' + esc(link) + '" target="_blank" rel="noopener" style="color:var(--accent)">' + esc(link) + "</a>";
+            }).join(" · ");
+            return '<div class="cand"><div class="name">' + esc(cand.ticker || "") + " " + esc(cand.name || "") +
+              ' <span class="chip ' + esc(cand.verdict) + '">' + esc(cand.verdict) + "</span></div>" +
+              '<div class="mono">' + esc(cand.algo || "") + (cand.age ? " · " + esc(cand.age) : "") + "</div>" +
+              (links ? '<div class="mono">' + links + "</div>" : "") +
+              '<div class="cols"><div><b>Pour</b><ul>' + (cand.pour || []).map(function (p) { return "<li>" + esc(p) + "</li>"; }).join("") +
+              '</ul></div><div><b>Contre</b><ul>' + (cand.contre || []).map(function (p) { return "<li>" + esc(p) + "</li>"; }).join("") +
+              "</ul></div></div></div>";
+          }).join("");
+          return '<div class="analysis"><div class="head"><div><b>' + esc(fmtDate(analysis.ts)) + "</b> — " + esc(analysis.run || "veille") +
+            '</div><div class="mono">' + esc(analysis.source) + " · action " + esc(analysis.action) + "</div></div>" +
+            '<div class="detail">' + esc(analysis.detail) + "</div>" + cands + "</div>";
+        }).join("");
+        $("#analyses").innerHTML = items || '<div class="empty">Aucune analyse enregistrée.</div>';
+      })
+      .catch(function (err) { msg($("#analysesMsg"), "Journal indisponible : " + err.message); });
+  }
+
+  function importRequest(dryRun) {
+    var url = $("#importUrl").value.trim();
+    var file = $("#importFile").files[0];
+    if (!url && !file) { msg($("#importMsg"), "Fournir une URL ou un fichier."); return; }
+    var body = new FormData();
+    body.append("dry_run", dryRun ? "true" : "false");
+    if (url) { body.append("url", url); }
+    if (file) { body.append("file", file); }
+    msg($("#importMsg"), "");
+    fetch("/api/analyses/import", { method: "POST", credentials: "same-origin", body: body })
+      .then(function (r) {
+        return r.json().then(function (data) {
+          if (!r.ok) { throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail)); }
+          return data;
+        });
+      })
+      .then(function (data) {
+        var lines = [
+          (data.dry_run ? "Prévisualisation" : "Import terminé") + " : " + data.total + " analyse(s), " +
+          data.new + " nouvelle(s), " + data.duplicates + " doublon(s)."
+        ];
+        (data.preview || []).forEach(function (item) {
+          lines.push("• " + item.ts + " — " + (item.run || "veille") + " : " +
+            (item.candidates || []).map(function (c) { return (c.ticker || c.name) + " (" + c.verdict + ")"; }).join(", "));
+        });
+        msg($("#importMsg"), lines.join("\n"), data.dry_run ? "ok" : "ok");
+        if (!data.dry_run) { loadAnalyses(); }
+      })
+      .catch(function (err) { msg($("#importMsg"), err.message); });
+  }
+
+  $("#previewBtn").addEventListener("click", function () { importRequest(true); });
+  $("#importBtn").addEventListener("click", function () { importRequest(false); });
+
+  loadRules();
+  loadAnalyses();
+})();
+</script>
+</body>
+</html>

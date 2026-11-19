@@ -527,6 +527,10 @@ class Campaign(Base):
     # None = pas encore vérifié ; 0/1 = vérifié (1 = hashrate revenu).
     verified: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # §4.9/§5.4 : analyse Hermes qui a produit cette proposition (NULL sinon).
+    analysis_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("analyses.id"), nullable=True, index=True
+    )
     started_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     ended_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     created_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
@@ -684,3 +688,64 @@ class EnergyRuleEvent(Base):
     device_uuid: Mapped[str | None] = mapped_column(String(36), nullable=True)
     detail: Mapped[str] = mapped_column(Text, default="", server_default="")
     simulated: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+
+
+class Rule(Base):
+    """Règle d'analyse des tokens (§4.8).
+
+    ``id`` est un identifiant stable (slug) : c'est lui que l'API Hermes lit et
+    que ``PATCH /api/rules/{id}`` modifie.  ``params`` est du JSON **validé par
+    le schéma pydantic** de :mod:`app.rules` avant toute écriture — jamais du
+    texte libre.
+    """
+
+    __tablename__ = "rules"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", server_default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    scope: Mapped[str] = mapped_column(String(12), nullable=False, index=True)
+    params: Mapped[dict] = mapped_column(JSON, default=dict)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    updated_at: Mapped[str] = mapped_column(
+        String(30), default=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+
+class RuleChange(Base):
+    """Historique d'une règle (§4.8) : qui, quand, avant/après."""
+
+    __tablename__ = "rule_changes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    rule_id: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    ts: Mapped[str] = mapped_column(
+        String(30), default=lambda: datetime.now(timezone.utc).isoformat(), index=True
+    )
+    actor: Mapped[str] = mapped_column(String(20), default="fred", server_default="fred")
+    before: Mapped[dict] = mapped_column(JSON, default=dict)
+    after: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class Analysis(Base):
+    """Analyse de veille écrite par Hermes ou importée (§4.9).
+
+    ``fingerprint`` (SHA-256 du contenu normalisé) porte l'**idempotence** de
+    l'import : rejouer le même fichier ne crée aucun doublon.
+    """
+
+    __tablename__ = "analyses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    run: Mapped[str] = mapped_column(String(80), default="", server_default="")
+    action: Mapped[str] = mapped_column(String(20), default="rien", server_default="rien")
+    detail: Mapped[str] = mapped_column(Text, default="", server_default="")
+    candidates: Mapped[list] = mapped_column(JSON, default=list)
+    delivered: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    source: Mapped[str] = mapped_column(String(12), default="hermes", server_default="hermes")
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    created_at: Mapped[str] = mapped_column(
+        String(30), default=lambda: datetime.now(timezone.utc).isoformat()
+    )

@@ -150,7 +150,8 @@ tr:last-child td{border-bottom:none}
     var out = [];
     if (c.status === "proposed") {
       out.push('<button class="btn sm" data-act="approve" data-id="' + c.id + '">Approuver</button>');
-      out.push('<button class="btn sm danger" data-act="cancel" data-id="' + c.id + '">Annuler</button>');
+      out.push('<button class="btn sm danger" data-act="cancel" data-id="' + c.id + '">' +
+        (c.origin === "hermes" ? "Refuser" : "Annuler") + "</button>");
     } else if (c.status === "approved") {
       out.push('<button class="btn sm" data-act="start" data-id="' + c.id + '">Démarrer maintenant</button>');
       out.push('<button class="btn sm danger" data-act="cancel" data-id="' + c.id + '">Annuler</button>');
@@ -167,6 +168,7 @@ tr:last-child td{border-bottom:none}
         "<td>" + c.id + "</td>" +
         '<td class="mono">' + c.coin + "</td>" +
         '<td><span class="chip ' + c.status + '">' + c.status_label + "</span>" +
+          (c.origin === "hermes" ? ' <span class="sim">Hermes</span>' : "") +
           (c.verified === true ? ' <span class="sim">retour vérifié</span>' : "") + "</td>" +
         "<td>" + (c.profile_name || "—") +
           '<div class="muted" style="font-size:10.5px">mode ' + (c.execution_mode || "host") +
