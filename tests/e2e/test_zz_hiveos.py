@@ -56,10 +56,12 @@ def seed_machine(name: str, devices: int, enabled: int, gpu_total: int, watchdog
     try:
         cursor = conn.execute(
             "INSERT INTO machines (uuid, name, host, ssh_port, ssh_user, auth_type, sudo,"
-            " os_kind, usage, enabled, created_at, updated_at, fossor_host)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " os_kind, usage, enabled, vm_host, platform_power_w, machine_kind,"
+            " created_at, updated_at, fossor_host)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (str(uuid_lib.uuid4()), name, "127.0.0.1", 1, "tester", "fossor_key", "sudo",
-             "hiveos", "gpu", 1, "2026-11-18T00:00:00+00:00", "2026-11-18T00:00:00+00:00", 0),
+             "hiveos", "gpu", 1, 0, 50.0, "host",
+             "2026-11-18T00:00:00+00:00", "2026-11-18T00:00:00+00:00", 0),
         )
         machine_id = cursor.lastrowid
         for index in range(devices):
