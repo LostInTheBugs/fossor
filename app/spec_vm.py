@@ -931,13 +931,21 @@ _RE_LOG_HS = re.compile(
 _LOG_FACTOR = {"": 1.0, "k": 1e3, "m": 1e6, "g": 1e9, "t": 1e12}
 
 
+_CPUMINER_YESPOWER_1000_RE = re.compile(
+    r"Net hash rate \(est\)|Yespower parameters:\s*N=\s*256", re.IGNORECASE
+)
+
+
 def parse_log_hashrate(text: str) -> float | None:
     """Dernière ligne de hashrate d'un journal de mineur, unités normalisées en H/s."""
+    # Même correction que la sonde hôte : cpuminer-opt (yespower N=256) écrit
+    # « Mh/s » pour une valeur en kH/s (x1000), cf. cpu_stats._log_hashrate_scale.
+    scale = 1e-3 if _CPUMINER_YESPOWER_1000_RE.search(text or "") else 1.0
     found: float | None = None
     for raw in (text or "").splitlines():
         match = _RE_LOG_HS.search(raw)
         if match:
-            found = float(match.group(1)) * _LOG_FACTOR[match.group(2).lower()]
+            found = float(match.group(1)) * _LOG_FACTOR[match.group(2).lower()] * scale
     return found
 
 

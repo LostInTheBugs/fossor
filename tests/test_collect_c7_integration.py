@@ -112,7 +112,7 @@ async def test_cpu_hashrate_from_log_and_node_getters():
         assert cpu_miners, miners
 
         cpuminer = next(m for m in cpu_miners if "cpuminer" in (m["binary"] or ""))
-        assert cpuminer["hashrate_hs"] == pytest.approx(237.8e6), cpuminer
+        assert cpuminer["hashrate_hs"] == pytest.approx(237.8e3), cpuminer
         assert cpuminer["hashrate_source"].startswith("log /tmp/fake-cpuminer.log")
 
         solo = next(m for m in cpu_miners if m["kind"] == "solo")
@@ -126,7 +126,7 @@ async def test_cpu_hashrate_from_log_and_node_getters():
         # Pas de capteur hwmon dans un conteneur : l'absence est explicite.
         assert cpu["temp_c"] is None or cpu["temp_c"] > 0
         assert cpu["power_source"] in ("rapl", "non mesurée")
-        assert cpu["hashrate_hs"] == pytest.approx(237.8e6)
+        assert cpu["hashrate_hs"] == pytest.approx(237.8e3)
     finally:
         db.close()
 

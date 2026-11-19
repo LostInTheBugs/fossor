@@ -68,8 +68,10 @@ class TestCpuState:
 class TestHashrateLogs:
     def test_cpuminer_opt_ttf_line(self):
         hashrate, line = cs.hashrate_from_text(fixture("cpu_athlon_log.txt"))
-        assert hashrate == pytest.approx(237.8e6)
-        assert "TTF @ 237.8 Mh/s" in line
+        # cpuminer-opt écrit « Mh/s » pour une valeur en kH/s : le log réel de
+        # l'athlon dit 230.57, la sonde doit rendre 230 570 H/s, pas 230,57 MH/s.
+        assert hashrate == pytest.approx(230.57e3)
+        assert "TTF @ 230.57 Mh/s" in line
 
     def test_wam_miner_khs_with_comma(self):
         hashrate, _ = cs.hashrate_from_text(fixture("cpu_wam_log.txt"))

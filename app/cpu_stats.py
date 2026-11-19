@@ -284,19 +284,36 @@ def parse_hwmon_power(text: str) -> tuple[float | None, str]:
 
 
 # ── Hashrate from a log ───────────────────────────────────────────────
+# cpuminer-opt 26.1 builds for Korsh (yespower N=256, r=8) print their own
+# hashrate with a x1000 inflation: "TTF @ 237.76 Mh/s" on an Athlon whose real
+# rate is ~237 kH/s.  The same log puts the whole network at 3336.85 kh/s
+# (netdiff 0.049, ~71 s blocks -> ~3.3 MH/s) and pool.korsh.org counts
+# comparable CPUs at ~220 kH/s: two Athlon threads cannot be 71x the network.
+# A tail carrying the fork's own "Net hash rate (est)" line (or the N=256
+# banner) is therefore scaled once.
+_CPUMINER_YESPOWER_1000_RE = re.compile(
+    r"Net hash rate \(est\)|Yespower parameters:\s*N=\s*256", re.IGNORECASE
+)
+
+
+def _log_hashrate_scale(text: str) -> float:
+    return 1e-3 if _CPUMINER_YESPOWER_1000_RE.search(text or "") else 1.0
+
+
 def hashrate_from_text(text: str) -> tuple[float | None, str]:
     """Last hashrate of a log tail, in H/s, and the wording it came from."""
     lines = [line for line in (text or "").splitlines() if line.strip()]
     if not lines:
         return None, ""
+    scale = _log_hashrate_scale(text)
     # cpuminer-opt: « TTF @ 237.8 Mh/s » (athlon-3000G, KORSH).
     for line in reversed(lines):
         match = _TTF_RE.search(line)
         if match:
             number = _number(match.group(1))
-            factor = _UNIT_HS.get(match.group(2).lower().replace("h", "h"), 1.0)
+            factor = _UNIT_HS.get(match.group(2).lower(), 1.0)
             if number is not None:
-                return number * factor, match.group(0).strip()
+                return number * factor * scale, match.group(0).strip()
     # xmrig: « speed 10s/60s/15m 1234.5 1200.0 1180.0 H/s max … » (10 s window).
     for line in reversed(lines):
         match = _XMRIG_RE.search(line)
@@ -304,7 +321,7 @@ def hashrate_from_text(text: str) -> tuple[float | None, str]:
             number = _to_float(match.group(1))
             factor = _UNIT_HS.get(match.group(2).lower(), 1.0)
             if number is not None:
-                return number * factor, match.group(0).strip()
+                return number * factor * scale, match.group(0).strip()
     # wam-miner, cpuminer summary, SRBMiner CPU: « … 1.21 kH/s » / « Total: 3 MH/s ».
     for line in reversed(lines):
         matches = list(_HASHRATE_RE.finditer(line))
@@ -314,7 +331,7 @@ def hashrate_from_text(text: str) -> tuple[float | None, str]:
         number = _number(match.group(1))
         if number is None:
             continue
-        return number * _UNIT_HS.get(match.group(2).lower(), 1.0), match.group(0).strip()
+        return number * _UNIT_HS.get(match.group(2).lower(), 1.0) * scale, match.group(0).strip()
     return None, ""
 
 

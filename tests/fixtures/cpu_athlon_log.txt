@@ -1,7 +1,8 @@
-[2026-11-17 09:12:01] yespower 1.0, 2 threads - using 2 CPU cores
-[2026-11-17 09:12:04] Stratum connection to pool.korsh.org:3333 established
-[2026-11-17 09:12:07] yespower 1.0 block 21451, diff 128.421
-[2026-11-17 09:12:09] cpu 0: 119.2 Mh/s  cpu 1: 118.6 Mh/s
-[2026-11-17 09:12:09] Total: 237.80 Mh/s
-[2026-11-17 09:12:11] TTF @ 237.8 Mh/s: Block 0s, Share 0s
-[2026-11-17 09:12:14] accepted: 31/31 (100.0%), 237.8 Mh/s yes!
+[2026-11-19 20:16:52] New Work: Block 80980, Tx 0, Netdiff 0.048946, Job 0000d80f
+                      Diff: Net 0.048946, Stratum 0.1, Target 1.5259e-06
+                      TTF @ 237.98 Mh/s: Block 0s, Share 0s
+                      Net hash rate (est) 3336.85 kh/s
+[2026-11-19 20:17:02] New Work: Block 80980, Tx 0, Netdiff 0.048946, Job 0000d810
+                      Diff: Net 0.048946, Stratum 0.1, Target 1.5259e-06
+                      TTF @ 230.57 Mh/s: Block 0s, Share 0s
+                      Net hash rate (est) 3336.85 kh/s

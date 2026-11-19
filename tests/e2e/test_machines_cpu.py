@@ -59,9 +59,9 @@ async def test_machine_sheet_shows_cpu_state_and_cpu_miner_hashrate(e2e_server):
         cpu = {
             "load_pct": 67.5, "temp_c": 68.0, "freq_mhz": 3900.0, "cores": 6,
             "model": "AMD Ryzen 5 3600 6-Core", "power_w": 88.96,
-            "power_source": "API SRBMiner package_power", "hashrate_hs": 237800000.0,
+            "power_source": "API SRBMiner package_power", "hashrate_hs": 237800.0,
             "miners": [{
-                "name": "cpuminer-opt", "coin": "KSH", "hashrate_hs": 237800000.0,
+                "name": "cpuminer-opt", "coin": "KSH", "hashrate_hs": 237800.0,
                 "threads": "2", "source": "log /var/log/athlon-korsh-miner.log",
                 "note": "", "node": None,
             }],
@@ -69,7 +69,7 @@ async def test_machine_sheet_shows_cpu_state_and_cpu_miner_hashrate(e2e_server):
         miners = [{
             "name": "cpuminer-opt", "kind": "cpu", "version": "", "algorithm": "yespower",
             "pool": "pool.example.net:3333", "coin": "KSH", "threads": "2", "count": 1,
-            "hashrate_hs": 237800000.0,
+            "hashrate_hs": 237800.0,
             "hashrate_source": "log /var/log/athlon-korsh-miner.log",
             "hashrate_note": "", "api_port": None, "user": "fossor", "pid": 12,
         }]
@@ -103,13 +103,13 @@ async def test_machine_sheet_shows_cpu_state_and_cpu_miner_hashrate(e2e_server):
         assert "3.90 GHz" in text, text
         assert "88.96 W" in text, text
         # Mineur CPU : coin, hashrate, threads, source.
-        assert "KSH" in text and "238 MH/s" in text, text
+        assert "KSH" in text and "238 kH/s" in text, text
         assert "2 threads" in text, text
         assert "source log /var/log/athlon-korsh-miner.log" in text, text
 
         # L'alerte « mineur externe » porte aussi le hashrate et sa source.
-        alert = await page.locator('.miner-alert:has-text("238 MH/s")').first.text_content()
-        assert "238 MH/s" in alert, alert
+        alert = await page.locator('.miner-alert:has-text("238 kH/s")').first.text_content()
+        assert "238 kH/s" in alert, alert
         assert "source log" in alert, alert
 
         assert console_errors == [], console_errors

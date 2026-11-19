@@ -6,7 +6,7 @@ i=0
 while :; do
   i=$((i + 1))
   echo "[$(date -u '+%Y-%m-%d %H:%M:%S')] yespower 1.0 block 21458, diff 128.421"
-  echo "[$(date -u '+%Y-%m-%d %H:%M:%S')] TTF @ 237.8 Mh/s: Block 0s, Share 0s"
+  echo "[$(date -u '+%Y-%m-%d %H:%M:%S')] TTF @ 237.8 Mh/s: Block 0s, Share 0s\n                      Net hash rate (est) 3336.85 kh/s"
   echo "[$(date -u '+%Y-%m-%d %H:%M:%S')] accepted: $i/$i (100.0%), 237.8 Mh/s yes!"
   sleep 2
 done

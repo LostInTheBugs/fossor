@@ -1,5 +1,46 @@
 # Changelog
 
+## 2026.11.011 (en cours)
+
+### Hashrate CPU — unité de cpuminer-opt
+
+- **Unité prouvée** : le binaire cpuminer-opt 26.1 de Korsh (yespower N=256, r=8)
+  imprime « Mh/s » pour une valeur en kH/s (×1000). La sonde hôte et la collecte
+  dans la VM appliquent la correction et ne prennent plus « TTF @ … » pour des H/s.
+- **Fixture réelle** : les lignes du log de l'athlon (TTF + « Net hash rate (est) »)
+  servent de test.
+
+### Campagnes VM — finitions
+
+- Clé de saut supprimée après la dernière VM, SSH réessayé, carte VM corrigée (`1faf9e5`).
+
+## 2026.11.010 — 2026-11-19
+
+### ASIC — IceRiver en HTTPS (« pbv081 »)
+
+- **Nouveau firmware** : session `GET /` → login → `/overview` ; la puissance est
+  affichée « non mesurée » ou « saisie » selon ce que l'appareil expose.
+- **Ancien firmware** : repli sur `post=4` quand le panneau nu est détecté.
+- **Erreurs** : un message explicite par étape (hôte, connexion, identifiants, lecture).
+
+### Campagnes vm/hybrid sur Proxmox
+
+- **Fabrique de backend** : la campagne choisit son exécutant (SSH ou Proxmox).
+- **Modèle Proxmox** : les machines Proxmox sont des cibles de campagne.
+- **argv réencodé** : la commande est réencodée pour l'hôte distant.
+- **Destruction** : depuis la fiche VM, avec suppression du snippet.
+
+### VM jetables
+
+- **Hashrate** lu dans la VM, jamais déduit de la configuration.
+- **Binaire envoyé par Fossor** : ELF brut ou archive, SHA256 vérifié avant exécution.
+- **Wallet de pool** issu du profil de la campagne.
+- **Cache image** optionnel, désactivé par défaut.
+- **Images Ubuntu cloud** reconnues à la création.
+- **Contrôle de compatibilité** du binaire avant lancement.
+- **Mineur mort** détecté et signalé.
+- **Worker et threads** du profil appliqués au mineur.
+
 ## 2026.11.009 — 2026-11-19
 
 ### 3e — pilotage HiveOS
