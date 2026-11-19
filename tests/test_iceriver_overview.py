@@ -92,6 +92,8 @@ class _Panel(BaseHTTPRequestHandler):
     tokens: list[str] = []
     set_cookie_on_root = True
     drop_overview = 0
+    # pbv081 réel : le bon mot de passe répond 302 -> / (session posée), pas du JSON.
+    success_via_redirect = False
 
     def log_message(self, *args) -> None:  # bruit des tests
         pass
@@ -163,11 +165,23 @@ class _Panel(BaseHTTPRequestHandler):
                 token = secrets.token_hex(8)
                 type(self).sessions.add(token)
                 type(self).tokens.append(token)
+                if type(self).success_via_redirect:
+                    # Réponse réelle du pbv081 : 302 vers l'accueil + Set-Cookie.
+                    self._send(
+                        302,
+                        extra=(
+                            ("Location", "/"),
+                            ("Set-Cookie", f"esp-app={token}; httponly; Path=/"),
+                        ),
+                    )
+                    return
                 self._send(
                     200,
                     json.dumps({"error": 0, "message": "ok"}).encode(),
                     extra=(("Set-Cookie", f"esp-app={token}; httponly; Path=/"),),
                 )
+            elif type(self).success_via_redirect:
+                self._send(302, extra=(("Location", "/user/loginpage"),))
             else:
                 self._send(
                     200,
@@ -209,6 +223,7 @@ def _reset() -> None:
     _Panel.tokens = []
     _Panel.set_cookie_on_root = True
     _Panel.drop_overview = 0
+    _Panel.success_via_redirect = False
 
 
 @pytest.fixture()
@@ -326,7 +341,7 @@ async def test_wrong_password_reports_the_login_error(panel):
     with pytest.raises(asic_client.AsicAuthError) as refused:
         await asic_client.iceriver_probe(panel["host"], USER, "mauvais-mot-de-passe")
     text = str(refused.value)
-    assert text == "login : error=1, message=invalid user or password"
+    assert text == "identifiants refusés : login : error=1, message=invalid user or password"
     assert PASSWORD not in text
     assert "esp-app=" not in text
     assert all(token not in text for token in _Panel.tokens)
@@ -374,3 +389,32 @@ def test_health_reports_the_firmware_states():
     verdict = asic.health(state)
     assert verdict["status"] == "orange"
     assert "réseau" in verdict["reason"]
+
+
+async def test_login_success_via_redirect_is_accepted(panel):
+    """pbv081 : bons identifiants -> 302 Location: / + Set-Cookie, puis /overview."""
+    _Panel.success_via_redirect = True
+    found = await asic_client.iceriver_probe(panel["host"], USER, PASSWORD)
+    assert found["mode"] == "overview"
+    assert found["steps"][1] == "login : 302 → /"
+    state = asic_client.iceriver_state(found)
+    assert state["hashrate_hs"] == pytest.approx(481e9)
+    assert asic.health(state)["status"] == "green"
+
+    logins = [row for row in _Panel.records if row["path"] == "/user/login"]
+    assert len(logins) == 1
+    assert logins[0]["password_accepted"] is True
+    assert logins[0]["fields"] == ["password", "username"]
+    assert [row["path"] for row in _Panel.records] == ["/", "/user/login", "/overview"]
+    assert PASSWORD not in " ".join(found["steps"])
+    assert all(token not in " ".join(found["steps"]) for token in _Panel.tokens)
+
+
+async def test_login_redirect_to_loginpage_is_a_refusal(panel):
+    """302 vers /user/loginpage : refus, jamais un succès."""
+    _Panel.success_via_redirect = True
+    with pytest.raises(asic_client.AsicAuthError) as refused:
+        await asic_client.iceriver_probe(panel["host"], USER, "mauvais-mot-de-passe")
+    assert str(refused.value) == "identifiants refusés : login : 302 → /user/loginpage"
+    assert PASSWORD not in str(refused.value)
+    assert all(token not in str(refused.value) for token in _Panel.tokens)

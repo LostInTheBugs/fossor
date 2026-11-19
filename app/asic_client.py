@@ -276,21 +276,64 @@ def _looks_like_login(response) -> bool:
     return any(marker in text for marker in LOGIN_MARKERS)
 
 
-async def _login(session: _Session, base: str, username: str, password: str) -> None:
-    response = await session.request(
-        "POST", base + "/user/login", data={"username": username, "password": password}
-    )
+LOGIN_REFUSAL_MARKERS = ("/user/loginpage", "/notfound")
+
+
+def _login_target_refused(location: str) -> bool:
+    """Redirection de login qui ramène à la page de connexion : refus."""
+    lowered = (location or "").lower()
+    return any(marker in lowered for marker in LOGIN_REFUSAL_MARKERS)
+
+
+async def _login(session: _Session, base: str, username: str, password: str) -> str:
+    """``POST /user/login`` une fois ; rend la ligne d'étape, ou lève.
+
+    Le firmware pbv081 répond ``302 Location: /`` quand les identifiants sont
+    bons : la session est posée par le ``Set-Cookie`` de cette réponse, puis le
+    panneau renvoie vers son accueil (dans le navigateur, ``$.ajax`` suit la
+    redirection sans la voir). Un 302 vers ``/user/loginpage`` ou ``/notfound``
+    est en revanche un refus. Les cookies restent dans le bocal du client même
+    quand la redirection n'est pas suivie.
+    """
+    url = base + "/user/login"
+    data = {"username": username, "password": password}
+    response = await _single(session, "POST", url, data=data)
+    # Panneau en clair : tout part en ``301 https://`` — la montée est suivie
+    # une fois et le POST rejoué tel quel (même chemin, même corps).
+    for _hop in range(MAX_REDIRECTS):
+        location = response.headers.get("location") or ""
+        if response.status_code in (301, 307, 308) and location.startswith("https://"):
+            target = urljoin(url, location)
+            if not _same_host(url, target):
+                raise AsicError(f"redirection vers un autre hôte refusée : {target}")
+            url = target
+            response = await _single(session, "POST", url, data=data)
+            continue
+        break
     payload = _json_or_none(response)
     if payload is not None:
         error = payload.get("error")
         if error not in (None, 0, "0", False, ""):
             message = str(payload.get("message") or "").strip()
             raise AsicAuthError(
-                "identifiants refusés" + (f" : {message}" if message else "")
+                f"identifiants refusés : login : error={error}"
+                + (f", message={message}" if message else "")
             )
-        return
+        return "login : error=0"
+    location = response.headers.get("location") or ""
+    if response.status_code in (302, 303) and location:
+        if _login_target_refused(location):
+            raise AsicAuthError(
+                f"identifiants refusés : login : {response.status_code} → {location}"
+            )
+        # ``302 → /`` : succès, la session vient du Set-Cookie de la réponse.
+        return f"login : {response.status_code} → {location}"
     if _looks_like_login(response):
         raise AsicAuthError("identifiants refusés : le panneau réaffiche la page de connexion")
+    raise AsicAuthError(
+        f"login : réponse non JSON ({response.status_code}"
+        + (f" → {location}" if location else "") + ")"
+    )
 
 
 async def _login_then_panel(
@@ -377,22 +420,8 @@ async def _open_panel(
         raise AsicError(step)
     if not cookie:
         raise AsicError(step + " — aucune session posée par le panneau")
-    response = await _single(
-        session,
-        "POST",
-        panel_base + "/user/login",
-        data={"username": username, "password": password},
-    )
-    payload = _json_or_none(response)
-    if payload is None:
-        raise AsicAuthError(f"login : réponse non JSON ({response.status_code})")
-    error = payload.get("error")
-    if error not in (None, 0, "0", False, ""):
-        message = str(payload.get("message") or "").strip()
-        raise AsicAuthError(
-            f"login : error={error}" + (f", message={message}" if message else "")
-        )
-    return [step, "login : error=0"], panel_base
+    login_step = await _login(session, panel_base, username, password)
+    return [step, login_step], panel_base
 
 
 async def _read_overview(session: _Session, base: str) -> tuple[dict[str, Any] | None, str]:
