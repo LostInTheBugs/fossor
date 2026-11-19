@@ -344,6 +344,7 @@ async def test_destruction_executee_apres_controles(monkeypatch):
     assert out["destroyed"] is True
     assert seen[0].startswith("qm config 9900")
     assert "qm destroy 9900 --purge --destroy-unreferenced-disks 1" in seen
-    # Le snippet cloud-init part avec la VM : c'est le dernier pas du plan.
-    assert seen[-1].startswith("sh -c")
-    assert "fossor-user-9900.yaml" in seen[-1]
+    # Le snippet cloud-init part avec la VM, puis le cache du pilote (option
+    # « garder l'image en cache » désactivée par défaut).
+    assert any("fossor-user-9900.yaml" in command for command in seen)
+    assert seen[-1].startswith("rm -rf ")

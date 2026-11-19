@@ -160,6 +160,7 @@ def stubbed(tmp_path, monkeypatch):
         "model": V.validate_vm_model(
             {
                 "host_id": 1,
+                "keep_image_cache": True,
                 "base_image_url": f"http://127.0.0.1:{port}/base.qcow2",
                 "base_image_sha256": digest,
                 "vcpus": 2,
