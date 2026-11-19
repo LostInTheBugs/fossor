@@ -151,7 +151,7 @@ async def test_depot_du_binaire_avec_sha256(client, monkeypatch, tmp_path):
     assert created.status_code == 201, created.text
     profile_id = created.json()["id"]
 
-    blob = b"archive-de-test-fossor" * 8
+    blob = b"\x1f\x8b" + b"archive-de-test-fossor" * 8
     uploaded = await client.post(f"/api/miner/profiles/{profile_id}/binary",
                            json={"content_b64": base64.b64encode(blob).decode()})
     assert uploaded.status_code == 200, uploaded.text

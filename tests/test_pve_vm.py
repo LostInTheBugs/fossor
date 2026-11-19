@@ -215,9 +215,9 @@ def test_image_plan_verifie_sha512():
     download = steps[1].argv
     assert download[0] == "sh" and download[1] == "-c"
     assert '${a}sum' in download[2]  # l'algorithme est un argument, jamais concaténé nu
-    assert download[-3].endswith("debian-12-genericcloud-amd64.qcow2")
-    assert download[-1] == "sha512"
-    assert download[-2] == "a" * 128
+    assert download[-5].endswith("debian-12-genericcloud-amd64.qcow2")
+    assert download[-3] == "sha512"
+    assert download[-4] == "a" * 128
 
 
 def test_destroy_plan_et_arret():

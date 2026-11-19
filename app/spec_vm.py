@@ -671,7 +671,7 @@ def provision_plan(
         _require(binary_pushed,
                  "binaire fourni par Fossor : le fichier doit être poussé et vérifié avant le provisionnement")
         steps.append(make(
-            "binaire du mineur envoyé par Fossor (déjà vérifié à l'envoi)",
+            "archive du mineur envoyée par Fossor (déjà vérifiée à l'envoi)",
             ip, ["test", "-s", miner_archive]))
     else:
         steps.append(make(
