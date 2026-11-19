@@ -177,6 +177,16 @@ async def test_analysis_rules_and_hermes_proposal(e2e_server):
             timeout=15000,
         )
 
+        # 5. Nettoyage : la proposition approuvée est annulée pour libérer le device.
+        cleanup = await page.evaluate(
+            """async (id) => {
+                const res = await fetch('/api/campaigns/' + id + '/cancel', {method: 'POST'});
+                return res.status;
+            }""",
+            campaign_id,
+        )
+        assert cleanup == 200
+
         assert console_errors == [], f"console errors: {console_errors}"
         assert page_errors == [], f"page errors: {page_errors}"
         await browser.close()
