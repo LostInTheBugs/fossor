@@ -65,6 +65,7 @@ _RE_URL = re.compile(r"^https?://[A-Za-z0-9._~:/?#@!$&'()*+,;=%-]+$")
 _RE_IMAGE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.(qcow2|img|raw)$")
 _RE_SHA256 = re.compile(r"^[a-f0-9]{64}$")
 _RE_SHA512 = re.compile(r"^[a-f0-9]{128}$")
+_RE_ABS_PATH = re.compile(r"^/[A-Za-z0-9._/-]{1,200}$")
 _RE_MAC = re.compile(r"^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$")
 _RE_IPV6_LL = re.compile(r"^[fF][eE]80:[0-9A-Fa-f:]{2,39}$")
 _RE_IPV4 = re.compile(
@@ -129,6 +130,23 @@ def validate_pve_model(data: dict[str, Any] | None) -> dict[str, Any]:
         f"image cloud : somme {algo.upper()} obligatoire ({expected_len} hexadécimaux)",
     )
 
+    node_port = _int(data, "node_port", 1024, 65535, 19333)
+    backup = str(data.get("wallet_backup_path") or "/home/specminer/data/wallet.dat").strip()
+    _require(bool(_RE_ABS_PATH.match(backup)), "sauvegarde du wallet : chemin absolu")
+    _require(".." not in backup.split("/"), "sauvegarde du wallet : « .. » interdit")
+
+    node_url = str(data.get("node_url") or "").strip()
+    node_sha = str(data.get("node_sha256") or "").strip().lower()
+    if node_url or node_sha:
+        _require(bool(_RE_URL.match(node_url)), "nœud : URL http(s) de l'archive")
+        _require(bool(_RE_SHA256.match(node_sha)), "nœud : SHA256 obligatoire")
+    node_binary = str(data.get("node_binary") or "").strip().lstrip("./")
+    if node_binary:
+        _require(bool(_RE_ABS_PATH.match("/" + node_binary)), "nœud : chemin relatif simple")
+        _require(".." not in node_binary.split("/"), "nœud : « .. » interdit")
+
+    from app import spec_vm as SV
+
     return {
         "host_id": host_id,
         "node": node,
@@ -144,6 +162,15 @@ def validate_pve_model(data: dict[str, Any] | None) -> dict[str, Any]:
         "image_name": name,
         "checksum": checksum,
         "checksum_algo": algo,
+        "node_port": node_port,
+        "wallet_backup_path": backup,
+        "node_url": node_url,
+        "node_sha256": node_sha,
+        "node_binary": node_binary,
+        "node_start_cmd": SV._validate_template(data.get("node_start_cmd"),
+                                               "démarrage du nœud", ("datadir", "port", "coin")),
+        "wallet_create_cmd": SV._validate_template(data.get("wallet_create_cmd"),
+                                                   "création du wallet", ("datadir", "coin")),
     }
 
 
@@ -690,6 +717,24 @@ def create_plan(
     return steps
 
 
+PREVIEW_KEY = (
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPreviewKeyFossorPreviewKey0000000000 apercu@fossor"
+)
+
+
+def plan_preview(model: dict[str, Any], name: str, vmid: int) -> list[VmStep]:
+    """Plan complet d'une VM de campagne : création, extinction, destruction.
+
+    Aucune commande n'est exécutée : la simulation de campagne liste ce plan.
+    """
+    return (
+        image_plan(model)
+        + create_plan(model, name, vmid, PREVIEW_KEY)
+        + shutdown_plan(vmid)
+        + destroy_plan(vmid)
+    )
+
+
 def config_plan(vmid: int) -> list[VmStep]:
     return [VmStep("configuration de la VM (tags, description, MAC)", ("qm", "config", str(int(vmid))),
                    allow_fail=True)]
@@ -853,6 +898,7 @@ def vm_step(
 
 
 __all__ = [
+    "plan_preview",
     "CHECKSUM_ALGOS", "DEFAULT_BRIDGE", "DEFAULT_CI_STORAGE", "DEFAULT_DISK_STORAGE",
     "DEFAULT_VMID_MAX", "DEFAULT_VMID_MIN", "IMAGE_DIR", "KEY_PATH", "KNOWN_HOSTS",
     "OWNER_MARKER", "PUBKEY_PATH", "PVE_TAG", "PVE_TMP_DIR", "VM_USER",

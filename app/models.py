@@ -571,6 +571,9 @@ class SpecVm(Base):
     host_machine_id: Mapped[int] = mapped_column(Integer, ForeignKey("machines.id"), nullable=False)
     name: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     mode: Mapped[str] = mapped_column(String(10), default="vm", server_default="vm")
+    # Pilote qui a créé la VM : libvirt ou Proxmox (le VMID n'existe qu'en PVE).
+    hypervisor: Mapped[str] = mapped_column(String(12), default="libvirt", server_default="libvirt")
+    vmid: Mapped[int | None] = mapped_column(Integer, nullable=True)
     base_image: Mapped[str] = mapped_column(String(200), default="", server_default="")
     overlay_path: Mapped[str] = mapped_column(String(300), default="", server_default="")
     seed_path: Mapped[str] = mapped_column(String(300), default="", server_default="")

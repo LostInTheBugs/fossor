@@ -142,8 +142,13 @@ def read_spec_settings(db: Session = Depends(get_db), _user=Depends(require_logi
         .order_by(Machine.name.asc())
         .all()
     )
+    from app import vm_backend as VB
+
+    chosen = VB.spec_host(db)
     return {
         "default_mode": spec_mode(db),
+        "spec_host_id": chosen.id if chosen is not None else 0,
+        "spec_host_kind": VB.backend_kind(chosen) if chosen is not None else "",
         "modes": [{"value": m, "label": V.MODE_LABELS[m]} for m in V.SPEC_MODES],
         "vm_model": model,
         "backup_max_age_days": backup_max_age_days(db),
@@ -165,6 +170,11 @@ def read_spec_settings(db: Session = Depends(get_db), _user=Depends(require_logi
 
 @router.put("/spec/settings")
 def write_spec_settings(data: dict, db: Session = Depends(get_db), user=Depends(require_login)):
+    from app import vm_backend as VB
+
+    if "host_id" in data:
+        host = _host(db, int(data.get("host_id") or 0))
+        set_setting(db, VB.SPEC_HOST_KEY, host.id)
     if "default_mode" in data:
         try:
             mode = V.normalize_mode(data.get("default_mode"), V.DEFAULT_SPEC_MODE)
@@ -186,6 +196,7 @@ def write_spec_settings(data: dict, db: Session = Depends(get_db), user=Depends(
             raise HTTPException(status_code=400, detail=str(exc))
         _host(db, model["host_id"])
         set_setting(db, VM_MODEL_KEY, model)
+        set_setting(db, VB.SPEC_HOST_KEY, model["host_id"])
     db.commit()
     _audit(db, user, "spec-settings", "spec mining", "ok")
     return read_spec_settings(db, _user=user)
@@ -380,6 +391,8 @@ def record_vm(
     mode: str,
     model: dict,
     wallet_address: str = "",
+    hypervisor: str = "libvirt",
+    vmid: int | None = None,
 ) -> SpecVm:
     """Enregistre la VM dès sa création (le Suivi la rattache à sa campagne)."""
     row = SpecVm(
@@ -388,13 +401,15 @@ def record_vm(
         host_machine_id=host_machine_id,
         name=name,
         mode=mode,
-        base_image=model.get("base_image_name") or "",
-        overlay_path=V.overlay_path(name),
-        seed_path=V.seed_path(name),
+        base_image=model.get("base_image_name") or model.get("image_name") or "",
+        overlay_path=V.overlay_path(name) if hypervisor != "proxmox" else "",
+        seed_path=V.seed_path(name) if hypervisor != "proxmox" else "",
+        hypervisor=hypervisor,
+        vmid=vmid or None,
         vcpus=int(model.get("vcpus") or 2),
         memory_mb=int(model.get("memory_mb") or 2048),
         disk_gb=int(model.get("disk_gb") or 20),
-        network=str(model.get("network") or "default"),
+        network=str(model.get("network") or model.get("bridge") or "default"),
         node_port=int(model.get("node_port") or V.DEFAULT_NODE_PORT),
         state="creating",
         wallet_address=wallet_address,

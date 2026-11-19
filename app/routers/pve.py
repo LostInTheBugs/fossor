@@ -88,8 +88,13 @@ def read_pve_settings(db: Session = Depends(get_db), _user=Depends(require_login
         .order_by(Machine.name.asc())
         .all()
     )
+    from app import vm_backend as VB
+
+    chosen = VB.spec_host(db)
     return {
         "pve_model": stored_pve_model(db) or {},
+        "spec_host_id": chosen.id if chosen is not None else 0,
+        "spec_host_kind": VB.backend_kind(chosen) if chosen is not None else "",
         "defaults": pve_defaults(),
         "hosts": [
             {"id": m.id, "name": m.name, "host": m.host, "os_kind": m.os_kind,
@@ -112,10 +117,42 @@ def write_pve_settings(data: dict, db: Session = Depends(get_db), user=Depends(r
     if (host.os_kind or "") not in ("proxmox", "other") and not host.vm_host:
         raise HTTPException(status_code=400, detail="Machine hôte inutilisable pour Proxmox")
     set_setting(db, PVE_MODEL_KEY, model)
+    from app import vm_backend as VB
+
+    set_setting(db, VB.SPEC_HOST_KEY, model["host_id"])
     db.commit()
     _audit(db, user, "spec-pve-settings", f"machine {model['host_id']}", "ok",
            f"{model['node']} {model['vmid_min']}-{model['vmid_max']}")
     return read_pve_settings(db, _user=user)
+
+
+@router.post("/spec/pve/plan")
+def preview_plan(data: dict, db: Session = Depends(get_db), _user=Depends(require_login)):
+    """Plan Proxmox complet (create → shutdown → destroy), **sans exécution**."""
+    model = stored_pve_model(db)
+    if not model:
+        raise HTTPException(status_code=400, detail="Aucun modèle Proxmox enregistré")
+    name = str(data.get("name") or "fossor-apercu-nnn-000000")
+    try:
+        P.validate_name(name)
+    except P.VmError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    vmid = int(data.get("vmid") or 0) or P.choose_vmid(
+        int(model["vmid_min"]), int(model["vmid_max"]), set()
+    )
+    if not P.in_range(vmid, int(model["vmid_min"]), int(model["vmid_max"])):
+        raise HTTPException(
+            status_code=400,
+            detail=f"VMID {vmid} hors de la plage {model['vmid_min']}-{model['vmid_max']}",
+        )
+    steps = P.plan_preview(model, name, vmid)
+    return {
+        "simulated": True,
+        "vmid": vmid,
+        "name": name,
+        "steps": [{"title": step.title, "command": step.command()} for step in steps],
+        "note": "Plan complet, aucune commande n'est exécutée.",
+    }
 
 
 @router.post("/spec/pve/inspect")

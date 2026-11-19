@@ -257,7 +257,7 @@ class TestPiloteBouchonne:
             address["ip"], simulated=False,
         )
         assert started["pid"] == "4242"
-        assert "setsid nohup" in stubbed["log"].read_text()
+        assert "setsid sh -c" in stubbed["log"].read_text()
 
         # Collecte : état de la VM, `ps` dans la VM, hashrate de l'API.
         collected = await VR.collect(object(), NAME, address["ip"], profile, simulated=False)

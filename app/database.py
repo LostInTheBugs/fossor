@@ -111,6 +111,13 @@ def init_db():
     _migrate_campaign_execution_mode()
     _migrate_machine_hiveos_column()
     _migrate_machine_fossor_host_column()
+    _migrate_spec_vm_pve_columns()
+
+
+def _migrate_spec_vm_pve_columns():
+    """Add spec_vms.vmid / hypervisor — VM jetable Proxmox (§4.6, pve-campagnes)."""
+    _add_column_if_missing("spec_vms", "hypervisor", "hypervisor VARCHAR(12) NOT NULL DEFAULT 'libvirt'")
+    _add_column_if_missing("spec_vms", "vmid", "vmid INTEGER")
 
 
 def _migrate_machine_fossor_host_column():

@@ -551,9 +551,16 @@ def provision_plan(
     ip: str,
     *,
     coin: str,
+    step_maker: Any = None,
 ) -> list[VmStep]:
-    """Installation dans la VM : nœud, mineur, wallet — SHA256 vérifié **dans la VM**."""
+    """Installation dans la VM : nœud, mineur, wallet — SHA256 vérifié **dans la VM**.
+
+    ``step_maker`` permet au pilote Proxmox de réutiliser ce plan avec son
+    propre SSH vers la VM (compte racine de l'hôte, sans ``sudo``).
+    """
     from app import miners as M
+
+    make = step_maker or vm_step
 
     download = (
         'if command -v curl >/dev/null 2>&1; then curl -fsSL --max-time 600 -o "$1" "$2"; '
@@ -563,81 +570,88 @@ def provision_plan(
         '"$2" "$1"; else echo "no downloader" >&2; exit 3; fi'
     )
     steps = [
-        vm_step("outils de la VM", ip, ["sh", "-c",
+        make("outils de la VM", ip, ["sh", "-c",
                 "for t in curl wget tar sha256sum ps; do command -v \"$t\" >/dev/null 2>&1 "
                 "|| echo \"MISSING:$t\"; done; echo OK"]),
-        vm_step("répertoires de travail",
+        make("répertoires de travail",
                 ip, ["install", "-d", "-m", "0755", INSTALL_DIR, DATA_DIR]),
         # Le mineur vit sous /opt/fossor (mêmes chemins que sur un hôte) :
         # specminer a sudo sans mot de passe dans la VM (cloud-init).
-        vm_step("répertoires du mineur dans la VM",
+        make("répertoires du mineur dans la VM",
                 ip, ["sudo", "-n", "install", "-d", "-m", "0775", "-o", VM_USER, "-g", VM_USER,
                      M.RUN_DIR, M.LOG_DIR]),
-        vm_step("racine des binaires du mineur",
+        make("racine des binaires du mineur",
                 ip, ["sudo", "-n", "install", "-d", "-m", "0755", M.INSTALL_ROOT]),
     ]
     if model.get("node_url"):
         node_dir = f"{INSTALL_DIR}/node"
         archive = f"{INSTALL_DIR}/node.tar.gz"
         steps += [
-            vm_step("répertoire du nœud", ip, ["install", "-d", "-m", "0755", node_dir]),
-            vm_step(
+            make("répertoire du nœud", ip, ["install", "-d", "-m", "0755", node_dir]),
+            make(
                 "téléchargement du nœud dans la VM",
                 ip,
                 ["sh", "-c", download, "fossor", archive, model["node_url"]],
                 timeout=600,
             ),
-            vm_step(
+            make(
                 "SHA256 du nœud vérifié dans la VM",
                 ip,
                 ["sh", "-c", 'echo "$2  $1" | sha256sum -c -', "fossor", archive,
                  model["node_sha256"]],
             ),
-            vm_step("extraction du nœud", ip, ["tar", "-xzf", archive, "-C", node_dir], timeout=600),
+            make("extraction du nœud", ip, ["tar", "-xzf", archive, "-C", node_dir], timeout=600),
         ]
     binary_dir = M.install_dir(profile["software"], profile["version"])
     miner_archive = f"{INSTALL_DIR}/miner.tar.gz"
     steps += [
-        vm_step("répertoire du mineur", ip, ["sudo", "-n", "install", "-d", "-m", "0755", binary_dir]),
-        vm_step(
+        make("répertoire du mineur", ip, ["sudo", "-n", "install", "-d", "-m", "0755", binary_dir]),
+        make(
             "téléchargement du mineur dans la VM",
             ip,
             ["sh", "-c", download, "fossor", miner_archive, profile["binary_url"]],
             timeout=600,
         ),
-        vm_step(
+        make(
             "SHA256 du mineur vérifié dans la VM",
             ip,
             ["sh", "-c", 'echo "$2  $1" | sha256sum -c -', "fossor", miner_archive, profile["sha256"]],
         ),
-        vm_step("extraction du mineur", ip, ["sudo", "-n", "tar", "-xzf", miner_archive,
+        make("extraction du mineur", ip, ["sudo", "-n", "tar", "-xzf", miner_archive,
                                             "-C", binary_dir], timeout=600),
-        vm_step("binaire du mineur exécutable",
+        make("binaire du mineur exécutable",
                 ip, ["sudo", "-n", "chmod", "0755", M.binary_path(profile)]),
     ]
     if model.get("wallet_create_cmd"):
         values = {"datadir": DATA_DIR, "coin": coin}
         argv = render_template(model["wallet_create_cmd"], values)
         steps.append(
-            vm_step("création du wallet dans la VM (adresse seule remonte)", ip, argv, timeout=300)
+            make("création du wallet dans la VM (adresse seule remonte)", ip, argv, timeout=300)
         )
     if model.get("node_start_cmd"):
         values = {"datadir": DATA_DIR, "port": str(model["node_port"]), "coin": coin}
         argv = render_template(model["node_start_cmd"], values)
-        steps.append(vm_step("démarrage du nœud dans la VM (solo)", ip, argv, timeout=300))
+        steps.append(make("démarrage du nœud dans la VM (solo)", ip, argv, timeout=300))
     return steps
 
 
-def vm_miner_start_plan(profile: dict[str, Any], argv: list[str], ip: str) -> list[VmStep]:
+def vm_miner_start_plan(profile: dict[str, Any], argv: list[str], ip: str,
+                        step_maker: Any = None) -> list[VmStep]:
     """Démarrage du mineur **dans** la VM (mode ``vm``), sans systemd."""
     from app import miners as M
 
+    make = step_maker or vm_step
+
+    # ``setsid`` peut forker : c'est la **coquille interne** qui écrit son PID
+    # avant d'``exec`` le mineur, donc le fichier porte le PID réel du mineur.
     script = (
         'log="$1"; pid="$2"; shift 2; '
-        'setsid nohup "$@" >> "$log" 2>&1 < /dev/null & echo $! > "$pid"; cat "$pid"'
+        'setsid sh -c \'echo $$ > "$1"; shift; exec "$@"\' sh "$pid" "$@" '
+        '>> "$log" 2>&1 < /dev/null & '
+        'for i in $(seq 1 20); do [ -s "$pid" ] && break; sleep 0.1; done; cat "$pid"'
     )
     return [
-        vm_step(
+        make(
             "démarrage du mineur dans la VM",
             ip,
             ["sh", "-c", script, "fossor", M.log_file(profile), M.pid_file(profile), *argv],
@@ -646,17 +660,20 @@ def vm_miner_start_plan(profile: dict[str, Any], argv: list[str], ip: str) -> li
     ]
 
 
-def vm_miner_stop_plan(profile: dict[str, Any], ip: str) -> list[VmStep]:
+def vm_miner_stop_plan(profile: dict[str, Any], ip: str,
+                       step_maker: Any = None) -> list[VmStep]:
     from app import miners as M
+
+    make = step_maker or vm_step
 
     script = (
         'pid=$(cat "$1" 2>/dev/null) || exit 0; test -n "$pid" || exit 0; '
-        'grep -q /home/specminer/opt /proc/$pid/cmdline 2>/dev/null || exit 2; '
+        'grep -q "$2" /proc/$pid/cmdline 2>/dev/null || exit 2; '
         'kill -TERM "$pid"; for i in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done; '
         'rm -f "$1"'
     )
     return [
-        vm_step("arrêt du mineur dans la VM", ip, ["sh", "-c", script, "fossor", M.pid_file(profile)],
+        make("arrêt du mineur dans la VM", ip, ["sh", "-c", script, "fossor", M.pid_file(profile), M.INSTALL_ROOT],
                 timeout=60, allow_fail=True)
     ]
 
@@ -672,24 +689,34 @@ def collect_plan(name: str, ip: str, profile: dict[str, Any] | None = None) -> l
                allow_fail=True),
     ]
     if ip:
+        steps += guest_collect_plan(ip, profile)
+    return steps
+
+def guest_collect_plan(
+    ip: str, profile: dict[str, Any] | None = None, *, step_maker: Any = None
+) -> list[VmStep]:
+    """Processus et hashrate **dans** la VM — commun aux pilotes libvirt et Proxmox."""
+    from app import miners as M
+
+    make = step_maker or vm_step
+    steps = [
+        make(
+            "processus du mineur dans la VM",
+            ip,
+            ["sh", "-c", 'ps -eo pid=,args= | grep -F "$1" | grep -v grep || true',
+             "fossor", M.INSTALL_ROOT],
+            allow_fail=True,
+        )
+    ]
+    if profile and profile.get("api_port"):
         steps.append(
-            vm_step(
-                "processus du mineur dans la VM",
+            make(
+                "hashrate du mineur dans la VM",
                 ip,
-                ["sh", "-c", 'ps -eo pid=,args= | grep -F "$1" | grep -v grep || true',
-                 "fossor", M.INSTALL_ROOT],
+                ["curl", "-s", "--max-time", "3", f"http://127.0.0.1:{profile['api_port']}/"],
                 allow_fail=True,
             )
         )
-        if profile and profile.get("api_port"):
-            steps.append(
-                vm_step(
-                    "hashrate du mineur dans la VM",
-                    ip,
-                    ["curl", "-s", "--max-time", "3", f"http://127.0.0.1:{profile['api_port']}/"],
-                    allow_fail=True,
-                )
-            )
     return steps
 
 
@@ -752,8 +779,9 @@ def backup_stat_argv(path: str) -> list[str]:
     return ["sh", "-c", 'stat -c "%s %Y" -- "$1" 2>/dev/null || echo MISSING', "fossor", path]
 
 
-def backup_check_plan(ip: str, path: str) -> list[VmStep]:
-    return [vm_step("contrôle de la sauvegarde du wallet (stat, sans lecture)", ip,
+def backup_check_plan(ip: str, path: str, step_maker: Any = None) -> list[VmStep]:
+    make = step_maker or vm_step
+    return [make("contrôle de la sauvegarde du wallet (stat, sans lecture)", ip,
                     backup_stat_argv(path), allow_fail=True)]
 
 

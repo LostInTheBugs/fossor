@@ -416,6 +416,153 @@ async def cleanup(host: Any, *, simulated: bool) -> dict[str, Any]:
     return {"simulated": False, "cleaned": True, "commands": [step.command() for step in plan]}
 
 
+# ── Actions **dans** la VM (mêmes plans que libvirt, SSH de l'hôte racine) ──
+def _vm_ip(ip: str) -> str:
+    import re
+
+    target = (ip or "").strip()
+    if not re.fullmatch(r"[0-9]{1,3}(\.[0-9]{1,3}){3}", target):
+        raise PveRemoteError("adresse de la VM invalide")
+    return target
+
+
+def _host_key_line(stdout: str, ip: str) -> str:
+    for raw in (stdout or "").splitlines():
+        text = raw.strip()
+        if text.startswith("#") or not text:
+            continue
+        parts = text.split()
+        if len(parts) >= 3 and parts[1].startswith(("ssh-", "ecdsa-")):
+            return f"{ip} {parts[1]} {parts[2]}"
+    return ""
+
+
+async def pin_host_key(host: Any, ip: str, *, simulated: bool) -> dict[str, Any]:
+    """``ssh-keyscan`` **depuis l'hôte**, puis épinglage (aucun ``sudo``)."""
+    target = ip if simulated else _vm_ip(ip)
+    plan = [
+        P.VmStep(
+            "clé d'hôte de la VM (ssh-keyscan depuis l'hôte)",
+            ("ssh-keyscan", "-T", "10", "-t", "ed25519", target),
+            allow_fail=True,
+            timeout=60,
+        )
+    ]
+    if simulated:
+        return _simulated(plan, {"host_key": ""})
+    result = await _run(host, plan[0])
+    line = _host_key_line(result["stdout"], target)
+    if not line:
+        raise PveRemoteError("Clé d'hôte de la VM introuvable (ssh-keyscan vide).")
+    pin = P.VmStep("épinglage de la clé d'hôte de la VM", ("tee", "-a", P.KNOWN_HOSTS),
+                   stdin=line + "\n")
+    await _run(host, pin)
+    return {"simulated": False, "host_key": line, "commands": [plan[0].command(), pin.command()]}
+
+
+async def provision(
+    host: Any,
+    model: dict[str, Any],
+    profile: dict[str, Any],
+    ip: str,
+    *,
+    coin: str,
+    simulated: bool,
+    expected_address: str = "",
+) -> dict[str, Any]:
+    """Nœud, wallet et mineur dans la VM — plan de :mod:`app.spec_vm`, SSH Proxmox."""
+    from app import spec_vm as V
+
+    plan = V.provision_plan(model, profile, ip, coin=coin, step_maker=P.vm_step)
+    if simulated:
+        return _simulated(plan, {"address": expected_address, "verified": False})
+    from app.vm_remote import _address_from_stdout
+
+    commands: list[str] = []
+    address = expected_address
+    for step in plan:
+        result = await _run(host, step)
+        commands.append(step.command())
+        if step.title.startswith("création du wallet"):
+            found = _address_from_stdout(result["stdout"])
+            if found and expected_address and found != expected_address:
+                raise PveRemoteError(
+                    "Le wallet créé dans la VM ne correspond pas à l'adresse du profil — "
+                    "campagne refusée."
+                )
+            if found:
+                address = found
+    return {"simulated": False, "address": address, "verified": bool(address),
+            "commands": commands}
+
+
+async def start_miner(host: Any, profile: dict[str, Any], argv: list[str], ip: str, *,
+                      simulated: bool) -> dict[str, Any]:
+    from app import spec_vm as V
+
+    plan = V.vm_miner_start_plan(profile, argv, ip, step_maker=P.vm_step)
+    if simulated:
+        return _simulated(plan)
+    result = await _run(host, plan[0])
+    return {"simulated": False, "pid": (result["stdout"] or "").strip()[:12],
+            "commands": [plan[0].command()]}
+
+
+async def stop_miner(host: Any, profile: dict[str, Any], ip: str, *,
+                     simulated: bool) -> dict[str, Any]:
+    from app import spec_vm as V
+
+    plan = V.vm_miner_stop_plan(profile, ip, step_maker=P.vm_step)
+    if simulated:
+        return _simulated(plan)
+    for step in plan:
+        await _run(host, step)
+    return {"simulated": False, "stopped": True, "commands": [s.command() for s in plan]}
+
+
+async def collect(host: Any, vmid: int, ip: str, profile: dict[str, Any] | None, *,
+                  simulated: bool) -> dict[str, Any]:
+    """``qm status`` sur l'hôte, puis ``ps``/API **dans** la VM."""
+    from app import spec_vm as V
+
+    plan = P.status_plan(vmid)
+    if ip:
+        plan += V.guest_collect_plan(ip, profile, step_maker=P.vm_step)
+    if simulated:
+        return _simulated(plan, {"state": "", "hashrate_hs": None, "processes": []})
+    from app.miner_remote import parse_hashrate
+    from app.vm_remote import parse_ps
+
+    state = ""
+    hashrate: float | None = None
+    processes: list[dict[str, str]] = []
+    for step in plan:
+        result = await _run(host, step)
+        if step.title == "état de la VM":
+            state = P.parse_qm_status(result["stdout"])
+        elif step.title == "processus du mineur dans la VM":
+            processes = parse_ps(result["stdout"])
+        elif step.title == "hashrate du mineur dans la VM":
+            hashrate = parse_hashrate(result["stdout"])
+    return {"simulated": False, "state": state, "hashrate_hs": hashrate,
+            "processes": processes, "commands": [s.command() for s in plan]}
+
+
+async def check_backup(host: Any, ip: str, path: str, *, now_epoch: int,
+                       max_age_days: int, simulated: bool) -> dict[str, Any]:
+    """§10.11 : taille et date seulement, jamais le contenu du wallet."""
+    from app import spec_vm as V
+
+    plan = V.backup_check_plan(ip, path, step_maker=P.vm_step)
+    if simulated:
+        return _simulated(plan, {"verified": False, "reason": "simulation"})
+    result = await _run(host, plan[0])
+    stat = V.parse_backup_stat(result["stdout"])
+    verdict = V.evaluate_backup(stat, now_epoch, max_age_days)
+    verdict["commands"] = [plan[0].command()]
+    return verdict
+
+
 def backup_verdict(stat: dict[str, Any], now_epoch: int | None = None,
                    max_age_days: int = P.DEFAULT_BACKUP_MAX_AGE_DAYS) -> dict[str, Any]:
     """Verdict §10.11 sur un ``stat`` déjà relevé (aucune lecture du fichier)."""

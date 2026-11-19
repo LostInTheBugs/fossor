@@ -222,6 +222,13 @@ header h1{font-size:26px}
 
   <div id="panel-spec" style="display:none">
     <div class="card">
+      <h2>Hôte de spec mining</h2>
+      <div class="sub">Machine qui porte les VM jetables. Un hôte <b>Proxmox</b> (type d'OS <code>proxmox</code>) utilise le pilote <code>qm</code>/<code>pvesh</code> et le modèle Proxmox ; tout autre hôte garde libvirt et le modèle libvirt.</div>
+      <div class="field narrow"><label for="specHostPick">Hôte de spec</label><select id="specHostPick"></select></div>
+      <div class="actions"><span id="specHostKind" class="chip">—</span></div>
+    </div>
+
+    <div class="card">
       <h2>Mode par défaut du spec mining</h2>
       <div class="sub">Ce que mine un device hors campagne : <b>vm</b> (nœud, wallet et mineur dans une VM jetable), <b>hybrid</b> (nœud et wallet dans la VM, mineur sur l'hôte) ou <b>host</b> (mineur directement sur la machine).</div>
       <div class="field narrow"><label for="specMode">Mode par défaut</label><select id="specMode"></select></div>
@@ -283,6 +290,17 @@ header h1{font-size:26px}
         <div class="field"><label for="pveChecksum">Somme de contrôle (obligatoire, vérifiée sur l'hôte)</label><input id="pveChecksum" placeholder="valeur issue du SHA512SUMS officiel"></div>
         <div class="field"><label for="pveAlgo">Algorithme</label><select id="pveAlgo"><option value="sha512">SHA512</option><option value="sha256">SHA256</option></select></div>
       </div>
+      <div class="row" style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px">
+        <div class="field"><label for="pveNodePort">Port du nœud dans la VM ({vm_node})</label><input id="pveNodePort" type="number" min="1024" max="65535"></div>
+        <div class="field"><label for="pveBackupPath">Sauvegarde du wallet (chemin dans la VM)</label><input id="pveBackupPath" placeholder="/home/specminer/data/wallet.dat"></div>
+      </div>
+      <hr style="border:none;border-top:1px solid var(--border);margin:14px 0">
+      <div class="sub">Nœud (facultatif) : binaire téléchargé <b>dans la VM</b> et vérifié par SHA256 — même logique que libvirt, le mode hybride mine sur l'hôte vers <code>{vm_node}</code>.</div>
+      <div class="field"><label for="pveNodeUrl">Archive du nœud (URL)</label><input id="pveNodeUrl" placeholder="https://…/noeud.tar.gz"></div>
+      <div class="field"><label for="pveNodeSha">SHA256 du nœud</label><input id="pveNodeSha" maxlength="64"></div>
+      <div class="field"><label for="pveNodeBin">Binaire du nœud (chemin relatif dans l'archive)</label><input id="pveNodeBin" placeholder="bin/noeudd"></div>
+      <div class="field"><label for="pveNodeStart">Démarrage du nœud (gabarit, variables {datadir} {port} {coin})</label><input id="pveNodeStart"></div>
+      <div class="field"><label for="pveWalletCmd">Création du wallet (gabarit, {datadir} {coin} ; n'imprime que l'adresse)</label><input id="pveWalletCmd"></div>
       <div class="actions">
         <button class="btn" id="pveSave">Enregistrer le modèle Proxmox</button>
         <button class="btn outline" id="pveInspect">Inspecter l'hôte (lecture seule)</button>
@@ -1281,7 +1299,7 @@ const vmField=(id)=>document.getElementById(id);
 function vmPayload(){
   const num=(id,def)=>{const v=parseInt(vmField(id).value,10);return isNaN(v)?def:v;};
   return {
-    host_id: parseInt(vmField('vmHost').value,10)||0,
+    host_id: parseInt(vmField('specHostPick').value,10)||parseInt(vmField('vmHost').value,10)||0,
     base_image_url: vmField('vmImageUrl').value.trim(),
     base_image_sha256: vmField('vmImageSha').value.trim().toLowerCase(),
     vcpus: num('vmVcpus',2), memory_mb: num('vmMem',2048), disk_gb: num('vmDisk',20),
@@ -1304,7 +1322,7 @@ function pveStorageOptions(sel,names,current){
   if(current){pveField(sel).value=current;}
 }
 function pvePayload(){
-  return {host_id:parseInt(pveField('pveHost').value,10)||0,
+  return {host_id:parseInt(vmField('specHostPick').value,10)||parseInt(pveField('pveHost').value,10)||0,
     node:pveField('pveNode').value.trim(),
     disk_storage:pveField('pveDisk').value,
     ci_storage:pveField('pveCi').value,
@@ -1313,7 +1331,14 @@ function pvePayload(){
     vcpus:pveNum('pveVcpus',1), memory_mb:pveNum('pveMem',1024), disk_gb:pveNum('pveDiskGb',8),
     image_url:pveField('pveImageUrl').value.trim(),
     checksum:pveField('pveChecksum').value.trim().toLowerCase(),
-    checksum_algo:pveField('pveAlgo').value};
+    checksum_algo:pveField('pveAlgo').value,
+    node_port:pveNum('pveNodePort',19333),
+    wallet_backup_path:pveField('pveBackupPath').value.trim(),
+    node_url:pveField('pveNodeUrl').value.trim(),
+    node_sha256:pveField('pveNodeSha').value.trim().toLowerCase(),
+    node_binary:pveField('pveNodeBin').value.trim(),
+    node_start_cmd:pveField('pveNodeStart').value.trim(),
+    wallet_create_cmd:pveField('pveWalletCmd').value.trim()};
 }
 async function loadPve(){
   const r=await fetch('/api/spec/pve/settings',{credentials:'include'});
@@ -1336,6 +1361,13 @@ async function loadPve(){
   pveField('pveImageUrl').value=m.image_url||'';
   pveField('pveChecksum').value=m.checksum||'';
   pveField('pveAlgo').value=m.checksum_algo||def.checksum_algo||'sha512';
+  pveField('pveNodePort').value=m.node_port||19333;
+  pveField('pveBackupPath').value=m.wallet_backup_path||'/home/specminer/data/wallet.dat';
+  pveField('pveNodeUrl').value=m.node_url||'';
+  pveField('pveNodeSha').value=m.node_sha256||'';
+  pveField('pveNodeBin').value=m.node_binary||'';
+  pveField('pveNodeStart').value=m.node_start_cmd||'';
+  pveField('pveWalletCmd').value=m.wallet_create_cmd||'';
   pveField('pveState').textContent=m.image_name?('modèle : '+m.image_name):'aucun modèle Proxmox';
 }
 async function savePveModel(){
@@ -1356,6 +1388,19 @@ async function inspectPve(){
     (d.free_vmid?' — premier libre : '+d.free_vmid:'')+
     ' — stockages images : '+eligible.map(s=>s.name+' ('+s.avail_gb+' Go libres)').join(', ');
 }
+function applySpecHostKind(kind){
+  const pve=(kind==='proxmox');
+  vmField('vmModelCard').style.display=pve?'none':'';
+  pveField('pveModelCard').style.display=pve?'':'none';
+  vmField('specHostKind').textContent=pve?'pilote Proxmox (qm/pvesh/pvesm)':'pilote libvirt (virsh)';
+  vmField('specHostKind').className='chip '+(pve?'running':'off');
+}
+async function saveSpecHost(){
+  const id=parseInt(vmField('specHostPick').value,10)||0;
+  if(!id){return;}
+  const r=await fetch('/api/spec/settings',{method:'PUT',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({host_id:id})});
+  if(r.ok){const d=await r.json();applySpecHostKind(d.spec_host_kind||'');}
+}
 async function loadSpec(){
   const r=await fetch('/api/spec/settings',{credentials:'include'});
   if(!r.ok){vmField('vmState').textContent='lecture impossible';return;}
@@ -1366,6 +1411,11 @@ async function loadSpec(){
   vmField('vmHost').innerHTML=(d.hosts||[]).length
     ? d.hosts.map(h=>'<option value="'+h.id+'">'+h.name+' — '+h.host+'</option>').join('')
     : '<option value="0">aucune machine marquée vm_host</option>';
+  const pick=(d.hosts||[]).map(h=>'<option value="'+h.id+'" data-kind="'+(h.os_kind||'')+'">'+h.name+' — '+h.host+' ('+(h.os_kind||'autre')+')</option>').join('');
+  vmField('specHostPick').innerHTML=pick||'<option value="0">aucune machine marquée vm_host</option>';
+  vmField('specHostPick').value=String(d.spec_host_id||((d.hosts||[]).length?d.hosts[0].id:0));
+  vmField('specHostPick').onchange=saveSpecHost;
+  applySpecHostKind(d.spec_host_kind||'');
   const m=d.vm_model||{};
   if(m.host_id){vmField('vmHost').value=String(m.host_id);}
   vmField('vmImageUrl').value=m.base_image_url||'';
@@ -1444,6 +1494,7 @@ document.addEventListener('click',(e)=>{
   const b=e.target.closest('button[data-vmact]');
   if(b){vmAction(Number(b.getAttribute('data-vm')),b.getAttribute('data-vmact'));return;}
   if(e.target.id==='specModeSave'){saveSpecMode();return;}
+  if(e.target.id==='specHostPick'){saveSpecHost();return;}
   if(e.target.id==='vmSave'){saveVmModel();return;}
   if(e.target.id==='vmHostCheck'){checkVmHost();return;}
   if(e.target.id==='pveSave'){savePveModel();return;}

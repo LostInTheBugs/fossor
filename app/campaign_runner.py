@@ -162,6 +162,24 @@ def _register_wallet(db: Any, coin: str, address: str, vm_row: Any, backup_path:
     db.commit()
 
 
+def _spec_context(db: Any, backend: Any):
+    """Hôte, modèle et backend de la VM — **le** point de décision (§4.6).
+
+    Le backend du planificateur peut porter la fabrique (``spec_backend``) :
+    c'est par là que passent les tests, qui remplacent ensuite le pilote
+    d'exécution sans changer la décision Proxmox/libvirt.
+    """
+    from app import vm_backend as VB
+
+    factory = getattr(backend, "spec_backend", None)
+    try:
+        if callable(factory):
+            return factory(db), None
+        return VB.backend_for(db), None
+    except VB.VmBackendError as exc:
+        return None, str(exc)
+
+
 async def _spec_start_steps(
     db: Any,
     campaign: Any,
@@ -176,24 +194,13 @@ async def _spec_start_steps(
     import uuid as uuid_lib
 
     from app import spec_vm as V
-    from app.routers.vms import record_vm, stored_model
+    from app.routers.vms import record_vm
 
-    model_raw = stored_model(db)
-    if not model_raw:
-        return _fail(
-            db, campaign, "vm-model-missing",
-            "Aucun modèle de VM configuré (Configuration → Spec mining)", simulated,
-        )
-    try:
-        model = V.validate_vm_model(model_raw)
-    except V.VmError as exc:
-        return _fail(db, campaign, "vm-model-invalid", f"Modèle de VM invalide : {exc}", simulated)
-    host = _spec_host(db, model)
-    if host is None:
-        return _fail(
-            db, campaign, "vm-host-missing",
-            "Machine hôte de VM introuvable ou non marquée vm_host", simulated,
-        )
+    spec, error = _spec_context(db, backend)
+    if spec is None:
+        return _fail(db, campaign, "vm-model-missing", error or "modèle de VM absent",
+                     simulated)
+    host, model, vm = spec.host, spec.model, spec.backend
 
     row = _spec_vm_row(db, campaign)
     if row is None:
@@ -206,13 +213,14 @@ async def _spec_start_steps(
             mode=mode,
             model=model,
             wallet_address=str(profile.get("wallet") or ""),
+            hypervisor=vm.kind,
         )
     db.commit()
 
-    # 1. Création et démarrage de la VM.
+    # 1. Création et démarrage de la VM (qm pour Proxmox, virt-install sinon).
     if not _step_done(db, campaign, "vm-created"):
         try:
-            result = await backend.vm_create(host, model, row.name, simulated)
+            result = await vm.create(host, model, row, simulated)
         except Exception as exc:
             row.state = "failed"
             row.note = str(exc)[:800]
@@ -222,25 +230,28 @@ async def _spec_start_steps(
                          simulated)
         if not simulated:
             row.state = "running"
+            if result.get("vmid"):
+                row.vmid = int(result["vmid"])
         db.commit()
         log_event(
             db, campaign, "vm-created",
-            f"VM {row.name} créée et démarrée sur {host.name}",
+            f"VM {row.name} créée et démarrée sur {host.name} ({vm.kind})",
             simulated=simulated,
-            detail={"commands": result.get("commands") or [], "vm": row.name, "mode": mode},
+            detail={"commands": result.get("commands") or [], "vm": row.name, "mode": mode,
+                    "hypervisor": vm.kind, "vmid": getattr(row, "vmid", None)},
         )
         db.commit()
 
-    # 2. Adresse de la VM (bail ARP puis lease).
+    # 2. Adresse de la VM (agent invité / bail ARP, puis clé d'hôte épinglée).
     if not _step_done(db, campaign, "vm-addressed"):
         ip = SIMULATION_IP if simulated else ""
         if not simulated:
             try:
-                result = await backend.vm_address(host, row.name, simulated=False)
+                result = await vm.wait_address(host, model, row, simulated=False)
                 ip = str(result.get("ip") or "")
                 if ip:
                     try:
-                        await backend.vm_pin(host, ip, False)
+                        await vm.pin_host_key(host, model, row, ip, False)
                     except Exception as exc:  # clé d'hôte indisponible : on continue, noté
                         log_event(db, campaign, "vm-pin-failed", str(exc)[:300], result="warn",
                                   simulated=simulated)
@@ -257,9 +268,11 @@ async def _spec_start_steps(
     # 3. Provisionnement dans la VM (binaires vérifiés par SHA256 dans la VM).
     if not _step_done(db, campaign, "vm-provisioned"):
         try:
-            result = await backend.vm_provision(
-                host, model, profile, row.ip, campaign.coin,
-                str(profile.get("wallet") or ""), simulated,
+            result = await vm.provision(
+                host, model, profile, row,
+                coin=campaign.coin,
+                expected_address=str(profile.get("wallet") or ""),
+                simulated=simulated,
             )
         except Exception as exc:
             log_event(db, campaign, "vm-provisioned", str(exc)[:800], result="fail",
@@ -287,7 +300,7 @@ async def _spec_start_steps(
             if mode == "vm":
                 target = targets[0] if targets else Target(machine=host)
                 argv = render_argv(profile, host, target)
-                result = await backend.vm_start_miner(host, profile, argv, row.ip, simulated)
+                result = await vm.start_miner(host, model, profile, argv, row, simulated)
                 commands.extend(result.get("commands") or [])
             else:
                 node = V.node_address(row.ip, row.node_port)
@@ -305,7 +318,7 @@ async def _spec_start_steps(
             db, campaign, "campaign-started",
             f"profil « {profile['name']} » démarré {where}",
             simulated=simulated,
-            detail={"commands": commands, "mode": mode, "vm": row.name},
+            detail={"commands": commands, "mode": mode, "vm": row.name, "hypervisor": vm.kind},
         )
         db.commit()
     return None
@@ -322,27 +335,18 @@ async def _spec_stop_steps(
 ) -> None:
     """Arrêt du mineur, puis **VM éteinte et conservée** (destruction séparée)."""
     row = _spec_vm_row(db, campaign)
-    model = None
-    if row is not None:
-        from app.routers.vms import stored_model
-
-        try:
-            from app import spec_vm as V
-
-            model = V.validate_vm_model(stored_model(db) or {})
-        except Exception:
-            model = None
-    host = _spec_host(db, model) if model else None
-    if row is None or host is None or profile is None:
+    spec, _error = _spec_context(db, backend)
+    if row is None or spec is None or profile is None:
         log_event(db, campaign, "campaign-stopped",
                   "VM de campagne introuvable : arrêt du mineur non nécessaire",
                   simulated=simulated)
         return
+    host, model, vm = spec.host, spec.model, spec.backend
 
     commands: list[str] = []
     try:
         if mode == "vm":
-            result = await backend.vm_stop_miner(host, profile, row.ip, simulated)
+            result = await vm.stop_miner(host, model, profile, row, simulated)
             commands.extend(result.get("commands") or [])
         else:
             for target in targets:
@@ -360,7 +364,7 @@ async def _spec_stop_steps(
 
     if not _step_done(db, campaign, "vm-stopped"):
         try:
-            await backend.vm_shutdown(host, row.name, simulated)
+            await vm.shutdown(host, model, row, simulated)
             if not simulated:
                 row.state = "shut off"
             db.commit()
@@ -409,55 +413,12 @@ class MinerBackend:
             return None
         return (result.get("status") or {}).get("hashrate_hs")
 
-    # ── Modes `vm` et `hybrid` (§4.6, étape 3c) ───────────────────────
-    async def vm_create(self, host, model: dict, name: str, simulated: bool) -> dict:
-        from app import vm_remote as VMR
-        from app.fossor_keys import private_key_text, public_key_text
+    # ── Modes `vm` et `hybrid` (§4.6) ─────────────────────────────────
+    def spec_backend(self, db: Any):
+        """Fabrique : hôte Proxmox → pilote Proxmox, sinon libvirt."""
+        from app import vm_backend as VB
 
-        return await VMR.create(
-            host,
-            model,
-            name,
-            ssh_public_key=public_key_text(),
-            private_key=private_key_text(),
-            simulated=simulated,
-        )
-
-    async def vm_address(self, host, name: str, simulated: bool) -> dict:
-        from app import vm_remote as VMR
-
-        return await VMR.wait_address(host, name, simulated=simulated)
-
-    async def vm_pin(self, host, ip: str, simulated: bool) -> dict:
-        from app import vm_remote as VMR
-
-        return await VMR.pin_host_key(host, ip, simulated=simulated)
-
-    async def vm_provision(self, host, model: dict, profile: dict, ip: str, coin: str,
-                           expected_address: str, simulated: bool) -> dict:
-        from app import vm_remote as VMR
-
-        return await VMR.provision(
-            host, model, profile, ip, coin=coin, simulated=simulated,
-            expected_address=expected_address,
-        )
-
-    async def vm_start_miner(self, host, profile: dict, argv: list[str], ip: str,
-                            simulated: bool) -> dict:
-        from app import vm_remote as VMR
-
-        return await VMR.start_miner(host, profile, argv, ip, simulated=simulated)
-
-    async def vm_stop_miner(self, host, profile: dict, ip: str, simulated: bool) -> dict:
-        from app import vm_remote as VMR
-
-        return await VMR.stop_miner(host, profile, ip, simulated=simulated)
-
-    async def vm_shutdown(self, host, name: str, simulated: bool) -> dict:
-        """Fin de campagne : VM éteinte et **conservée** (le wallet y est)."""
-        from app import vm_remote as VMR
-
-        return await VMR.shutdown(host, name, simulated=simulated)
+        return VB.backend_for(db)
 
 
 # ── Réglages et journal ───────────────────────────────────────────────

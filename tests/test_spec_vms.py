@@ -344,7 +344,7 @@ class TestSimulation:
         assert any("sha256sum -c -" in c for c in got["commands"])
         start = await VR.start_miner(object(), profile(), ["/opt/fossor/x"], "192.0.2.10",
                                     simulated=True)
-        assert "setsid nohup" in start["commands"][0]
+        assert "setsid sh -c" in start["commands"][0]
         stop = await VR.stop_miner(object(), profile(), "192.0.2.10", simulated=True)
         assert "kill -TERM" in stop["commands"][0]
         down = await VR.shutdown(object(), NAME, simulated=True)
@@ -439,6 +439,14 @@ class SpecBackend:
     async def hashrate(self, machine, profile):
         return 42.0
 
+    def spec_backend(self, db):
+        """La décision (hôte, modèle, pilote) reste celle de la fabrique réelle."""
+        from app import vm_backend as VB
+
+        context = VB.backend_for(db)
+        context.backend = SpecDriver(self)
+        return context
+
     async def vm_create(self, host, model, name, simulated):
         self.calls.append(("vm_create", name, simulated))
         if self.fail_create:
@@ -469,6 +477,69 @@ class SpecBackend:
     async def vm_shutdown(self, host, name, simulated):
         self.calls.append(("vm_shutdown", name, simulated))
         return {"simulated": simulated, "commands": [f"virsh shutdown {name}"]}
+
+
+class SpecDriver:
+    """Pilote factice derrière l'interface commune (create…list)."""
+
+    kind = "libvirt"
+
+    def __init__(self, owner):
+        self.owner = owner
+
+    @property
+    def calls(self):
+        return self.owner.calls
+
+    async def create(self, host, model, row, simulated):
+        self.calls.append(("vm_create", row.name, simulated))
+        if self.owner.fail_create:
+            raise RuntimeError("libvirt absent")
+        return {"simulated": simulated, "commands": [f"virt-install --name {row.name}"]}
+
+    async def wait_address(self, host, model, row, simulated):
+        self.calls.append(("vm_address", row.name))
+        return {"simulated": simulated, "ip": "192.168.122.77"}
+
+    async def pin_host_key(self, host, model, row, ip, simulated):
+        self.calls.append(("vm_pin", ip))
+        return {"simulated": simulated, "host_key": f"{ip} ssh-ed25519 AAAA"}
+
+    async def provision(self, host, model, profile, row, *, coin, expected_address="",
+                        simulated):
+        self.calls.append(("vm_provision", row.ip, coin, expected_address))
+        return {"simulated": simulated, "address": expected_address,
+                "commands": ["ssh specminer@ip sha256sum -c -"]}
+
+    async def start_miner(self, host, model, profile, argv, row, simulated):
+        self.calls.append(("vm_start_miner", row.ip, tuple(argv)))
+        return {"simulated": simulated, "commands": ["ssh specminer@ip setsid nohup mineur"]}
+
+    async def stop_miner(self, host, model, profile, row, simulated):
+        self.calls.append(("vm_stop_miner", row.ip))
+        return {"simulated": simulated, "commands": ["ssh specminer@ip kill -TERM"]}
+
+    async def shutdown(self, host, model, row, simulated):
+        self.calls.append(("vm_shutdown", row.name, simulated))
+        return {"simulated": simulated, "commands": [f"virsh shutdown {row.name}"]}
+
+    async def collect(self, host, model, row, profile, simulated):
+        self.calls.append(("vm_collect", row.name))
+        return {"simulated": simulated, "state": "running", "hashrate_hs": None}
+
+    async def check_backup(self, host, model, row, path, *, now_epoch, max_age_days,
+                           simulated):
+        self.calls.append(("vm_check_backup", path))
+        return {"simulated": simulated, "verified": True, "reason": "test"}
+
+    async def destroy(self, host, model, row, *, backup, now_epoch, max_age_days,
+                      simulated):
+        self.calls.append(("vm_destroy", row.name))
+        return {"simulated": simulated, "destroyed": bool(backup)}
+
+    async def list(self, host, simulated):
+        self.calls.append(("vm_list", simulated))
+        return {"simulated": simulated, "vms": []}
 
 
 def _seed_spec(db, *, mode="vm", with_model=True, status="approved"):
