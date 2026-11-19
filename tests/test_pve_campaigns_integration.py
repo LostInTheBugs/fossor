@@ -220,6 +220,14 @@ async def main():
     if not expected:
         sys.stderr.write("ssh: aucune cle d'hote epinglee\\n")
         return 255
+    # Un vrai ``ssh`` forwarde son entrée standard : le harnais doit le faire
+    # aussi, sinon ``base64 -d`` (push du binaire) attend indéfiniment.
+    payload = None
+    if not sys.stdin.isatty():
+        try:
+            payload = sys.stdin.read()
+        except Exception:
+            payload = None
     async with asyncssh.connect(
         target, port=port, username=user, client_keys=[key] if key else None,
         known_hosts=None, connect_timeout=10, login_timeout=20,
@@ -231,7 +239,7 @@ async def main():
         # Même sémantique que ``ssh`` : les arguments sont recollés par une
         # espace, sans réencodage (le shell local a déjà retiré les guillemets).
         # ``shlex.join`` ici re-quotait la commande et masquait le défaut réel.
-        result = await conn.run(" ".join(rest), check=False)
+        result = await conn.run(" ".join(rest), input=payload, check=False)
         sys.stdout.write(result.stdout or "")
         sys.stderr.write(result.stderr or "")
         return result.exit_status
