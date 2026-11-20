@@ -230,6 +230,21 @@ async def test_banner_settings_all_simulated(client):
     assert data["pilotage"]["armed"] == []
 
 
+def test_auto_launch_migration_keeps_freds_choice():
+    from app.database import _migrate_auto_launch_defaults
+
+    with SessionLocal() as db:
+        R.seed_rules(db)
+        rule = db.get(R.Rule, "auto_launch")
+        rule.params = {"gpu": False, "cpu": True}
+        db.commit()
+    with SessionLocal() as db:
+        _migrate_auto_launch_defaults()
+        rule = db.get(R.Rule, "auto_launch")
+        assert rule.params == {"gpu": False, "cpu": True}
+        assert rule.enabled is False
+
+
 def test_auto_launch_is_gpu_and_cpu_but_disabled():
     with SessionLocal() as db:
         R.seed_rules(db)

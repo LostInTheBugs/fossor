@@ -82,14 +82,12 @@ def _migrate_auto_launch_defaults():
             rule.description = spec["description"]
             changed = True
         params = dict(rule.params or {})
-        if params.get("gpu") is not True:
-            params["gpu"] = True
-            changed = True
-        if params.get("cpu") is not True:
-            params["cpu"] = True
+        # Seulement l'ancien couple de défauts (false/false) est réaligné : un
+        # choix explicite de Fred (gpu=false, cpu=true…) survit au redémarrage.
+        if not params or params == {"gpu": False, "cpu": False}:
+            rule.params = {"gpu": True, "cpu": True}
             changed = True
         if changed:
-            rule.params = params
             db.commit()
 
 
