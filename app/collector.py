@@ -174,6 +174,132 @@ def launched_profile(db, machine: Any, stdout: str = "") -> Any:
     return None
 
 
+def profile_unit_seen(profile: Any, stdout: str = "") -> bool:
+    """L'unité ``fossor-miner-*`` du profil est-elle visible dans ``ps`` ?"""
+    from app import miners as M
+
+    binary = M.binary_path({
+        "software": profile.software,
+        "version": profile.version,
+        "binary_path": profile.binary_path,
+    })
+    marker = f"fossor-miner-{M.slug(profile.name)}"
+    text = stdout or ""
+    return bool(
+        (binary and binary in text)
+        or M.unit_name({"name": profile.name}) in text
+        or marker in text
+    )
+
+
+def active_profiles(db, machine: Any, stdout: str = "") -> list[Any]:
+    """Profils actifs d'une machine : sélection, tokens par device, unités vues.
+
+    L'athlon (postmigration 2026.11) n'a **aucun** profil sélectionné au niveau
+    de la machine : chaque device porte son ``default_token_id`` (Pearl sur les
+    GPU, KSH sur le CPU).  Chercher seulement ``selected_profile_id`` laissait
+    l'API SRBMiner et le journal CPU invisibles.
+    """
+    from app.models import Device, MinerProfile
+
+    found: list[Any] = []
+    seen: set[int] = set()
+
+    def take(profile: Any) -> None:
+        if profile is not None and profile.enabled and profile.id not in seen:
+            seen.add(profile.id)
+            found.append(profile)
+
+    if getattr(machine, "default_miner_profile_id", None):
+        take(db.get(MinerProfile, machine.default_miner_profile_id))
+    for device in db.query(Device).filter(
+        Device.machine_id == machine.id, Device.present == True  # noqa: E712
+    ).all():
+        token = getattr(device, "default_token_id", None)
+        if token and device.enabled_for_mining:
+            take(db.get(MinerProfile, int(token)))
+    for profile in db.query(MinerProfile).filter(MinerProfile.enabled == True).all():  # noqa: E712
+        if profile.id not in seen and profile_unit_seen(profile, stdout):
+            take(profile)
+    return found
+
+
+def profile_devices(db, machine: Any, profile: Any) -> list[Any]:
+    """Devices rattachés au profil par leur token par défaut."""
+    from app.models import Device
+
+    rows = db.query(Device).filter(
+        Device.machine_id == machine.id, Device.present == True  # noqa: E712
+    ).all()
+    owned = [d for d in rows if getattr(d, "default_token_id", None) == profile.id]
+    if owned:
+        return owned
+    if getattr(machine, "default_miner_profile_id", None) == profile.id:
+        return rows
+    return []
+
+
+def _merge_profile_stats(stats: dict[str, Any], profile: Any, api: dict[str, Any] | None,
+                         devices: list[Any]) -> dict[str, Any]:
+    """Attribue le relevé d'une API aux devices **du** profil (multi-profils).
+
+    Le hashrate d'un GPU se rattache par bus PCI dans le sous-ensemble du
+    profil ; celui du CPU vient de ``cpu_hashrate_hs`` (ou du total quand aucun
+    GPU du profil n'a répondu, cas d'un mineur CPU seul).
+    """
+    from app import miners as M
+
+    busses = {norm_bus(d.pci_bus) for d in devices if d.kind == "gpu" and d.pci_bus}
+    cpu_owned = any(d.kind == "cpu" for d in devices)
+    software = (profile.software or "").strip().lower()
+    port = int(profile.api_port or 0)
+    # Le profil dont on lit l'API nomme le mineur (``ps`` peut citer le CPU
+    # en dernier) ; sinon la première valeur connue suffit.
+    if software and (not stats.get("miner") or port):
+        stats["miner"] = software
+    if port and not stats.get("api_port"):
+        stats["api_port"] = port
+    entry: dict[str, Any] = {
+        "profile_id": profile.id,
+        "name": profile.name,
+        "unit": M.unit_name({"name": profile.name}),
+        "coin": profile.coin or "",
+        "miner": software,
+        "api_port": port or None,
+        "hashrate_hs": None,
+        "accepted": None,
+        "rejected": None,
+        "api_error": None,
+    }
+    if not api:
+        return entry
+    gpus = [d for d in stats.get("devices") or [] if d.get("kind") == "gpu"]
+    mine = [d for d in gpus if norm_bus(d.get("pci_bus")) in busses] if busses else gpus
+    api_gpus = [gpu for gpu in (api.get("gpus") or []) if gpu.get("pci_bus")]
+    if api_gpus:
+        by_bus = {norm_bus(gpu["pci_bus"]): gpu for gpu in api_gpus}
+        for gpu in mine:
+            source = by_bus.get(norm_bus(gpu.get("pci_bus")))
+            if source and gpu.get("hashrate_hs") is None:
+                gpu["hashrate_hs"] = source.get("hashrate_hs")
+    else:
+        for gpu, value in zip(mine, api.get("device_hashrates_hs") or []):
+            if gpu.get("hashrate_hs") is None:
+                gpu["hashrate_hs"] = value
+    if cpu_owned:
+        cpu = next((d for d in stats.get("devices") or [] if d.get("kind") == "cpu"), None)
+        value = api.get("cpu_hashrate_hs")
+        if value is None and not any(gpu.get("hashrate_hs") for gpu in mine):
+            value = api.get("total_hashrate_hs")
+        if cpu is not None and cpu.get("hashrate_hs") is None and value:
+            cpu["hashrate_hs"] = value
+    values = [d.get("hashrate_hs") for d in mine if d.get("hashrate_hs")]
+    entry["hashrate_hs"] = sum(values) if values else api.get("total_hashrate_hs")
+    entry["accepted"] = api.get("accepted")
+    entry["rejected"] = api.get("rejected")
+    return entry
+
+
 def _apply_profile_api(stats: dict[str, Any], profile: Any) -> dict[str, Any]:
     """L'API déclarée par le profil fait foi pour une unité lancée par Fossor."""
     software = (getattr(profile, "software", "") or "").strip().lower()
@@ -463,6 +589,10 @@ def _store_metrics(db, machine, stats: dict[str, Any], ts: str) -> int:
     status.total_hashrate_hs = _numeric(stats.get("total_hashrate_hs"))
     status.total_power_w = _numeric(stats.get("total_power_w"))
     status.api_error = stats.get("api_error")
+    status.profiles_json = (
+        json_lib.dumps(stats.get("profiles"), ensure_ascii=False)
+        if stats.get("profiles") else None
+    )
     # 2026.11.003-c7: état du CPU + hashrate par mineur CPU.
     status.cpu_json = (
         json_lib.dumps(stats.get("cpu"), ensure_ascii=False) if stats.get("cpu") else None
@@ -590,11 +720,22 @@ async def collect_machine(machine_id: int) -> dict[str, Any]:
             coin_names=catalogue["names"],
             coin_aliases=catalogue["aliases"],
         )
-        # Unité lancée par Fossor : l'API du profil fait foi (api_port, api_kind),
-        # même quand ``ps`` ne porte plus ``--api-port`` (postmigration athlon).
+        # Profils actifs : sélection machine, tokens par device et unités Fossor
+        # vues.  L'athlon n'a aucun profil sélectionné : Pearl (GPU) et KSH (CPU)
+        # sont rattachés par ``devices.default_token_id``.
+        profiles = active_profiles(db, machine, raw.get("stdout", ""))
         applied = launched_profile(db, machine, raw.get("stdout", ""))
-        if applied is not None:
-            stats = _apply_profile_api(stats, applied)
+        multi = len(profiles) > 1
+        profile_rows: list[dict[str, Any]] = []
+        if not multi:
+            chosen = applied or (profiles[0] if profiles else None)
+            if chosen is not None and (
+                chosen is applied or bool(profile_devices(db, machine, chosen))
+            ):
+                applied = chosen
+                stats = _apply_profile_api(stats, applied)
+            else:
+                applied = None
         from app.devices import mark_external_devices, set_external_miners
 
         miners = stats.get("miners") or []
@@ -606,7 +747,31 @@ async def collect_machine(machine_id: int) -> dict[str, Any]:
         # Occupancy is refreshed every round, not only on the first detect.
         mark_external_devices(db, machine, miners)
         db.commit()
-        if stats.get("api_port"):
+        if multi:
+            total_accepted: int | None = None
+            total_rejected: int | None = None
+            for profile in profiles:
+                api = None
+                api_error = None
+                if profile.api_port:
+                    api, api_error = await _fetch_miner_api(
+                        machine, int(profile.api_port), profile.api_kind or ""
+                    )
+                entry = _merge_profile_stats(
+                    stats, profile, api, profile_devices(db, machine, profile)
+                )
+                entry["api_error"] = api_error if api is None else None
+                profile_rows.append(entry)
+                if entry.get("accepted") is not None:
+                    total_accepted = (total_accepted or 0) + int(entry["accepted"])
+                if entry.get("rejected") is not None:
+                    total_rejected = (total_rejected or 0) + int(entry["rejected"])
+            stats["accepted"] = total_accepted
+            stats["rejected"] = total_rejected
+            stats["api_error"] = next(
+                (row["api_error"] for row in profile_rows if row.get("api_error")), None
+            )
+        elif stats.get("api_port"):
             api, api_error = await _fetch_miner_api(
                 machine, int(stats["api_port"]), stats.get("api_kind") or ""
             )
@@ -641,6 +806,53 @@ async def collect_machine(machine_id: int) -> dict[str, Any]:
 
         # Miners as displayed (coin + per-miner hashrate included).
         cpu_probe_raw = await _enrich_cpu_state(db, machine, raw.get("stdout", ""), stats)
+        if multi:
+            # Le hashrate CPU vient du journal (``_enrich_cpu_state``) : la
+            # répartition par profil se fait après la sonde, sur les devices.
+            for entry, profile in zip(profile_rows, profiles):
+                owned = profile_devices(db, machine, profile)
+                busses = {norm_bus(d.pci_bus) for d in owned if d.kind == "gpu" and d.pci_bus}
+                cpu_owned = any(d.kind == "cpu" for d in owned)
+                values = [
+                    item.get("hashrate_hs")
+                    for item in stats.get("devices") or []
+                    if item.get("hashrate_hs")
+                    and (
+                        (item.get("kind") == "gpu" and norm_bus(item.get("pci_bus")) in busses)
+                        or (item.get("kind") == "cpu" and cpu_owned)
+                    )
+                ]
+                if values:
+                    entry["hashrate_hs"] = sum(values)
+            device_sum = sum(
+                item.get("hashrate_hs")
+                for item in stats.get("devices") or []
+                if item.get("hashrate_hs")
+            )
+            if device_sum:
+                stats["total_hashrate_hs"] = device_sum
+        elif applied is not None:
+            from app import miners as M
+
+            if stats.get("total_hashrate_hs") is None:
+                stats["total_hashrate_hs"] = sum(
+                    item.get("hashrate_hs")
+                    for item in stats.get("devices") or []
+                    if item.get("hashrate_hs")
+                ) or None
+            profile_rows.append({
+                "profile_id": applied.id,
+                "name": applied.name,
+                "unit": M.unit_name({"name": applied.name}),
+                "coin": applied.coin or "",
+                "miner": stats.get("miner") or "",
+                "api_port": stats.get("api_port"),
+                "hashrate_hs": stats.get("total_hashrate_hs"),
+                "accepted": stats.get("accepted"),
+                "rejected": stats.get("rejected"),
+                "api_error": stats.get("api_error"),
+            })
+        stats["profiles"] = profile_rows
         set_external_miners(machine, stats.get("miners") or [])
         # Diagnostic 2026.11.003-c8 : la collecte brute porte aussi la sonde CPU
         # (masquée), en tête pour survivre à la troncature de mask_raw_collect.

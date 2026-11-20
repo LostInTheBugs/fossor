@@ -258,6 +258,9 @@ class MachineStatus(Base):
     cpu_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # §4.20 : état normalisé d'un ASIC (hashrate, domaine inactif, pool…).
     asic_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 2026.11 : état par profil (unité, actif, hashrate, shares) — plusieurs
+    # profils peuvent tourner sur une même machine (tokens par device).
+    profiles_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class RawCollection(Base):

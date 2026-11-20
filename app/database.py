@@ -138,6 +138,7 @@ def init_db():
     _migrate_coin_pool_hosts_column()
     _migrate_machine_status_api_error_column()
     _migrate_machine_status_cpu_json_column()
+    _migrate_machine_status_profiles_json_column()
     _migrate_device_psu_columns()
     _migrate_device_psu_split_meaning()
     _migrate_machine_os_detected_column()
@@ -285,6 +286,11 @@ def _migrate_machine_status_api_error_column():
 def _migrate_machine_status_cpu_json_column():
     """Add machine_status.cpu_json — état du CPU et hashrate CPU (003-c7)."""
     _add_column_if_missing("machine_status", "cpu_json", "cpu_json TEXT")
+
+
+def _migrate_machine_status_profiles_json_column():
+    """Add machine_status.profiles_json — état par profil de minage (2026.11)."""
+    _add_column_if_missing("machine_status", "profiles_json", "profiles_json TEXT")
 
 
 def _migrate_machine_default_miner_column():

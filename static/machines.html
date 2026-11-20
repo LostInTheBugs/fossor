@@ -135,7 +135,7 @@ tr.absent td{opacity:.5}
     </div>
     <div class="empty" id="minerHint" style="font-size:12.5px"></div>
     <div class="row" style="margin-top:10px">
-      <div class="field"><label>Profil de minage</label><select id="minerProfile"></select></div>
+      <div class="field"><label>Profil de minage</label><select id="minerProfile"></select><div id="minerProfileNote" style="font-size:10px;color:var(--muted);margin-top:3px"></div></div>
       <div class="field narrow"><label>Threads CPU</label><input id="minerThreads" type="number" min="1" value="1"></div>
     </div>
     <div class="actions">
@@ -600,6 +600,7 @@ const openMiner=async(id)=>{
     ? `GPU utilisées : ${view.gpus.length?view.gpus.join(', '):'aucune'} · simulation : ${view.simulation?'<b>active</b>':'<b>désactivée</b>'}`
     : '⚠️ Le pilotage exige une machine en « clé Fossor » (compte dédié avec sudo).';
   $('#minerProfile').innerHTML=view.profiles.map(p=>`<option value="${p.id}"${p.id===view.selected_profile_id?' selected':''}>${p.name} · ${p.coin} · ${p.software}</option>`).join('');
+  $('#minerProfileNote').textContent=view.selection_meaning||'';
   $('#minerThreads').value=view.threads||1;
   $('#minerState').textContent='inconnu';$('#minerState').className='chip off';
   $('#minerOut').style.display='none';

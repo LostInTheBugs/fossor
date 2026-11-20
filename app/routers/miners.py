@@ -158,6 +158,7 @@ def read_miner_settings(db: Session = Depends(get_db), _user=Depends(require_log
         "simulation": simulation_enabled(db),
         "confirm_word": CONFIRM_WORD,
         "default_profile_id": default_profile_id(db),
+        "meaning": "valeur par défaut des machines non armées",
         "profiles": [profile_to_dict(p) for p in profiles],
     }
 
@@ -329,6 +330,10 @@ def machine_miner_view(
         "auth_type": machine.auth_type,
         "pilotable": machine.auth_type == "fossor_key",
         "selected_profile_id": chosen,
+        "selection_meaning": (
+            "Profil sélectionné au niveau de la machine. Vide = chaque device "
+            "suit son token par défaut (plusieurs profils possibles)."
+        ),
         "gpus": _gpu_indices(db, machine),
         "threads": _cpu_threads(db, machine),
         "profiles": [profile_to_dict(p) for p in profiles],
@@ -432,16 +437,93 @@ async def miner_status(
 ):
     machine = _machine(db, machine_id)
     _require_pilotable(machine)
-    profile = _selected_profile(db, machine, profile_id)
+    from app.collector import active_profiles
+    from app.models import MachineStatus, RawCollection
+
+    if profile_id:
+        profiles = [_get_profile(db, profile_id)]
+    else:
+        stdout = ""
+        if machine.uuid:
+            raw = (
+                db.query(RawCollection)
+                .filter(RawCollection.machine_uuid == machine.uuid)
+                .first()
+            )
+            stdout = (raw.stdout or "") if raw else ""
+        profiles = active_profiles(db, machine, stdout)
+        if not profiles:
+            # Compatibilité : ancienne sélection (machine ou globale), sinon 400.
+            profiles = [_selected_profile(db, machine, None)]
     simulated = pilotage.simulated_for(db, machine)
-    try:
-        result = await R.status(
-            machine, profile_to_dict(profile), simulated=simulated, user=R.service_user(machine)
-        )
-    except R.MinerError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
-    result["profile"] = profile.name
-    result["simulation"] = simulated
+    stored: dict[int, dict] = {}
+    row = (
+        db.query(MachineStatus)
+        .filter(MachineStatus.machine_uuid == machine.uuid)
+        .first()
+        if machine.uuid else None
+    )
+    if row is not None and row.profiles_json:
+        try:
+            stored = {
+                int(item["profile_id"]): item
+                for item in json.loads(row.profiles_json)
+                if item.get("profile_id") is not None
+            }
+        except (TypeError, ValueError):
+            stored = {}
+    entries: list[dict] = []
+    for profile in profiles:
+        data = profile_to_dict(profile)
+        entry = {
+            "profile_id": profile.id,
+            "name": profile.name,
+            "unit": data["service"],
+            "coin": profile.coin or "",
+            "api_port": profile.api_port or None,
+            "active": False,
+            "state": "inconnu",
+            "pid": None,
+            "uptime_s": None,
+            "hashrate_hs": None,
+            "accepted": None,
+            "rejected": None,
+        }
+        try:
+            result = await R.status(
+                machine, data, simulated=simulated, user=R.service_user(machine)
+            )
+            state = result.get("status") or {}
+            entry.update({
+                "active": bool(state.get("running")),
+                "state": state.get("state") or "inconnu",
+                "pid": state.get("pid"),
+                "uptime_s": state.get("uptime_s"),
+                "hashrate_hs": state.get("hashrate_hs"),
+            })
+        except R.MinerError as exc:
+            entry["error"] = str(exc)
+        previous = stored.get(profile.id) or {}
+        if entry.get("hashrate_hs") is None:
+            entry["hashrate_hs"] = previous.get("hashrate_hs")
+        entry["accepted"] = previous.get("accepted")
+        entry["rejected"] = previous.get("rejected")
+        entries.append(entry)
+    first = entries[0]
+    result = {
+        "profiles": entries,
+        "profile": first["name"],
+        "simulated": simulated,
+        "simulation": simulated,
+        "status": {
+            "running": first["active"],
+            "state": first["state"],
+            "pid": first["pid"],
+            "uptime_s": first["uptime_s"],
+            "hashrate_hs": first["hashrate_hs"],
+            "service": first["unit"],
+        },
+    }
     _audit(
         db,
         machine,
