@@ -344,7 +344,7 @@ def patch_collection(monkeypatch):
         fake_collect_cpu.probes = probes
         return {"ok": True, "stdout": probe_by_name[machine.name]}
 
-    async def fake_miner_api(machine, port):
+    async def fake_miner_api(machine, port, api_kind=""):
         if machine.name == "ryzen-c8":
             return parse_srbminer_api(fixture("srbminer_383_ryzen.json")), None
         return None, "port fermé (test)"

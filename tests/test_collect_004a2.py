@@ -117,7 +117,7 @@ async def test_solo_big_end_to_end(client, monkeypatch):
     async def fake_collect_cpu(machine, probes, actor="system"):
         return {"ok": True, "stdout": probe}
 
-    async def no_api(machine, port):
+    async def no_api(machine, port, api_kind=""):
         return None, "port fermé (test)"
 
     async def no_detect(machine, actor="system"):
