@@ -42,8 +42,10 @@ async def test_tokens_evalues_filtres(e2e_server):
         await _login(page, e2e_server)
 
         await page.goto(e2e_server + "/analysis", wait_until="networkidle", timeout=20000)
+        await page.click('#subTabs [data-tab="import"]')
         await page.set_input_files("#importFile", str(FIXTURES / "parite-analyses.json"))
         await page.click("#importBtn")
+        await page.click('#subTabs [data-tab="tokens"]')
         await page.wait_for_selector("#tokRows [data-hist]", timeout=20000)
 
         rows = page.locator("#tokRows tr:not(.histbox)")
