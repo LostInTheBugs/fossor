@@ -145,12 +145,77 @@ def _store_raw_collection(db, machine, stdout: str) -> None:
     row.stdout = mask_raw_collect(stdout or "")
 
 
+def launched_profile(db, machine: Any, stdout: str = "") -> Any:
+    """Profil Fossor dont l'unité ``fossor-miner-*`` tourne sur la machine.
+
+    Une unité lancée par Fossor porte le binaire installé dans son argv ; le
+    profil reste la seule source de vérité de son API (``api_port``,
+    ``api_kind``). ``ps`` peut perdre ces options (troncature, lanceur) : on ne
+    s'y fie plus pour une unité Fossor.
+    """
+    from app import miners as M
+    from app.models import MinerProfile
+
+    profile_id = getattr(machine, "default_miner_profile_id", None)
+    if not profile_id:
+        return None
+    profile = db.query(MinerProfile).filter(MinerProfile.id == profile_id).first()
+    if profile is None or not profile.enabled:
+        return None
+    binary = M.binary_path({
+        "software": profile.software,
+        "version": profile.version,
+        "binary_path": profile.binary_path,
+    })
+    marker = f"fossor-miner-{M.slug(profile.name)}"
+    text = stdout or ""
+    if binary in text or M.unit_name({"name": profile.name}) in text or marker in text:
+        return profile
+    return None
+
+
+def _apply_profile_api(stats: dict[str, Any], profile: Any) -> dict[str, Any]:
+    """L'API déclarée par le profil fait foi pour une unité lancée par Fossor."""
+    software = (getattr(profile, "software", "") or "").strip().lower()
+    if software:
+        stats["miner"] = software
+    stats["api_kind"] = (getattr(profile, "api_kind", "") or "").strip().lower()
+    port = int(getattr(profile, "api_port", 0) or 0)
+    if not port:
+        return stats
+    stats["api_port"] = port
+    for miner in stats.get("miners") or []:
+        if not miner.get("api_port"):
+            miner["api_port"] = port
+            if software:
+                miner["name"] = software
+                miner["miner_name"] = software
+                miner["label"] = software
+            break
+    return stats
+
+
+def _parse_api_payload(payload: str, api_kind: str = "") -> dict[str, Any] | None:
+    """Corps d'API → relevé, selon le type d'API déclaré par le profil."""
+    kind = (api_kind or "").strip().lower()
+    if kind == "cpuminer":
+        from app.spec_vm import parse_cpuminer_summary
+
+        value = parse_cpuminer_summary(payload or "")
+        if value is None:
+            return None
+        return {"total_hashrate_hs": value, "miner": "cpuminer"}
+    return parse_srbminer_api(payload)
+
+
 def _api_hashrate(api: dict[str, Any] | None) -> bool:
     """An API answer is only usable when it actually carries a hashrate."""
     return isinstance(api, dict) and api.get("total_hashrate_hs") is not None
 
 
-async def _fetch_miner_api(machine, port: int) -> tuple[dict[str, Any] | None, str | None]:
+async def _fetch_miner_api(
+    machine, port: int, api_kind: str = ""
+) -> tuple[dict[str, Any] | None, str | None]:
     """Direct GET, then the SSH relay (SRBMiner bound to 127.0.0.1).
 
     A 200 answer without a hashrate (web page, foreign JSON) is **not** a
@@ -172,7 +237,7 @@ async def _fetch_miner_api(machine, port: int) -> tuple[dict[str, Any] | None, s
 
     relay: dict[str, Any] | None = None
     if raw and raw.get("ok"):
-        relay = parse_srbminer_api(raw.get("stdout") or "")
+        relay = _parse_api_payload(raw.get("stdout") or "", api_kind)
     if _api_hashrate(relay):
         return relay, None
 
@@ -525,6 +590,11 @@ async def collect_machine(machine_id: int) -> dict[str, Any]:
             coin_names=catalogue["names"],
             coin_aliases=catalogue["aliases"],
         )
+        # Unité lancée par Fossor : l'API du profil fait foi (api_port, api_kind),
+        # même quand ``ps`` ne porte plus ``--api-port`` (postmigration athlon).
+        applied = launched_profile(db, machine, raw.get("stdout", ""))
+        if applied is not None:
+            stats = _apply_profile_api(stats, applied)
         from app.devices import mark_external_devices, set_external_miners
 
         miners = stats.get("miners") or []
@@ -537,7 +607,9 @@ async def collect_machine(machine_id: int) -> dict[str, Any]:
         mark_external_devices(db, machine, miners)
         db.commit()
         if stats.get("api_port"):
-            api, api_error = await _fetch_miner_api(machine, int(stats["api_port"]))
+            api, api_error = await _fetch_miner_api(
+                machine, int(stats["api_port"]), stats.get("api_kind") or ""
+            )
             if api:
                 stats = merge_srbminer(stats, api)
             from app.external_miners import normalize_coin

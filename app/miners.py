@@ -34,7 +34,9 @@ TEMPLATE_VARS = ("wallet", "pool", "worker", "gpus", "threads", "api_port", "vm_
 
 PATTERNS: dict[str, str] = {
     "wallet": r"^[A-Za-z0-9:._+/=-]{8,160}$",
-    "pool": r"^(solo|stratum(\+tcp|\+ssl)?://[A-Za-z0-9.-]+:\d{2,5})$",
+    # ``solo``, ``stratum+tcp://``, ``stratum+ssl://`` ou ``hote:port`` nu :
+    # SRBMiner et les autres mineurs GPU acceptent le couple sans schéma.
+    "pool": r"^(solo|stratum(\+tcp|\+ssl)?://[A-Za-z0-9.-]+:\d{2,5}|[A-Za-z0-9.-]+:\d{2,5})$",
     "worker": r"^[A-Za-z0-9_-]{1,32}$",
     "gpus": r"^\d+(,\d+)*$",
     "threads": r"^[1-9]\d{0,3}$",
@@ -92,6 +94,15 @@ def log_file(profile: dict[str, Any]) -> str:
 
 
 # ── Validation ────────────────────────────────────────────────────────
+def _as_bool(value: Any) -> bool:
+    """Booléen tolérant : vrai pour true/1/oui/on, faux sinon (défaut)."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value or "").strip().lower() in ("1", "true", "oui", "on", "yes")
+
+
 def validate_profile(data: dict[str, Any]) -> dict[str, Any]:
     """Return a normalised, validated profile dict or raise :class:`ProfileError`."""
     name = str(data.get("name") or "").strip()
@@ -109,7 +120,8 @@ def validate_profile(data: dict[str, Any]) -> dict[str, Any]:
     pool = str(data.get("pool") or "").strip()
     _require(
         bool(re.fullmatch(PATTERNS["pool"], pool)),
-        "pool : « solo » ou stratum://hote:port (stratum+tcp / stratum+ssl)",
+        "pool : « solo », stratum+tcp://hote:port, stratum+ssl://hote:port "
+        "ou hote:port nu (logiciel qui l'accepte, SRBMiner par exemple)",
     )
 
     software = str(data.get("software") or "").strip().lower()
@@ -172,6 +184,9 @@ def validate_profile(data: dict[str, Any]) -> dict[str, Any]:
     _require(api_kind in ("", "cpuminer", "srbminer", "xmrig", "generic"),
              "type d'API : cpuminer, srbminer, xmrig, generic ou aucun")
 
+    # Gouverneur CPU « performance » au démarrage : désactivé par défaut.
+    cpu_governor = _as_bool(data.get("cpu_governor"))
+
     wallet_mode = str(data.get("wallet_mode") or "file").strip().lower()
     _require(wallet_mode in ("file", "pool_address"),
              "wallet : file (fichier local) ou pool_address (adresse de pool seule)")
@@ -200,6 +215,7 @@ def validate_profile(data: dict[str, Any]) -> dict[str, Any]:
         "execution_mode": mode,
         "threads": int(_validated("threads", str(data.get("threads")))) if data.get("threads") else 0,
         "worker": worker,
+        "cpu_governor": cpu_governor,
     }
 
 
@@ -309,6 +325,21 @@ def exec_start(argv: list[str]) -> str:
     return " ".join(systemd_quote(a) for a in argv)
 
 
+# Gouverneur CPU : le profil peut demander ``performance`` au démarrage.
+# ``tee`` reçoit un fichier par cœur (glob expansé par le shell) et ignore
+# ceux qui n'existent pas ; ``+`` exécute en root, ``-`` tolère l'échec
+# (pas de cpufreq, machine virtuelle).
+GOVERNOR_SCRIPT = (
+    "echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor "
+    ">/dev/null 2>&1"
+)
+
+
+def governor_exec_start_pre() -> str:
+    """Ligne ``ExecStartPre`` du gouverneur CPU, exécutée en root."""
+    return f"ExecStartPre=+-/bin/sh -c {systemd_quote(GOVERNOR_SCRIPT)}"
+
+
 def render_unit(
     profile: dict[str, Any],
     argv: list[str],
@@ -327,6 +358,7 @@ def render_unit(
             "Type=simple",
             f"User={user}",
             f"WorkingDirectory={install_dir(profile['software'], profile['version'])}",
+            *([governor_exec_start_pre()] if profile.get("cpu_governor") else []),
             f"ExecStart={exec_start(argv)}",
             "Restart=on-failure",
             "RestartSec=10",

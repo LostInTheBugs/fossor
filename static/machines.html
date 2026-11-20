@@ -321,6 +321,13 @@ const pcAct=async(id,action)=>{
 const MACHINES={},DEVICES={},POWER={};
 let HIDE_IGPU=true;
 const USAGE_LABEL={both:'CPU+GPU',cpu:'CPU seul',gpu:'GPU seul',none:'Aucun'};
+const devHs = v => {
+  if (v === null || v === undefined) return '';
+  const u = ['H/s','kH/s','MH/s','GH/s','TH/s','PH/s'];
+  let i = 0, n = Number(v);
+  while (n >= 1000 && i < u.length - 1) { n /= 1000; i++; }
+  return n.toLocaleString('fr-FR', {maximumFractionDigits: 2}) + ' ' + u[i];
+};
 const machineUsage=id=>{
   const rows=(DEVICES[id]||[]).filter(d=>d.present);
   const cpu=rows.some(d=>d.kind==='cpu'&&d.enabled_for_mining);
@@ -342,7 +349,7 @@ const deviceRows=(m)=>{
     return `<tr class="${d.present?'':'absent'}${masked?' igpu-masked':''}">
       <td><span class="chip ${isCpu?'cpu':'gpu'}">${isCpu?'CPU':'GPU'}</span></td>
       <td><b>${d.model||'inconnu'}</b>${d.integrated?` <span class="chip off" title="GPU intégré au CPU / à la carte mère — jamais miné par défaut">${masked?'intégré, masqué':'intégré'}</span>`:''}${d.present?'':' <span class="chip off">absent</span>'}</td>
-      <td class="mono">${details}</td>
+      <td class="mono">${details}${d.hashrate_hs!=null?' · hashrate '+devHs(d.hashrate_hs):''}</td>
       <td class="mono">${d.pci_bus||'—'}</td>
       <td>${masked?'<span class="mono">—</span>':`<input type="checkbox" class="dev-check" ${d.enabled_for_mining?'checked':''} ${d.present?'':'disabled'} onchange="toggleDevice(${d.id},${m.id},this.checked)" title="Miner avec ce device">`}</td>
       <td>${masked?'<span class="mono">—</span>':`<select onchange="setDeviceRole(${d.id},this.value)" title="Rôle vis-à-vis du token par défaut et du spec mining">

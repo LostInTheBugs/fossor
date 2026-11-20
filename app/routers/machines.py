@@ -367,7 +367,20 @@ def list_machine_devices(
         .order_by(Device.kind.asc(), Device.index.asc())
         .all()
     )
-    return [device_to_dict(d) for d in devices]
+    out = [device_to_dict(d) for d in devices]
+    # Hashrate du dernier relevé, par device : la fiche machine montre le
+    # hashrate **par GPU** d'une unité lancée par Fossor.
+    from app.models import Metric
+
+    for item in out:
+        row = (
+            db.query(Metric.hashrate_hs)
+            .filter(Metric.device_uuid == item["uuid"], Metric.hashrate_hs.isnot(None))
+            .order_by(Metric.id.desc())
+            .first()
+        )
+        item["hashrate_hs"] = float(row[0]) if row and row[0] is not None else None
+    return out
 
 
 @router.post("/{machine_id}/reset-host-key")

@@ -1084,6 +1084,47 @@ async def ssh_miner_api(machine: Any, port: int, actor: str = "system") -> dict[
     return result
 
 
+async def ssh_put_file(machine: Any, local_path: Any, remote_path: str) -> dict[str, Any]:
+    """Envoie un fichier par SFTP, sur la connexion épinglée de la machine.
+
+    Sert quand ``binary_source=fossor`` : Fossor **pousse** lui-même l'archive
+    du mineur (l'athlon n'a aucune route vers le réseau de Fossor, donc
+    ``binary_url`` ne peut pas être utilisé).
+    """
+    from app.secrets import decrypt_secret
+
+    secret = ""
+    if getattr(machine, "secret_ref", None):
+        try:
+            secret = decrypt_secret(machine.secret_ref)
+        except Exception:
+            secret = ""
+    conn, _fingerprint, failure = await open_pinned_connection(
+        host=machine.host,
+        port=machine.ssh_port,
+        username=machine.ssh_user,
+        auth_type=machine.auth_type,
+        secret=secret,
+        pinned_fp=(machine.host_key or "").strip() or None,
+        pinned_public_key=(machine.host_key_public or "").strip() or None,
+        machine_id=machine.id,
+        audit_kind="miner",
+    )
+    if failure is not None:
+        raise RuntimeError(failure.get("error") or "connexion SSH impossible")
+    assert conn is not None  # pas d'échec ⇒ une connexion vivante
+    try:
+        sftp = await conn.start_sftp_client()
+        await sftp.put(str(local_path), remote_path)
+    finally:
+        conn.close()
+        try:
+            await conn.wait_closed()
+        except Exception:  # pragma: no cover - défensif
+            pass
+    return {"ok": True, "remote": remote_path}
+
+
 async def reset_machine_host_key(machine_id: int, actor: str = "system") -> dict[str, Any]:
     """Clear the pinned host key of a machine (admin action)."""
     from app.database import SessionLocal

@@ -124,6 +124,8 @@ td{padding:8px 6px;border-bottom:1px solid #232b37;vertical-align:top}
       <div class="field narrow"><label>Threads CPU</label><input id="fThreads" type="number" min="0" max="1024" value="0"></div>
       <div class="field"><label>Mode d'exécution</label><select id="fMode"><option value="host">host (sur la machine)</option></select>
         <div class="help">vm et hybrid arrivent à l'étape 3c.</div></div>
+      <div class="field narrow"><label><input type="checkbox" id="fGovernor"> Gouverneur CPU performance au démarrage</label>
+        <div class="help">Écrit <code>performance</code> dans scaling_governor avant le lancement (root, échec toléré).</div></div>
       <div class="field narrow"><label><input type="checkbox" id="fEnabled" checked> Actif</label></div>
     </div>
     <div class="actions">
@@ -199,6 +201,7 @@ const openForm=(p)=>{
   $('#fThreads').value=p?p.threads:0;
   $('#fMode').value=p?p.execution_mode:'host';
   $('#fEnabled').checked=p?p.enabled:true;
+  $('#fGovernor').checked=p?!!p.cpu_governor:false;
   $('#formErr').textContent='';
   hint();
   $('#modal').classList.add('open');
@@ -223,7 +226,8 @@ $('#saveBtn').onclick=async()=>{
     wallet_mode:$('#fWalletMode').value,
     binary_source:$('#fBinarySource').value,
     threads:parseInt($('#fThreads').value,10)||0,
-    execution_mode:$('#fMode').value,enabled:$('#fEnabled').checked
+    execution_mode:$('#fMode').value,enabled:$('#fEnabled').checked,
+    cpu_governor:$('#fGovernor').checked
   };
   const r=await api(id?'/api/miner/profiles/'+id:'/api/miner/profiles',
     {method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});

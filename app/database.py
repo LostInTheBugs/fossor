@@ -97,6 +97,8 @@ def _migrate_miner_binary_columns():
     _add_column_if_missing("miner_profiles", "wallet_mode", "wallet_mode VARCHAR(16) NOT NULL DEFAULT 'file'")
     _add_column_if_missing("miner_profiles", "binary_kind", "binary_kind VARCHAR(10) NOT NULL DEFAULT ''")
     _add_column_if_missing("miner_profiles", "worker", "worker VARCHAR(32) NOT NULL DEFAULT ''")
+    # Gouverneur CPU « performance » au démarrage (postmigration athlon).
+    _add_column_if_missing("miner_profiles", "cpu_governor", "cpu_governor BOOLEAN NOT NULL DEFAULT 0")
 
 
 def _migrate_spec_vm_hashrate_columns():

@@ -44,6 +44,7 @@ PROFILE_FIELDS = (
     "execution_mode",
     "threads",
     "worker",
+    "cpu_governor",
     "enabled",
 )
 

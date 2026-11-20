@@ -145,13 +145,14 @@ def precheck_plan(user: str) -> list[Step]:
     return steps
 
 
-def install_plan(profile: dict[str, Any], user: str) -> list[Step]:
+def install_tmp(profile: dict[str, Any]) -> str:
+    """Chemin temporaire de l'archive sur la machine cible."""
+    return f"/tmp/fossor-{profile['sha256'][:12]}.tar.gz"
+
+
+def install_dirs(profile: dict[str, Any], user: str) -> list[Step]:
+    """Dossiers d'installation, d'exécution et de journaux."""
     directory = M.install_dir(profile["software"], profile["version"])
-    tmp = f"/tmp/fossor-{profile['sha256'][:12]}.tar.gz"
-    download = (
-        'if command -v curl >/dev/null 2>&1; then curl -fsSL --max-time 300 -o "$1" "$2"; '
-        'else wget -q -O "$1" "$2"; fi'
-    )
     return [
         Step("dossier du binaire", _sudo(user, "install", "-d", "-m", "0755", directory)),
         Step(
@@ -162,11 +163,14 @@ def install_plan(profile: dict[str, Any], user: str) -> list[Step]:
             "dossier des journaux",
             _sudo(user, "install", "-d", "-m", "0775", "-o", user, "-g", user, M.LOG_DIR),
         ),
-        Step(
-            "téléchargement par la machine cible",
-            _sudo(user, *_sh(download, tmp, profile["binary_url"])),
-            timeout=INSTALL_TIMEOUT,
-        ),
+    ]
+
+
+def install_rest(profile: dict[str, Any], user: str) -> list[Step]:
+    """Contrôle de l'empreinte, extraction, contrôles du binaire, nettoyage."""
+    directory = M.install_dir(profile["software"], profile["version"])
+    tmp = install_tmp(profile)
+    return [
         Step("empreinte de l'archive", _sudo(user, "sha256sum", tmp)),
         Step(
             "extraction",
@@ -177,6 +181,69 @@ def install_plan(profile: dict[str, Any], user: str) -> list[Step]:
         Step("binaire exécutable", _sudo(user, "chmod", "0755", M.binary_path(profile))),
         Step("nettoyage de l'archive", _sudo(user, "rm", "-f", tmp), allow_fail=True),
     ]
+
+
+def install_plan(profile: dict[str, Any], user: str) -> list[Step]:
+    """Dossiers, (téléchargement si URL), extraction et contrôles.
+
+    ``binary_source=fossor`` : **aucun téléchargement** — l'archive est poussée
+    par Fossor lui-même (:func:`push_binary`) avant l'extraction. Une machine
+    sans route vers le réseau de Fossor n'a donc plus besoin de ``binary_url``.
+    """
+    steps = install_dirs(profile, user)
+    if str(profile.get("binary_source") or "url").strip().lower() != "fossor":
+        download = (
+            'if command -v curl >/dev/null 2>&1; then curl -fsSL --max-time 300 -o "$1" "$2"; '
+            'else wget -q -O "$1" "$2"; fi'
+        )
+        steps.append(
+            Step(
+                "téléchargement par la machine cible",
+                _sudo(user, *_sh(download, install_tmp(profile), profile["binary_url"])),
+                timeout=INSTALL_TIMEOUT,
+            )
+        )
+    return steps + install_rest(profile, user)
+
+
+async def _sftp_put(machine: Any, local_path: Any, remote_path: str) -> None:
+    from app.ssh_client import ssh_put_file
+
+    await ssh_put_file(machine, local_path, remote_path)
+
+
+async def push_binary(
+    machine: Any,
+    profile: dict[str, Any],
+    *,
+    user: str,
+    put: Any = None,
+    run: Any = None,
+) -> dict[str, Any]:
+    """Pousse l'archive Fossor par SFTP, puis vérifie son SHA256 à distance.
+
+    L'empreinte locale est revérifiée avant l'envoi, celle de la machine après :
+    une archive qui ne correspond pas est supprimée et l'extraction refusée.
+    """
+    from app import binaries as B
+
+    path, digest = B.verified_path(profile)
+    remote = install_tmp(profile)
+    putter = put if put is not None else _sftp_put
+    await putter(machine, path, remote)
+    runner = run if run is not None else _run
+    result = await runner(machine, Step("empreinte de l'archive", _sudo(user, "sha256sum", remote)))
+    actual = (result.get("stdout", "").split() or [""])[0].strip().lower()
+    if actual != profile["sha256"]:
+        await runner(
+            machine,
+            Step("nettoyage après refus", _sudo(user, "rm", "-f", remote), allow_fail=True),
+        )
+        raise MinerError(
+            "SHA256 différent après envoi — extraction refusée, archive supprimée "
+            f"(attendu {profile['sha256']}, obtenu {actual or 'illisible'})"
+        )
+    return {"pushed": True, "remote": remote, "sha256": digest, "bytes": path.stat().st_size}
 
 
 def cleanup_plan(profile: dict[str, Any], user: str) -> list[Step]:
@@ -419,8 +486,16 @@ async def start(
     if missing:
         raise MinerError(f"outils requis absents sur la machine : {', '.join(missing)}")
 
-    # Install: download, verify *before* extraction, clean up on refusal.
-    for step in install_plan(profile, user):
+    # Install: download (ou push Fossor), verify *before* extraction, clean up.
+    if str(profile.get("binary_source") or "url").strip().lower() == "fossor":
+        for step in install_dirs(profile, user):
+            await _run(machine, step)
+            executed.append(step.command())
+        await push_binary(machine, profile, user=user)
+        install_steps = install_rest(profile, user)
+    else:
+        install_steps = install_plan(profile, user)
+    for step in install_steps:
         result = await _run(machine, step)
         executed.append(step.command())
         if step.title == "empreinte de l'archive":

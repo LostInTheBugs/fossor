@@ -1226,13 +1226,20 @@ def _fail(db: Any, campaign: Any, kind: str, message: str, simulated: bool) -> d
 HASHRATE_REFRESH_S = 60
 
 
-async def refresh_vm_hashrates(db: Any, moment: datetime, simulated: bool) -> list[dict[str, Any]]:
+async def refresh_vm_hashrates(
+    db: Any, moment: datetime, simulated: bool | None = None
+) -> list[dict[str, Any]]:
     """Hashrate d'une campagne ``vm`` : le mineur **dans la VM**, jamais l'hôte.
 
     La sonde de la machine hôte ne voit pas le mineur ; on interroge la VM
     (API du profil, sinon journal) au plus une fois par minute et on enregistre
     le relevé sur ``spec_vms`` — lu par la campagne, le tableau de bord et le Suivi.
+
+    La décision simulation est prise **par machine** (``pilotage.simulated_for``),
+    jamais par le global : deux VM de la même campagne peuvent vivre sur deux
+    hôtes, l'un armé, l'autre non. ``simulated`` ne sert qu'à forcer un appelant.
     """
+    from app import pilotage
     from app.models import Campaign, MinerProfile, SpecVm
     from app.routers.miners import profile_to_dict
     from app.routers.vms import _vm_backend
@@ -1256,7 +1263,10 @@ async def refresh_vm_hashrates(db: Any, moment: datetime, simulated: bool) -> li
             profile = profile_to_dict(found) if found is not None else None
         try:
             machine, backend, model = _vm_backend(db, row)
-            result = await backend.collect(machine, model, row, profile, simulated)
+            row_sim = (
+                pilotage.simulated_for(db, machine) if simulated is None else bool(simulated)
+            )
+            result = await backend.collect(machine, model, row, profile, row_sim)
         except Exception as exc:  # une VM muette ne bloque pas les autres campagnes
             logger.info("hashrate VM %s indisponible : %s", row.name, exc)
             continue
@@ -1271,14 +1281,17 @@ async def refresh_vm_hashrates(db: Any, moment: datetime, simulated: bool) -> li
     return out
 
 
-async def check_vm_liveness(db: Any, moment: datetime, simulated: bool) -> list[dict[str, Any]]:
+async def check_vm_liveness(
+    db: Any, moment: datetime, simulated: bool | None = None
+) -> list[dict[str, Any]]:
     """Contrôle continu : un mineur mort passe la campagne en « mineur arrêté ».
 
-    Une lecture par minute au plus (``SpecVm.updated_at``), et jamais en
-    simulation. Un backend sans sonde de vivacité est ignoré.
+    Une lecture par minute au plus (``SpecVm.updated_at``), et jamais sur une
+    machine simulée — la décision est prise **par machine**
+    (``pilotage.simulated_for``), pas par le global. Un backend sans sonde de
+    vivacité est ignoré.
     """
-    if simulated:
-        return []
+    from app import pilotage
     from app.models import Campaign, MinerProfile, SpecVm
     from app.routers.miners import profile_to_dict
     from app.routers.vms import _vm_backend
@@ -1313,6 +1326,11 @@ async def check_vm_liveness(db: Any, moment: datetime, simulated: bool) -> list[
         profile = profile_to_dict(profile_row)
         try:
             machine, backend, model = _vm_backend(db, row)
+            row_sim = (
+                pilotage.simulated_for(db, machine) if simulated is None else bool(simulated)
+            )
+            if row_sim:
+                continue
             check = getattr(backend, "check_alive", None)
             if check is None:
                 continue
@@ -1378,21 +1396,23 @@ async def tick(
     backend = backend or MinerBackend()
     from app import pilotage as _pilotage
 
-    sim = _pilotage.global_simulation(db) if simulated is None else bool(simulated)
     results: list[dict[str, Any]] = []
     if _LOCK is None:
         _LOCK = asyncio.Lock()
     async with _LOCK:
-        results.extend(await refresh_vm_hashrates(db, moment, sim))
-        results.extend(await check_vm_liveness(db, moment, sim))
+        # La simulation se décide par machine (``pilotage.simulated_for``) :
+        # ``simulated`` ne fait que forcer un appelant (tests, outil).
+        results.extend(await refresh_vm_hashrates(db, moment, simulated))
+        results.extend(await check_vm_liveness(db, moment, simulated))
         for campaign in due_campaigns(db, moment):
             if timeout_s:
                 campaign.restore_timeout_s = int(timeout_s)
             try:
                 from app import pilotage
 
-                # Réel seulement si le global **et** toutes les machines de la
-                # campagne l'autorisent (une cible non armée rend le tout simulé).
+                # Réel seulement si **toutes** les machines de la campagne sont
+                # armées : une cible non armée rend le lot entier simulé, et le
+                # global ne fait que fournir la valeur par défaut des non-armées.
                 camp_sim = (
                     pilotage.campaign_simulated(db, campaign)
                     if simulated is None
