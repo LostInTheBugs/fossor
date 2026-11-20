@@ -98,6 +98,11 @@ def normalize_candidate(raw: Any) -> dict[str, Any]:
         "pour": _string_list(raw.get("pour")),
         "contre": _string_list(raw.get("contre")),
     }
+    # Grille critère par critère (facultative : les analyses importées d'avant
+    # n'en ont pas et restent « non évalué » — rien n'est inventé).
+    criteria = normalize_criteria(raw.get("criteria"))
+    if criteria:
+        candidate["criteria"] = criteria
     age = raw.get("age")
     if age not in (None, ""):
         candidate["age"] = _text(age, 80)
@@ -231,10 +236,11 @@ def fetch_document(url: str) -> Any:
 
 VERDICT_LABELS = {"retenu": "retenu", "surveillance": "surveillance", "rejete": "rejeté"}
 BASE_VERDICTS = ("retenu", "surveillance", "rejete")
+CRITERION_VERDICTS = ("ok", "warn", "ko", "na")
 
 
 def verdict_key(value: Any) -> str:
-    """Clé de verdict stable ; un verdict inconnu garde son propre libellé."""
+    """Clé de verdict stable ; « rejeté » accentué vaut « rejete »."""
     raw = _text(value)
     text = _strip_accents(raw.lower())
     if text.startswith("retenu"):
@@ -246,18 +252,154 @@ def verdict_key(value: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text).strip("-") or "rejete"
 
 
-def token_rows(analyses: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Une ligne par token, agrégée sur toutes les analyses (ordre chronologique)."""
+def normalize_criteria(value: Any) -> list[dict[str, str]]:
+    """``[{key, verdict: ok|warn|ko|na, note}]`` — ordre conservé."""
+    if not isinstance(value, list):
+        return []
+    out: list[dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        key = _norm_key(item.get("key"))
+        if not key:
+            continue
+        verdict = _strip_accents(_text(item.get("verdict"), 20).lower())
+        if verdict not in CRITERION_VERDICTS:
+            verdict = "na"
+        out.append({"key": key, "verdict": verdict, "note": _text(item.get("note"), 500)})
+    return out
+
+
+def _norm_key(value: Any) -> str:
+    """Clé de token : minuscules, accents et ponctuation retirés."""
+    text = _strip_accents(_text(value, 200).lower())
+    return re.sub(r"[^a-z0-9]+", "", text)
+
+
+def _paren_contents(label: str) -> list[str]:
+    return [group for group in re.findall(r"[\(\[](.+?)[\)\]]", label or "") if group.strip()]
+
+
+def _words(label: str) -> set[str]:
+    parts = re.split(r"[^0-9A-Za-z\u00c0-\u024f]+", label or "")
+    return {_norm_key(part) for part in parts if len(_norm_key(part)) >= 3}
+
+
+def candidate_identifiers(candidate: dict[str, Any]) -> dict[str, Any]:
+    """Identifiants d'une évaluation : ticker, nom, contenu de parenthèses, mots.
+
+    « NEX Chain (NEXC) » produit ``nexchain``, ``nexc`` et les mots
+    ``nex``/``chain`` ; « BIG (BigCoin) » produit ``big`` et ``bigcoin``.
+    """
+    label = _text(candidate.get("name"), 200)
+    tickers = {key for key in (_norm_key(candidate.get("ticker")),) if key}
+    inner = {_norm_key(item) for item in _paren_contents(label) if _norm_key(item)}
+    outer = re.sub(r"[\(\[](.+?)[\)\]]", " ", label)
+    name = _norm_key(outer)
+    words = _words(outer)
+    names = ({name} if name else set()) | inner | words
+    tickers |= inner
+    return {
+        "tickers": tickers,
+        # Les mots ne sont *pas* des nœuds du graphe : « chain » ou « coin »
+        # rapprocheraient des tokens sans rapport. Ils servent seulement à
+        # reconnaître un ticker (« BIG » dans « bigcoin big »).
+        "names": ({name} if name else set()) | inner,
+        "words": words,
+        "phrase": name,
+        "all": tickers | ({name} if name else set()) | inner,
+    }
+
+
+class _UnionFind:
+    def __init__(self) -> None:
+        self.parent: dict[str, str] = {}
+
+    def add(self, key: str) -> None:
+        self.parent.setdefault(key, key)
+
+    def find(self, key: str) -> str:
+        self.add(key)
+        root = key
+        while self.parent[root] != root:
+            root = self.parent[root]
+        while self.parent[key] != root:
+            self.parent[key], key = root, self.parent[key]
+        return root
+
+    def union(self, left: str, right: str, blocked: set[frozenset[str]] | None = None) -> None:
+        if not left or not right:
+            return
+        if blocked and frozenset((left, right)) in blocked:
+            return
+        left_root, right_root = self.find(left), self.find(right)
+        if left_root != right_root:
+            self.parent[right_root] = left_root
+
+
+def token_groups(
+    analyses: list[dict[str, Any]], aliases: list[dict[str, str]] | None = None
+) -> _UnionFind:
+    """Graphe des identifiants : heuristique ticker ↔ nom, puis alias manuels.
+
+    Un alias ``split`` bloque le lien direct entre deux identifiants ; un alias
+    ``merge`` en ajoute un.  Un composant = un token.
+    """
+    entries = list(aliases or [])
+    blocked = {
+        frozenset((_norm_key(item.get("canonical")), _norm_key(item.get("member"))))
+        for item in entries
+        if str(item.get("mode") or "merge") == "split"
+    }
+    uf = _UnionFind()
+    tickers: set[str] = set()
+    phrases: list[tuple[str, set[str]]] = []
+    for analysis in analyses:
+        for candidate in analysis.get("candidates") or []:
+            ids = candidate_identifiers(candidate)
+            for key in ids["all"]:
+                uf.add(key)
+                uf.union(sorted(ids["all"])[0], key, blocked)
+            tickers |= ids["tickers"]
+            if ids["phrase"]:
+                phrases.append((ids["phrase"], ids["words"]))
+    # Heuristique : un ticker qui est le nom (ou un mot du nom) d'une autre
+    # évaluation désigne le même token ; de même pour un préfixe de nom
+    # (NEXC → NEXCHAIN, BIG → BIGCOIN), jamais en deçà de trois caractères.
+    for ticker in tickers:
+        for phrase, words in phrases:
+            if ticker == phrase or (len(ticker) >= 3 and ticker in words):
+                # Correspondance exacte ticker ↔ nom, ou ticker présent comme
+                # mot du nom (« bigcoin big »). Aucun préfixe : KPOWBIT ne doit
+                # pas absorber KPOW ; les cas BIG/NEX/KSH passent par les
+                # parenthèses de l'évaluation elle-même.
+                uf.union(ticker, phrase, blocked)
+    for item in entries:
+        if str(item.get("mode") or "merge") == "split":
+            continue
+        canonical = _norm_key(item.get("canonical"))
+        member = _norm_key(item.get("member"))
+        if canonical and member and canonical != member:
+            uf.union(canonical, member)
+    return uf
+
+
+def token_rows(
+    analyses: list[dict[str, Any]], aliases: list[dict[str, str]] | None = None
+) -> list[dict[str, Any]]:
+    """Une ligne par token regroupé, agrégée sur toutes les analyses."""
     rows: dict[str, dict[str, Any]] = {}
+    uf = token_groups(analyses, aliases)
     ordered = sorted(enumerate(analyses), key=lambda item: (item[1].get("ts") or "", item[0]))
     for _index, analysis in ordered:
         ts = _text(analysis.get("ts"), 40)
         for candidate in analysis.get("candidates") or []:
+            ids = candidate_identifiers(candidate)
+            if not ids["all"]:
+                continue
+            key = uf.find(sorted(ids["tickers"])[0] if ids["tickers"] else ids["phrase"])
             ticker = _text(candidate.get("ticker"), 20).upper()
             name = _text(candidate.get("name"), 200)
-            key = ticker or _strip_accents(name.lower())
-            if not key:
-                continue
             row = rows.get(key)
             if row is None:
                 row = rows[key] = {
@@ -285,6 +427,7 @@ def token_rows(analyses: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "age": _text(candidate.get("age"), 80),
                 "pour": _string_list(candidate.get("pour")),
                 "contre": _string_list(candidate.get("contre")),
+                "criteria": normalize_criteria(candidate.get("criteria")),
             }
             for link in _string_list(candidate.get("links")):
                 if link not in row["links"]:

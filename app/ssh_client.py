@@ -163,6 +163,9 @@ WHITELISTED_COMMANDS: dict[str, str] = {
         "|| wget -qO- -T 5 http://127.0.0.1:{port}/ 2>/dev/null "
         "|| exit 0"
     ),
+    # Empreinte du binaire **déjà installé** sur la machine (adoption, §4.5).
+    # {path} est validé avant formatage : jamais de métacaractère shell.
+    "binary_sha256": "sha256sum -- '{path}' 2>/dev/null; exit 0",
 }
 
 
@@ -1123,6 +1126,71 @@ async def ssh_put_file(machine: Any, local_path: Any, remote_path: str) -> dict[
         except Exception:  # pragma: no cover - défensif
             pass
     return {"ok": True, "remote": remote_path}
+
+
+def _safe_install_path(path: str) -> str:
+    """Chemin sous le dossier d'installation uniquement, sans métacaractère."""
+    root = "/opt/fossor/miners/"
+    text = str(path or "").strip()
+    if not text.startswith(root) or ".." in text:
+        raise ValueError("chemin hors du dossier d'installation Fossor")
+    if any(char in text for char in "'\"`$;&|<>\\\n\r"):
+        raise ValueError("chemin d'installation invalide")
+    return text
+
+
+async def ssh_binary_sha256(machine: Any, path: str, actor: str = "system") -> dict[str, Any]:
+    """Lit le SHA256 du binaire installé, sans rien écrire sur la machine."""
+    safe = _safe_install_path(path)
+    return await _run_whitelisted(
+        host=machine.host,
+        port=machine.ssh_port,
+        username=machine.ssh_user,
+        secret=_machine_secret(machine),
+        auth_type=machine.auth_type,
+        pinned_fp=(getattr(machine, "host_key", None) or "").strip() or None,
+        pinned_public_key=(getattr(machine, "host_key_public", None) or "").strip() or None,
+        command=WHITELISTED_COMMANDS["binary_sha256"].format(path=safe),
+        machine_id=machine.id,
+        audit_kind="binary",
+        actor=actor,
+    )
+
+
+async def ssh_get_file(machine: Any, remote_path: str, local_path: Any) -> dict[str, Any]:
+    """Récupère un fichier par SFTP (import du binaire installé, §4.5)."""
+    from app.secrets import decrypt_secret
+
+    secret = ""
+    if getattr(machine, "secret_ref", None):
+        try:
+            secret = decrypt_secret(machine.secret_ref)
+        except Exception:
+            secret = ""
+    conn, _fingerprint, failure = await open_pinned_connection(
+        host=machine.host,
+        port=machine.ssh_port,
+        username=machine.ssh_user,
+        auth_type=machine.auth_type,
+        secret=secret,
+        pinned_fp=(machine.host_key or "").strip() or None,
+        pinned_public_key=(machine.host_key_public or "").strip() or None,
+        machine_id=machine.id,
+        audit_kind="binary",
+    )
+    if failure is not None:
+        raise RuntimeError(failure.get("error") or "connexion SSH impossible")
+    assert conn is not None
+    try:
+        sftp = await conn.start_sftp_client()
+        await sftp.get(str(remote_path), str(local_path))
+    finally:
+        conn.close()
+        try:
+            await conn.wait_closed()
+        except Exception:  # pragma: no cover - défensif
+            pass
+    return {"ok": True, "remote": remote_path, "local": str(local_path)}
 
 
 async def reset_machine_host_key(machine_id: int, actor: str = "system") -> dict[str, Any]:

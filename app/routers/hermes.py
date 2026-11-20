@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app import analyses as A
 from app import campaign_runner as RUN
+from app import criteria as CRIT
 from app import rules as R
 from app.database import get_db
 from app.dependencies import require_hermes_token
@@ -114,6 +115,8 @@ def context(db: Session = Depends(get_db), _actor: str = Depends(require_hermes_
     )
     catalogue = db.query(Coin).order_by(Coin.ticker).limit(500).all()
     last = db.query(Analysis).order_by(Analysis.ts.desc(), Analysis.id.desc()).first()
+    criteria_rule = next((rule for rule in rules if rule.id == "criteria"), None)
+    criteria = CRIT.criteria_block(db, criteria_rule.params if criteria_rule else None)
 
     return {
         "service": "fossor",
@@ -156,6 +159,8 @@ def context(db: Session = Depends(get_db), _actor: str = Depends(require_hermes_
             for profile in db.query(MinerProfile).order_by(MinerProfile.name).limit(200).all()
         ],
         "capacity": R.free_capacity(db),
+        # Critères qualitatifs de Fred : la veille lit CE bloc, pas un skill.
+        "criteria": criteria,
         "last_analysis": A.analysis_to_dict(last) if last is not None else None,
         "limits": {
             "read": ["rules", "campaigns", "catalogue", "capacity", "last_analysis"],

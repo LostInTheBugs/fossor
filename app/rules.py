@@ -68,8 +68,44 @@ class CpuOnlyVmParams(BaseModel):
 class AutoLaunchParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    gpu: bool = Field(False, description="Lancer une campagne GPU dès qu'un token est retenu")
-    cpu: bool = Field(False, description="Lancer une campagne CPU dès qu'un token est retenu")
+    gpu: bool = Field(True, description="Lancer une campagne GPU dès qu'un token est retenu")
+    cpu: bool = Field(True, description="Lancer une campagne CPU dès qu'un token est retenu")
+
+
+class CriterionParams(BaseModel):
+    """Un critère d'évaluation : libellé, texte de Fred, lien éventuel."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: str = Field(min_length=1, max_length=40)
+    label: str = Field(min_length=1, max_length=120)
+    text: str = Field("", max_length=2000)
+    linked_rule: str = Field("", max_length=40)
+    computed: str = Field("", max_length=40)
+
+
+def _default_criteria() -> list[CriterionParams]:
+    from app.criteria import DEFAULT_CRITERIA
+
+    return [CriterionParams(**item) for item in DEFAULT_CRITERIA]
+
+
+def _default_list(name: str) -> list[str]:
+    from app import criteria as C
+
+    return list(getattr(C, name))
+
+
+class CriteriaParams(BaseModel):
+    """Critères qualitatifs de Fred : ordre conservé, tout est éditable."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    criteria: list[CriterionParams] = Field(default_factory=_default_criteria, min_length=1)
+    nuances: list[str] = Field(default_factory=lambda: _default_list("DEFAULT_NUANCES"))
+    bonuses: list[str] = Field(default_factory=lambda: _default_list("DEFAULT_BONUSES"))
+    pour: list[str] = Field(default_factory=lambda: _default_list("DEFAULT_POUR"))
+    contre: list[str] = Field(default_factory=lambda: _default_list("DEFAULT_CONTRE"))
 
 
 class GpuDurationParams(BaseModel):
@@ -160,10 +196,20 @@ RULE_SPECS: tuple[dict[str, Any], ...] = (
         "model": CpuOnlyVmParams,
     },
     {
+        "id": "criteria",
+        "name": "Critères d'évaluation",
+        "description": "Critères qualitatifs de Fred, dans l'ordre : fenêtre, utilité, équipe, "
+        "intuition, compatibilité GPU calculée sur l'inventaire réel.",
+        "scope": "selection",
+        "enabled": True,
+        "model": CriteriaParams,
+    },
+    {
         "id": "auto_launch",
         "name": "Lancement auto si « retenu »",
-        "description": "GPU et CPU séparément, désactivés par défaut. Actif : une proposition "
-        "validée est lancée sans approbation sur des devices autorisés, sauf machine en simulation.",
+        "description": "GPU ET CPU (les deux activés par défaut, règle désactivée). Actif : une "
+        "proposition validée est lancée sans approbation sur des devices autorisés, sauf machine "
+        "en simulation.",
         "scope": "launch",
         "enabled": False,
         "model": AutoLaunchParams,

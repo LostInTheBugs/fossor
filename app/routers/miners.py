@@ -153,12 +153,23 @@ def _require_pilotable(machine: Machine) -> None:
 # ── Settings ──────────────────────────────────────────────────────────
 @router.get("/miner/settings")
 def read_miner_settings(db: Session = Depends(get_db), _user=Depends(require_login)):
+    from app import pilotage as PIL
+
     profiles = db.query(MinerProfile).order_by(MinerProfile.name.asc()).all()
+    machines = PIL.pilotable_machines(db)
+    armed = [machine.name for machine in machines if PIL.machine_armed(machine)]
+    simulated = [machine.name for machine in machines if not PIL.machine_armed(machine)]
     return {
         "simulation": simulation_enabled(db),
         "confirm_word": CONFIRM_WORD,
         "default_profile_id": default_profile_id(db),
         "meaning": "valeur par défaut des machines non armées",
+        "pilotage": {
+            "armed": armed,
+            "simulated": simulated,
+            "all_simulated": not armed,
+            "all_armed": bool(machines) and not simulated,
+        },
         "profiles": [profile_to_dict(p) for p in profiles],
     }
 
@@ -254,6 +265,56 @@ async def upload_profile_binary(
     _audit(db, None, "miner-profile-binary", "ok",
            f"{profile.name} : {saved['size']} octets, sha256 {saved['sha256']}")
     return {"profile_id": profile.id, **saved}
+
+
+@router.get("/miner/profiles/{profile_id}/installations")
+def list_profile_installations(
+    profile_id: int, db: Session = Depends(get_db), _user=Depends(require_login)
+):
+    from app import installations as I
+
+    profile = _get_profile(db, profile_id)
+    return {"profile_id": profile.id, "installations": I.installations(db, profile.id)}
+
+
+@router.post("/miner/profiles/{profile_id}/adopt")
+async def adopt_profile_binary(
+    profile_id: int, data: dict, db: Session = Depends(get_db), user=Depends(require_login)
+):
+    """Adopte le binaire déjà installé : SHA256 lu à distance, comparé, aucun envoi."""
+    from app import installations as I
+    from app.models import Machine
+
+    profile = _get_profile(db, profile_id)
+    machine = db.get(Machine, int(data.get("machine_id") or 0))
+    if machine is None:
+        raise HTTPException(status_code=404, detail="Machine introuvable")
+    try:
+        result = await I.adopt(db, profile, machine, actor=user)
+    except I.InstallError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _audit(db, None, "adopt", "ok", f"{profile.name} · {machine.name} · sha256 {result['sha256']}")
+    return result
+
+
+@router.post("/miner/profiles/{profile_id}/binary/import")
+async def import_profile_binary(
+    profile_id: int, data: dict, db: Session = Depends(get_db), user=Depends(require_login)
+):
+    """Importe dans Fossor le binaire installé sur une machine (SFTP + SHA256)."""
+    from app import installations as I
+    from app.models import Machine
+
+    profile = _get_profile(db, profile_id)
+    machine = db.get(Machine, int(data.get("machine_id") or 0))
+    if machine is None:
+        raise HTTPException(status_code=404, detail="Machine introuvable")
+    try:
+        result = await I.import_from_machine(db, profile, machine, actor=user)
+    except I.InstallError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _audit(db, None, "binary-import", "ok", f"{profile.name} · {machine.name} · {result['size']} octets")
+    return result
 
 
 @router.get("/miner/profiles/{profile_id}/binary")

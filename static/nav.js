@@ -34,19 +34,41 @@
     mount.appendChild(link);
   });
 
-  /* §5.7 — bandeau permanent tant que la simulation est active. */
-  function banner() {
-    if (document.getElementById("simBanner")) { return; }
+  /* §5.7 — bandeau : il dit la vérité du parc, machine armée comprise. */
+  function banner(text, real) {
+    var existing = document.getElementById("simBanner");
+    if (existing) {
+      existing.textContent = text;
+      existing.style.background = real ? "#1a3a2a" : "#3a2f1a";
+      existing.style.color = real ? "#9fe0b4" : "#f0c674";
+      existing.style.borderBottomColor = real ? "#3fb950" : "#d29922";
+      return;
+    }
     var bar = document.createElement("div");
     bar.id = "simBanner";
     bar.setAttribute("role", "status");
     bar.style.cssText =
-      "position:sticky;top:0;z-index:150;background:#3a2f1a;color:#f0c674;" +
-      "border-bottom:1px solid #d29922;padding:7px 16px;font:600 12.5px/1.4 " +
+      "position:sticky;top:0;z-index:150;padding:7px 16px;font:600 12.5px/1.4 " +
       "'Segoe UI',system-ui,sans-serif;text-align:center";
-    bar.textContent =
-      "Simulation : aucune commande n'est exécutée — les actions de pilotage renvoient la liste des commandes.";
+    bar.textContent = text;
+    bar.style.background = real ? "#1a3a2a" : "#3a2f1a";
+    bar.style.color = real ? "#9fe0b4" : "#f0c674";
+    bar.style.borderBottom = "1px solid " + (real ? "#3fb950" : "#d29922");
     document.body.insertBefore(bar, document.body.firstChild);
+  }
+
+  function pilotageBanner(data) {
+    var pilotage = (data && data.pilotage) || {};
+    var armed = pilotage.armed || [];
+    if (pilotage.all_simulated || !armed.length) {
+      banner("Simulation sur toutes les machines — aucune commande n'est exécutée.");
+      return;
+    }
+    if (pilotage.all_armed) {
+      banner("Pilotage réel : toutes les machines (" + armed.join(" · ") + ").", true);
+      return;
+    }
+    banner("Pilotage réel : " + armed.join(" · ") + " · les autres machines sont simulées.", true);
   }
 
   /* Préprod — bandeau discret quand l'authentification est coupée. */
@@ -66,7 +88,10 @@
   fetch("/api/miner/settings", { credentials: "same-origin" })
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (data) {
-      if (data && data.simulation === true) { banner(); }
+      if (data && data.pilotage) { pilotageBanner(data); }
+      else if (data && data.simulation === true) {
+        banner("Simulation sur toutes les machines — aucune commande n'est exécutée.");
+      }
     })
     .catch(function () { /* page sans API : pas de bandeau */ });
 

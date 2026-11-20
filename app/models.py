@@ -740,6 +740,42 @@ class RuleChange(Base):
     after: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
+class TokenAlias(Base):
+    """Alias manuel entre deux identifiants de token (§4.9).
+
+    ``mode=merge`` relie deux identifiants (fusion), ``mode=split`` bloque le
+    lien direct (séparation) que l'heuristique aurait fait.  Toute écriture est
+    auditée : c'est une décision de Fred, pas une devinette.
+    """
+
+    __tablename__ = "token_aliases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    canonical: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    member: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    mode: Mapped[str] = mapped_column(String(10), default="merge", server_default="merge")
+    actor: Mapped[str] = mapped_column(String(40), default="fred", server_default="fred")
+    created_at: Mapped[str] = mapped_column(
+        String(30), default=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+
+class ProfileInstallation(Base):
+    """Binaire d'un profil déjà installé sur une machine (adoption, §4.5)."""
+
+    __tablename__ = "profile_installations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    profile_id: Mapped[int] = mapped_column(ForeignKey("miner_profiles.id"), nullable=False, index=True)
+    machine_id: Mapped[int] = mapped_column(ForeignKey("machines.id"), nullable=False, index=True)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    path: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    source: Mapped[str] = mapped_column(String(20), default="adopted", server_default="adopted")
+    created_at: Mapped[str] = mapped_column(
+        String(30), default=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+
 class Analysis(Base):
     """Analyse de veille écrite par Hermes ou importée (§4.9).
 

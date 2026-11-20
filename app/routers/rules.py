@@ -21,7 +21,7 @@ from app import analyses as A
 from app import rules as R
 from app.database import get_db
 from app.dependencies import require_login
-from app.models import Analysis, AuditLog, Rule, RuleChange
+from app.models import Analysis, AuditLog, Rule, RuleChange, TokenAlias
 
 router = APIRouter(prefix="/api", tags=["rules"])
 
@@ -165,7 +165,7 @@ def token_table(
 ):
     """Tableau « Tokens évalués » : une ligne par token, agrégée sur toutes les analyses."""
     rows = db.query(Analysis).order_by(Analysis.ts.asc(), Analysis.id.asc()).all()
-    tokens = A.token_rows([A.analysis_to_dict(row) for row in rows])
+    tokens = A.token_rows([A.analysis_to_dict(row) for row in rows], _aliases(db))
     selected = [item.strip() for item in verdicts.split(",") if item.strip()]
     filtered = A.filter_token_rows(tokens, selected, q)
     return {
@@ -175,6 +175,72 @@ def token_table(
         "evaluations": sum(row["evaluations"] for row in tokens),
         "verdicts": A.verdict_catalog(tokens),
     }
+
+
+def _aliases(db: Session) -> list[dict]:
+    return [
+        {"id": row.id, "canonical": row.canonical, "member": row.member, "mode": row.mode,
+         "actor": row.actor, "created_at": row.created_at}
+        for row in db.query(TokenAlias).order_by(TokenAlias.id).all()
+    ]
+
+
+@router.get("/analyses/aliases")
+def list_token_aliases(db: Session = Depends(get_db), _user=Depends(require_login)):
+    """Table d'alias éditable : fusions et séparations manuelles, auditées."""
+    return {"aliases": _aliases(db)}
+
+
+@router.post("/analyses/aliases", status_code=201)
+def create_token_alias(
+    data: dict, db: Session = Depends(get_db), user=Depends(require_login)
+):
+    canonical = A._norm_key(data.get("canonical"))
+    member = A._norm_key(data.get("member"))
+    mode = str(data.get("mode") or "merge").strip().lower()
+    if mode not in ("merge", "split"):
+        raise HTTPException(status_code=422, detail="mode : merge ou split attendu")
+    if not canonical or not member:
+        raise HTTPException(status_code=422, detail="deux identifiants de token sont requis")
+    if canonical == member:
+        raise HTTPException(status_code=422, detail="les deux identifiants sont identiques")
+    row = (
+        db.query(TokenAlias)
+        .filter(TokenAlias.canonical == canonical, TokenAlias.member == member)
+        .first()
+    )
+    before = {"mode": row.mode if row else None}
+    if row is None:
+        row = TokenAlias(canonical=canonical, member=member, mode=mode, actor=(user or "fred")[:40])
+        db.add(row)
+    else:
+        row.mode = mode
+        row.actor = (user or "fred")[:40]
+    db.commit()
+    db.refresh(row)
+    _audit(
+        db,
+        user,
+        "alias token",
+        f"alias:{row.id}",
+        "ok",
+        f"{canonical} ↔ {member} : {before['mode'] or 'absent'} → {mode}",
+    )
+    return {"alias": {"id": row.id, "canonical": row.canonical, "member": row.member, "mode": row.mode}}
+
+
+@router.delete("/analyses/aliases/{alias_id}")
+def delete_token_alias(
+    alias_id: int, db: Session = Depends(get_db), user=Depends(require_login)
+):
+    row = db.get(TokenAlias, alias_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Alias introuvable")
+    label = f"{row.canonical} ↔ {row.member} ({row.mode})"
+    db.delete(row)
+    db.commit()
+    _audit(db, user, "alias token supprimé", f"alias:{alias_id}", "ok", label)
+    return {"deleted": True, "id": alias_id}
 
 
 @router.get("/analyses/{analysis_id}")

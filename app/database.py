@@ -61,6 +61,38 @@ def get_db():
 
 
 
+def _migrate_auto_launch_defaults():
+    """auto_launch : GPU ET CPU par défaut, règle toujours livrée désactivée.
+
+    La règle existante garde son état (Fred décide de l'activer) ; seuls la
+    description et les deux drapeaux par défaut sont réalignés.
+    """
+    from app.models import Rule
+    from app.rules import RULE_BY_ID
+
+    spec = RULE_BY_ID.get("auto_launch")
+    if spec is None:
+        return
+    with SessionLocal() as db:
+        rule = db.get(Rule, "auto_launch")
+        if rule is None:
+            return
+        changed = False
+        if (rule.description or "") != spec["description"]:
+            rule.description = spec["description"]
+            changed = True
+        params = dict(rule.params or {})
+        if params.get("gpu") is not True:
+            params["gpu"] = True
+            changed = True
+        if params.get("cpu") is not True:
+            params["cpu"] = True
+            changed = True
+        if changed:
+            rule.params = params
+            db.commit()
+
+
 def _migrate_asic_login() -> None:
     """Colonnes de connexion IceRiver (§4.20, 2026.11.008)."""
     wanted = {
@@ -127,6 +159,7 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     _ensure_admin()
     _seed_rules()
+    _migrate_auto_launch_defaults()
     _migrate_host_key_public_column()
     _migrate_machine_uuid_column()
     _migrate_device_integrated_column()

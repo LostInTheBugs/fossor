@@ -107,11 +107,12 @@ def proposal_body(device, profile, **overrides):
 
 # ── Schémas et règles par défaut ──────────────────────────────────────
 def test_default_rules_match_spec_table():
-    assert len(R.RULE_SPECS) == 12
+    assert len(R.RULE_SPECS) == 13
     assert {spec["id"] for spec in R.RULE_SPECS} == {
         "freshness",
         "exclude_asic_only",
         "cpu_only_vm",
+        "criteria",
         "auto_launch",
         "gpu_duration",
         "cpu_duration",
@@ -154,9 +155,9 @@ def test_invalid_params_rejected_with_field_name():
 def test_seed_rules_is_idempotent():
     db = SessionLocal()
     try:
-        assert db.query(Rule).count() == 12
+        assert db.query(Rule).count() == 13
         assert R.seed_rules(db) == 0
-        assert db.query(Rule).count() == 12
+        assert db.query(Rule).count() == 13
     finally:
         db.close()
 

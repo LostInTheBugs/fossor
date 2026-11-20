@@ -78,6 +78,21 @@ td{padding:8px 6px;border-bottom:1px solid #232b37;vertical-align:top}
     </tr></thead><tbody id="body"></tbody></table></div>
     <div id="emptyMsg" class="empty" style="display:none">Aucun profil : créez-en un (ex. Pearl / SRBMiner).</div>
   </div>
+
+  <div class="card">
+    <h2>Binaires déjà installés</h2>
+    <div class="sub">Adopter : Fossor lit le SHA256 du binaire présent sur la machine et le compare à celui du profil — identique, le profil est marqué installé, sans réinstallation. Importer : le binaire est récupéré par SFTP dans Fossor (SHA256 vérifié), pour l'installer ailleurs.</div>
+    <div class="field-row" style="margin-top:10px">
+      <div class="field"><label>Profil</label><select id="binProfile"></select></div>
+      <div class="field"><label>Machine</label><select id="binMachine"></select></div>
+    </div>
+    <div class="actions" style="margin-top:10px">
+      <button class="btn" id="adoptBtn">Adopter le binaire installé</button>
+      <button class="btn outline" id="importBinBtn">Téléverser dans Fossor</button>
+      <span class="help" id="binState"></span>
+    </div>
+    <div id="binInstalls" class="sub" style="margin-top:8px"></div>
+  </div>
 </div>
 
 <div class="modal" id="modal">
@@ -266,11 +281,46 @@ const setDefault=async(id)=>{
   if(r&&r.ok){toast('Token par défaut mis à jour');await load();}
 };
 
+const loadBinaries=async()=>{
+  const [p,m]=await Promise.all([api('/api/miner/profiles'),api('/api/machines')]);
+  const profiles=(p&&p.ok)?await p.json():[];
+  const machines=(m&&m.ok)?await m.json():[];
+  const ps=$('#binProfile'), ms=$('#binMachine');
+  if(!ps||!ms)return;
+  ps.innerHTML=profiles.map(x=>`<option value="${x.id}">${x.name} — ${x.coin}</option>`).join('');
+  ms.innerHTML=machines.filter(x=>x.machine_kind!=='asic').map(x=>`<option value="${x.id}">${x.name}</option>`).join('');
+  if(ps.value)await showInstalls();
+};
+const showInstalls=async()=>{
+  const id=$('#binProfile').value;
+  if(!id)return;
+  const r=await api('/api/miner/profiles/'+id+'/installations');
+  if(!r||!r.ok)return;
+  const data=await r.json();
+  $('#binInstalls').innerHTML=(data.installations||[]).map(i=>
+    `<div>${i.machine} · ${i.source} · ${i.sha256.slice(0,12)}… · ${i.path}</div>`).join('')
+    ||'Aucune installation adoptée pour ce profil.';
+};
+const binAction=async(path,label)=>{
+  const profile=$('#binProfile').value, machine=$('#binMachine').value;
+  if(!profile||!machine){toast('Profil et machine requis');return;}
+  $('#binState').textContent=label+'…';
+  const r=await api(path.replace('{id}',profile),{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({machine_id:Number(machine)})});
+  const data=r?await r.json().catch(()=>({})):{};
+  if(r&&r.ok){toast(label+' : OK');$('#binState').textContent='';await showInstalls();}
+  else{$('#binState').textContent=(data&&data.detail)||'Échec';}
+};
+$('#adoptBtn').onclick=()=>binAction('/api/miner/profiles/{id}/adopt','Adoption');
+$('#importBinBtn').onclick=()=>binAction('/api/miner/profiles/{id}/binary/import','Import');
+$('#binProfile').onchange=showInstalls;
+
 $('#logoutBtn').onclick=async()=>{
   await fetch('/api/logout',{method:'POST',credentials:'include'});
   location.href='/';
 };
 load();
+loadBinaries();
 </script>
 </body>
 </html>

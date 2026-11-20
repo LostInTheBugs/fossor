@@ -146,8 +146,10 @@ def precheck_plan(user: str) -> list[Step]:
 
 
 def install_tmp(profile: dict[str, Any]) -> str:
-    """Chemin temporaire de l'archive sur la machine cible."""
-    return f"/tmp/fossor-{profile['sha256'][:12]}.tar.gz"
+    """Chemin temporaire de l'archive (ou du binaire ELF) sur la machine cible."""
+    kind = str(profile.get("binary_kind") or "tar.gz").strip().lower()
+    suffix = {"elf": "bin", "zip": "zip", "tar.xz": "tar.xz"}.get(kind, "tar.gz")
+    return f"/tmp/fossor-{profile['sha256'][:12]}.{suffix}"
 
 
 def install_dirs(profile: dict[str, Any], user: str) -> list[Step]:
@@ -167,20 +169,34 @@ def install_dirs(profile: dict[str, Any], user: str) -> list[Step]:
 
 
 def install_rest(profile: dict[str, Any], user: str) -> list[Step]:
-    """Contrôle de l'empreinte, extraction, contrôles du binaire, nettoyage."""
+    """Contrôle de l'empreinte, extraction (ou copie ELF), contrôles, nettoyage."""
     directory = M.install_dir(profile["software"], profile["version"])
     tmp = install_tmp(profile)
-    return [
-        Step("empreinte de l'archive", _sudo(user, "sha256sum", tmp)),
-        Step(
-            "extraction",
-            _sudo(user, "tar", "-xzf", tmp, "-C", directory),
-            timeout=INSTALL_TIMEOUT,
-        ),
+    kind = str(profile.get("binary_kind") or "tar.gz").strip().lower()
+    steps = [Step("empreinte de l'archive", _sudo(user, "sha256sum", tmp))]
+    if kind == "elf":
+        # Binaire ELF brut : installé tel quel, aucune extraction.
+        steps.append(
+            Step("binaire ELF installé tel quel", _sudo(user, "install", "-m", "0755", tmp, M.binary_path(profile)))
+        )
+    elif kind == "zip":
+        steps.append(
+            Step(
+                "extraction (zip)",
+                _sudo(user, "python3", "-m", "zipfile", "-e", tmp, directory),
+                timeout=INSTALL_TIMEOUT,
+            )
+        )
+    else:
+        steps.append(
+            Step("extraction", _sudo(user, "tar", "-xf", tmp, "-C", directory), timeout=INSTALL_TIMEOUT)
+        )
+    steps += [
         Step("binaire présent", _sudo(user, "test", "-f", M.binary_path(profile))),
         Step("binaire exécutable", _sudo(user, "chmod", "0755", M.binary_path(profile))),
         Step("nettoyage de l'archive", _sudo(user, "rm", "-f", tmp), allow_fail=True),
     ]
+    return steps
 
 
 def install_plan(profile: dict[str, Any], user: str) -> list[Step]:
@@ -247,7 +263,7 @@ async def push_binary(
 
 
 def cleanup_plan(profile: dict[str, Any], user: str) -> list[Step]:
-    tmp = f"/tmp/fossor-{profile['sha256'][:12]}.tar.gz"
+    tmp = install_tmp(profile)
     return [Step("nettoyage après refus", _sudo(user, "rm", "-f", tmp), allow_fail=True)]
 
 

@@ -72,7 +72,7 @@ async def test_profiles_screen_and_miner_panel(e2e_server):
 
         # 1. Bandeau simulation permanent, dès le tableau de bord.
         await page.wait_for_selector("#simBanner", state="visible", timeout=10000)
-        assert "Simulation : aucune commande n'est exécutée" in await page.inner_text("#simBanner")
+        assert "Simulation sur toutes les machines" in await page.inner_text("#simBanner")
 
         # 2. Écran Profils : création par le formulaire, refus d'un wallet injecté.
         await page.goto(E2E_URL + "/profiles", wait_until="domcontentloaded", timeout=15000)
