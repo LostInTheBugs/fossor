@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from app.database import init_db
 from app.auth import router as auth_router
+from app.routers.security import router as security_router
 from app.routers.machines import router as machines_router
 from app.routers.hiveos import router as hiveos_router, router_settings as hiveos_settings_router
 from app.routers.audit import router as audit_router
@@ -42,6 +43,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(auth_router)
+app.include_router(security_router)
 app.include_router(machines_router)
 app.include_router(hiveos_router)
 app.include_router(hiveos_settings_router)
@@ -148,6 +150,17 @@ async def startup():
     # §4.7 : planificateur des campagnes (même processus, une seule boucle).
     from app import campaign_runner
     campaign_runner.start()
+    # Préprod : niveau de journalisation choisi en Configuration → Journal,
+    # puis une sauvegarde au démarrage et toutes les six heures.
+    from app import observability
+    from app.database import SessionLocal as _SessionLocal
+
+    _db = _SessionLocal()
+    try:
+        observability.apply_logging(observability.get_log_level(_db))
+    finally:
+        _db.close()
+    observability.start_backup()
 
 
 @app.get("/", response_class=HTMLResponse)

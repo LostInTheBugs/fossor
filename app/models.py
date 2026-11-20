@@ -94,6 +94,11 @@ class Machine(Base):
     # §4.17 : machine qui héberge Fossor — aucune coupure d'alimentation permise.
     fossor_host: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Préprod : la machine accepte le pilotage réel (« PILOTER ») quand le
+    # global sera passé en réel.  0 = simulation héritée du global.
+    simulation_disabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0"
+    )
     # §4.15: CPU and platform power are typed in by the operator (no sensor).
     cpu_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
     platform_power_w: Mapped[float] = mapped_column(Float, default=50.0)

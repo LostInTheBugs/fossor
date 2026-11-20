@@ -27,7 +27,7 @@ import ipaddress
 import json
 import re
 from typing import Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlparse, urlsplit
 
 from app import asic
 
@@ -285,19 +285,67 @@ def _login_target_refused(location: str) -> bool:
     return any(marker in lowered for marker in LOGIN_REFUSAL_MARKERS)
 
 
+# ── Login « comme le navigateur » : en-têtes et trace ─────────────────
+def _login_headers(base: str) -> dict[str, str]:
+    """En-têtes du ``$.ajax`` du panneau IceRiver (mêmes valeurs que le navigateur)."""
+    parsed = urlparse(base)
+    host = parsed.netloc or parsed.path
+    scheme = parsed.scheme or "https"
+    return {
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Referer": f"{scheme}://{host}/user/loginpage",
+        "Origin": f"{scheme}://{host}",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+    }
+
+
+def _cookie_presence(session: _Session) -> str:
+    """Présence du cookie ``esp-app`` — jamais sa valeur."""
+    try:
+        holder = getattr(session, "client", None) or session
+        jar = getattr(getattr(holder, "cookies", None), "jar", None)
+        names = [getattr(cookie, "name", "") for cookie in (jar or [])]
+    except Exception:  # pragma: no cover - bocal exotique
+        names = []
+    return "présent" if "esp-app" in names else "absent"
+
+
+def _login_trace(method: str, url: str, headers: dict[str, str], session: _Session) -> str:
+    """Ce que Fossor a envoyé, sans aucune valeur sensible."""
+    parts = [f"envoyé : {method} {url}", f"cookie esp-app={_cookie_presence(session)}"]
+    for name in ("X-Requested-With", "Accept", "Referer", "Origin", "Content-Type"):
+        parts.append(f"{name}={headers.get(name, '')}")
+    return " ; ".join(parts)
+
+
+def _body_says_refused(body: str) -> bool:
+    """Le corps d'un 302 dit-il explicitement que les identifiants sont refusés ?"""
+    text = (body or "")[:4000]
+    lowered = text.lower()
+    if '"error"' in lowered or "error:1" in lowered:
+        return True
+    return any(marker in text for marker in LOGIN_MARKERS)
+
+
 async def _login(session: _Session, base: str, username: str, password: str) -> str:
     """``POST /user/login`` une fois ; rend la ligne d'étape, ou lève.
 
-    Le firmware pbv081 répond ``302 Location: /`` quand les identifiants sont
-    bons : la session est posée par le ``Set-Cookie`` de cette réponse, puis le
-    panneau renvoie vers son accueil (dans le navigateur, ``$.ajax`` suit la
-    redirection sans la voir). Un 302 vers ``/user/loginpage`` ou ``/notfound``
-    est en revanche un refus. Les cookies restent dans le bocal du client même
-    quand la redirection n'est pas suivie.
+    Le POST part comme celui du navigateur (``$.ajax`` du panneau) : mêmes
+    en-têtes, même ``Referer``.  La trace dit ce qui a été envoyé — jamais le
+    mot de passe : cookie ``esp-app`` présent ou non, schéma, URL, en-têtes.
+
+    Un 302 vers ``/notfound`` n'est un refus d'identifiants que si le corps le
+    dit ; sinon la session est refusée après un login pourtant accepté, et la
+    trace le montre (le firmware pbv081 répond 200 ``error:1`` à de mauvais
+    identifiants, mais 302 vers ``/notfound`` à de bons identifiants dans
+    certaines configurations).
     """
     url = base + "/user/login"
     data = {"username": username, "password": password}
-    response = await _single(session, "POST", url, data=data)
+    headers = _login_headers(base)
+    trace = _login_trace("POST", url, headers, session)
+    response = await _single(session, "POST", url, data=data, headers=headers)
     # Panneau en clair : tout part en ``301 https://`` — la montée est suivie
     # une fois et le POST rejoué tel quel (même chemin, même corps).
     for _hop in range(MAX_REDIRECTS):
@@ -307,7 +355,8 @@ async def _login(session: _Session, base: str, username: str, password: str) -> 
             if not _same_host(url, target):
                 raise AsicError(f"redirection vers un autre hôte refusée : {target}")
             url = target
-            response = await _single(session, "POST", url, data=data)
+            trace = _login_trace("POST", url, headers, session)
+            response = await _single(session, "POST", url, data=data, headers=headers)
             continue
         break
     payload = _json_or_none(response)
@@ -318,21 +367,27 @@ async def _login(session: _Session, base: str, username: str, password: str) -> 
             raise AsicAuthError(
                 f"identifiants refusés : login : error={error}"
                 + (f", message={message}" if message else "")
+                + f" ; {trace}"
             )
-        return "login : error=0"
+        return f"login : error=0 ; {trace}"
     location = response.headers.get("location") or ""
     if response.status_code in (302, 303) and location:
+        step = f"login : {response.status_code} → {location}"
         if _login_target_refused(location):
+            if _body_says_refused(response.text or ""):
+                raise AsicAuthError(f"identifiants refusés : {step} ; {trace}")
             raise AsicAuthError(
-                f"identifiants refusés : login : {response.status_code} → {location}"
+                "session refusée après login (302 → /notfound) — voir la trace : " + trace
             )
         # ``302 → /`` : succès, la session vient du Set-Cookie de la réponse.
-        return f"login : {response.status_code} → {location}"
+        return f"{step} ; {trace}"
     if _looks_like_login(response):
-        raise AsicAuthError("identifiants refusés : le panneau réaffiche la page de connexion")
+        raise AsicAuthError(
+            f"identifiants refusés : le panneau réaffiche la page de connexion ; {trace}"
+        )
     raise AsicAuthError(
         f"login : réponse non JSON ({response.status_code}"
-        + (f" → {location}" if location else "") + ")"
+        + (f" → {location}" if location else "") + f") ; {trace}"
     )
 
 

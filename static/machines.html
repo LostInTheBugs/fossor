@@ -125,7 +125,7 @@ tr.absent td{opacity:.5}
     <button class="btn" id="addBtn">+ Ajouter</button>
   </div>
 
-  <div id="tableWrap"><table><thead><tr><th>Nom</th><th>Hôte</th><th>Port SSH</th><th>User</th><th>Auth</th><th>Usage</th><th>OS</th><th>Sudo</th><th>Enabled</th><th>Actions</th></tr></thead><tbody id="machBody"></tbody></table></div>
+  <div id="tableWrap"><table><thead><tr><th>Nom</th><th>Hôte</th><th>Port SSH</th><th>User</th><th>Auth</th><th>Usage</th><th>Pilotage</th><th>OS</th><th>Sudo</th><th>Enabled</th><th>Actions</th></tr></thead><tbody id="machBody"></tbody></table></div>
   <div id="emptyMsg" class="empty" style="display:none">Aucune machine configurée.</div>
 
   <div id="minerPanel" style="display:none;margin-top:18px;background:#1a2029;border:1px solid #2c3544;border-radius:12px;padding:16px">
@@ -622,6 +622,32 @@ const minerCall=async(kind)=>{
 const startMiner=()=>minerCall('start');
 const stopMiner=()=>minerCall('stop');
 const minerStatus=()=>minerCall('status');
+const simChip=(m)=>{
+  if(m.machine_kind==='asic'||m.pilotable===false){
+    return '<span class="chip off" title="Un ASIC sert uniquement au suivi : jamais piloté">ASIC — suivi</span>';
+  }
+  const armed=m.simulation_disabled===true;
+  const label=m.pilotage||(armed?'Pilotage réel':'Simulation');
+  const cls=label==='Pilotage réel'?'on':'off';
+  const button=armed
+    ? `<button class="btn sm outline" onclick="setSimulation(${m.id},false)" title="Revenir à la simulation héritée du global">↩︎ Simulation</button>`
+    : `<button class="btn sm outline" onclick="setSimulation(${m.id},true)" title="Autoriser le pilotage réel de cette machine (mot PILOTER)">⚡ Réel</button>`;
+  return `<span class="chip ${cls}" title="Global : ${armed?'machine armée':'simulation héritée'}">${label}</span><div style="margin-top:5px">${button}</div>`;
+};
+const setSimulation=async(id,real)=>{
+  let confirm='';
+  if(real){
+    const answer=prompt('Autoriser le pilotage réel de cette machine ? Saisissez PILOTER');
+    if(answer===null)return;
+    confirm=answer;
+  }
+  const r=await fetch('/api/machines/'+id+'/simulation',{method:'PUT',credentials:'include',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({real:real,confirm:confirm})});
+  if(r.status===401){location.href='/';return;}
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){alert(d.detail||'Refusé');return;}
+  loadMachines();
+};
 const loadMachines=async()=>{
   const data=await api('/api/machines');
   if(!data)return;
@@ -653,6 +679,7 @@ const loadMachines=async()=>{
       <td>${m.ssh_user}</td>
       <td>${authLabel}</td>
       <td><span class="chip ${usageChips[m.usage]||'none'}">${m.usage}</span></td>
+      <td>${simChip(m)}</td>
       <td>${m.os_kind}</td>
       <td>${m.sudo}</td>
       <td><span class="chip ${enabledChip}">${m.enabled?'Oui':'Non'}</span></td>

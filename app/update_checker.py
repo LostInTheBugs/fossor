@@ -248,9 +248,31 @@ def known_versions() -> list[str]:
 async def _loop() -> None:
     await asyncio.sleep(random.uniform(JITTER_MIN, JITTER_MAX))
     while True:
+        ok, detail = False, "vérification en échec"
         try:
-            await check()
+            result = await check()
+            ok = True
+            detail = "vérification faite"
+            if isinstance(result, dict):
+                latest = result.get("latest") or result.get("latest_version")
+                if isinstance(latest, dict):
+                    latest = latest.get("version")
+                if latest:
+                    detail = f"dernière version connue : {latest}"
         except Exception:  # pragma: no cover - belt and braces
+            pass
+        try:
+            from app import observability
+            from app.database import SessionLocal
+
+            db = SessionLocal()
+            try:
+                observability.mark_routine(
+                    db, "update-check", ok, detail, interval_s=max(60, check_interval())
+                )
+            finally:
+                db.close()
+        except Exception:  # pragma: no cover - défensif
             pass
         await asyncio.sleep(max(60, check_interval()))
 

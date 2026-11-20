@@ -281,6 +281,15 @@ def _loop(fossor_url: str | None) -> None:
             ok, _reason = provider_ready(db)
             if ok and due(db):
                 trigger(db, "cadence", base)
+                from app import observability
+
+                observability.mark_routine(
+                    db,
+                    "veille",
+                    True,
+                    "tick de cadence déclenché",
+                    interval_s=max(3600, cadence_hours(db) * 3600),
+                )
         except Exception:  # pragma: no cover - un tick en échec ne tue pas la boucle
             pass
         finally:

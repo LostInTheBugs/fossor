@@ -1393,12 +1393,17 @@ async def tick(
             if timeout_s:
                 campaign.restore_timeout_s = int(timeout_s)
             try:
+                from app import pilotage
+
+                # Réel seulement si le global **et** toutes les machines de la
+                # campagne l'autorisent (une cible non armée rend le tout simulé).
+                camp_sim = pilotage.campaign_simulated(db, campaign)
                 if campaign.status == "approved":
-                    results.append(await _start(db, campaign, moment, backend, sim))
+                    results.append(await _start(db, campaign, moment, backend, camp_sim))
                 elif campaign.status == "running":
-                    results.append(await _stop(db, campaign, moment, backend, sim))
+                    results.append(await _stop(db, campaign, moment, backend, camp_sim))
                 else:
-                    results.append(await _restore(db, campaign, moment, backend, sim))
+                    results.append(await _restore(db, campaign, moment, backend, camp_sim))
             except Exception as exc:  # une campagne en échec ne bloque pas les autres
                 db.rollback()
                 logger.warning("campagne #%s : %s", campaign.id, exc, exc_info=True)

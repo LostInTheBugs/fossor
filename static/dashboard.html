@@ -75,6 +75,8 @@ header h1{font-size:26px}
   </div>
 
   <h2 class="section-title">Campagne en cours</h2>
+  <div id="routineStrip" style="display:flex;gap:10px;flex-wrap:wrap;margin:16px 0 2px"></div>
+
   <div class="campaign-card" id="campaignCard"><span style="color:var(--muted)">Chargement…</span></div>
 
   <h2 class="section-title">Machines</h2>
@@ -259,6 +261,38 @@ $("#logoutBtn").addEventListener("click", async () => {
 
 load();
 setInterval(load, 30000);
+</script>
+<script>
+(function(){
+  const COLORS={ok:'#3fb950',late:'#d29922',fail:'#f85149',unknown:'#6e7681'};
+  const WORDS={ok:'OK',late:'EN RETARD',fail:'ÉCHEC',unknown:'—'};
+  function ago(age){
+    if(age===null||age===undefined)return 'jamais';
+    if(age<90)return 'il y a '+Math.max(1,Math.round(age))+' s';
+    if(age<5400)return 'il y a '+Math.round(age/60)+' min';
+    return 'il y a '+Math.round(age/3600)+' h';
+  }
+  async function loadRoutines(){
+    const strip=document.getElementById('routineStrip');
+    if(!strip)return;
+    let data=null;
+    try{
+      const r=await fetch('/api/routines',{credentials:'same-origin'});
+      if(!r.ok)return;
+      data=await r.json();
+    }catch(e){return;}
+    strip.innerHTML=(data.routines||[]).map(function(x){
+      const color=COLORS[x.state]||COLORS.unknown;
+      const title=x.label+' — '+(x.detail||'aucun détail')+' — dernier passage : '+ago(x.age_s);
+      return '<span title="'+title.replace(/"/g,'&quot;')+'" style="display:inline-flex;align-items:center;gap:7px;'+
+        'font-size:12px;color:#c9d1d9;background:#161b22;border:1px solid #2c3544;border-radius:999px;padding:4px 10px">'+
+        '<span style="width:9px;height:9px;border-radius:50%;background:'+color+';display:inline-block"></span>'+
+        x.label+' : '+(WORDS[x.state]||x.state)+' '+ago(x.age_s)+'</span>';
+    }).join('');
+  }
+  loadRoutines();
+  setInterval(loadRoutines,30000);
+})();
 </script>
 </body>
 </html>

@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from sqlalchemy.orm import Session
 
 from app.campaigns import CampaignError, iso, parse_iso, validate_window
+from app.pilotage import asic_refusal, is_asic
 from app.models import (
     Campaign,
     CampaignDevice,
@@ -382,12 +383,18 @@ def free_capacity(db: Session) -> dict[str, Any]:
         .order_by(Device.kind, Device.machine_id, Device.index)
         .all()
     )
-    machines = {machine.id: machine for machine in db.query(Machine).all()}
+    machines = {
+        machine.id: machine
+        for machine in db.query(Machine).all()
+        if not is_asic(machine)
+    }
     out: dict[str, list[dict[str, Any]]] = {"cpu": [], "gpu": []}
     for device in devices:
         if device.uuid in busy:
             continue
         machine = machines.get(device.machine_id)
+        if machine is None:
+            continue
         out.setdefault(device.kind, []).append(
             {
                 "uuid": device.uuid,
@@ -431,6 +438,9 @@ def validate_proposal(db: Session, data: ProposalIn) -> dict[str, Any]:
             reasons.append(_reason("device_missing", f"Device {device_uuid} inconnu"))
             continue
         devices.append(device)
+        asic_machine = db.query(Machine).filter(Machine.id == device.machine_id).first()
+        if asic_machine is not None and is_asic(asic_machine):
+            reasons.append(_reason("asic_not_pilotable", asic_refusal(asic_machine)))
         if device.role != "default_and_spec":
             reasons.append(
                 _reason(

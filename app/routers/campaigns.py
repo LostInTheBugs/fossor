@@ -265,7 +265,10 @@ def campaign_options(db: Session = Depends(get_db), _user=Depends(require_login)
     from app.routers.vms import spec_mode
 
     hide = integrated_hidden(db)
-    machines = db.query(Machine).filter(Machine.enabled == True).order_by(Machine.name.asc()).all()  # noqa: E712
+    from app import pilotage
+
+    # Les ASIC servent au suivi : jamais une cible de campagne.
+    machines = pilotage.pilotable_machines(db)
     payload = []
     for machine in machines:
         devices = (
@@ -363,6 +366,10 @@ def _clean_devices(db: Session, devices: list[dict]) -> list[dict]:
         machine = db.query(Machine).filter(Machine.id == int(machine_id)).first()
         if machine is None:
             raise HTTPException(status_code=400, detail=f"Machine {machine_id} introuvable")
+        from app import pilotage
+
+        if pilotage.is_asic(machine):
+            raise HTTPException(status_code=400, detail=pilotage.asic_refusal(machine))
         device = None
         if device_uuid:
             device = db.query(Device).filter(Device.uuid == device_uuid).first()
@@ -432,6 +439,16 @@ def _clean_devices(db: Session, devices: list[dict]) -> list[dict]:
 
 @router.post("/campaigns", status_code=201)
 def create_campaign(data: dict, db: Session = Depends(get_db), _user=Depends(require_login)):
+    from app import pilotage as _pilotage
+
+    # Un ASIC n'entre dans aucune campagne : refus avant même le profil.
+    for item in data.get("devices") or []:
+        machine_id = item.get("machine_id")
+        if not machine_id:
+            continue
+        machine_row = db.query(Machine).filter(Machine.id == int(machine_id)).first()
+        if machine_row is not None and _pilotage.is_asic(machine_row):
+            raise HTTPException(status_code=400, detail=_pilotage.asic_refusal(machine_row))
     profile = db.query(MinerProfile).filter(MinerProfile.id == data.get("profile_id")).first()
     if profile is None:
         raise HTTPException(status_code=400, detail="Profil de minage introuvable")

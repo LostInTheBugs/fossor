@@ -48,10 +48,31 @@
     document.body.insertBefore(bar, document.body.firstChild);
   }
 
+  /* Préprod — bandeau discret quand l'authentification est coupée. */
+  function authBanner(ip) {
+    if (document.getElementById("authBanner")) { return; }
+    var bar = document.createElement("div");
+    bar.id = "authBanner";
+    bar.setAttribute("role", "status");
+    bar.style.cssText =
+      "position:sticky;top:0;z-index:149;background:#1a2a3a;color:#8ab4f8;" +
+      "border-bottom:1px solid #2f5d8a;padding:6px 16px;font:600 12px/1.4 " +
+      "'Segoe UI',system-ui,sans-serif;text-align:center";
+    bar.textContent = "Authentification désactivée (réseau de confiance)" + (ip ? " — " + ip : "");
+    document.body.insertBefore(bar, document.body.firstChild);
+  }
+
   fetch("/api/miner/settings", { credentials: "same-origin" })
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (data) {
       if (data && data.simulation === true) { banner(); }
+    })
+    .catch(function () { /* page sans API : pas de bandeau */ });
+
+  fetch("/api/auth/state", { credentials: "same-origin" })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (data) {
+      if (data && data.bypass === true) { authBanner(data.client_ip); }
     })
     .catch(function () { /* page sans API : pas de bandeau */ });
 })();

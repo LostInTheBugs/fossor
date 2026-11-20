@@ -267,7 +267,9 @@ async def evaluate(
     rule = ER.get_rule(db)
     price = energy.current_price(db, moment)
     report = energy.build_report(db, "24h", quotes={}, now=moment)
-    payload = machines_payload(db, report)
+    from app.pilotage import asic_ids, without_asic
+
+    payload = without_asic(machines_payload(db, report), asic_ids(db))
 
     # Bornes réelles du power limit, lues sur chaque machine concernée.
     if rule.get("mode") == "power_limit" and rule.get("enabled"):

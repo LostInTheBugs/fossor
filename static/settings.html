@@ -81,6 +81,37 @@ header h1{font-size:26px}
     <button class="subtab" id="tabEnergy" data-panel="panel-energy">Électricité</button>
     <button class="subtab" id="tabNotifications" data-panel="panel-notifications">Notifications</button>
     <button class="subtab" id="tabUpdate" data-panel="panel-update">Mise à jour</button>
+    <button class="subtab" id="tabSecurity" data-panel="panel-security">Sécurité</button>
+    <button class="subtab" id="tabLog" data-panel="panel-log">Journal</button>
+  </div>
+
+  <div id="panel-security" style="display:none">
+    <div class="card">
+      <h2>Authentification</h2>
+      <div class="sub">Fred est seul utilisateur, en interne : l'authentification peut être coupée pour les réseaux de confiance. Une adresse hors liste doit toujours se connecter. L'IP est celle de la connexion TCP ; <code>X-Forwarded-For</code> n'est lu que si un proxy est déclaré ici.</div>
+      <div class="field"><label><input type="checkbox" id="authEnabled" checked> Authentification activée (défaut)</label></div>
+      <div class="field"><label><input type="checkbox" id="authTrustProxy"> Faire confiance à <code>X-Forwarded-For</code> (proxy déclaré)</label></div>
+      <h3>Réseaux de confiance (CIDR, un par ligne)</h3>
+      <textarea id="authNetworks" rows="5" spellcheck="false" style="width:100%;background:var(--bg);color:var(--txt);border:1px solid var(--border);border-radius:8px;padding:10px;font-family:ui-monospace,monospace;font-size:12.5px"></textarea>
+      <div class="field narrow"><label>Rester connecté (jours)</label><input type="number" id="authDays" min="1" max="365" value="30"></div>
+      <div class="actions"><button class="btn" id="authSave">Enregistrer</button><span id="authState" class="chip off">—</span></div>
+      <p class="sub" id="authBypass" style="margin-top:10px"></p>
+    </div>
+  </div>
+
+  <div id="panel-log" style="display:none">
+    <div class="card">
+      <h2>Niveau de journalisation</h2>
+      <div class="sub">Appliqué aux logs applicatifs (stdout) et à ce qui s'écrit dans Log → Audit. Les actions de l'utilisateur et de Hermes, ainsi que les changements de configuration, restent toujours audités. Les tâches de routine n'écrivent qu'au changement d'état ou sur erreur : leur état est un voyant sur le tableau de bord.</div>
+      <div class="field narrow"><label>Niveau</label><select id="logLevel">
+        <option value="DEBUG">DEBUG</option>
+        <option value="INFO">INFO</option>
+        <option value="WARNING" selected>WARNING (défaut)</option>
+        <option value="ERROR">ERROR</option>
+        <option value="CRITICAL">CRITICAL</option>
+      </select></div>
+      <div class="actions"><button class="btn" id="logSave">Enregistrer</button><span id="logState" class="chip off">—</span></div>
+    </div>
   </div>
 
   <div id="panel-notifications" style="display:none">
@@ -1536,6 +1567,57 @@ $('#igpuSave').addEventListener('click',async()=>{
   if(r.ok){const d=await r.json();$('#igpuState').textContent=d.hide_integrated_gpus?'masqués':'visibles';}
 });
 loadIgpu();
+</script>
+<script>
+(function(){
+  const $=s=>document.querySelector(s);
+  const chip=(el,text,cls)=>{el.textContent=text;el.className='chip '+cls;};
+  async function loadSecurity(){
+    const r=await fetch('/api/security/settings',{credentials:'same-origin'});
+    if(r.status===401){location.href='/';return;}
+    const d=await r.json();
+    $('#authEnabled').checked=!!d.auth_enabled;
+    $('#authTrustProxy').checked=!!d.trust_proxy;
+    $('#authNetworks').value=(d.trusted_networks||[]).join('\n');
+    $('#authDays').value=d.stay_logged_in_days||30;
+    const st=await fetch('/api/auth/state',{credentials:'same-origin'}).then(x=>x.ok?x.json():null).catch(()=>null);
+    if(st){
+      $('#authBypass').textContent='IP vue par le serveur : '+st.client_ip+
+        (st.bypass?' — traitée comme admin, sans cookie.':' — doit se connecter.');
+    }
+  }
+  $('#authSave').onclick=async()=>{
+    const body={
+      auth_enabled:$('#authEnabled').checked,
+      trust_proxy:$('#authTrustProxy').checked,
+      trusted_networks:$('#authNetworks').value.split(/\n+/).map(v=>v.trim()).filter(Boolean),
+      stay_logged_in_days:parseInt($('#authDays').value,10)||30
+    };
+    const r=await fetch('/api/security/settings',{method:'PUT',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(r.status===401){location.href='/';return;}
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){chip($('#authState'),d.detail||'refusé','off');return;}
+    chip($('#authState'),'enregistré','on');loadSecurity();
+  };
+  async function loadLogs(){
+    const r=await fetch('/api/logs/settings',{credentials:'same-origin'});
+    if(r.status===401){location.href='/';return;}
+    const d=await r.json();
+    $('#logLevel').value=d.level||'WARNING';
+  }
+  $('#logSave').onclick=async()=>{
+    const r=await fetch('/api/logs/settings',{method:'PUT',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({level:$('#logLevel').value})});
+    if(r.status===401){location.href='/';return;}
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){chip($('#logState'),d.detail||'refusé','off');return;}
+    chip($('#logState'),d.level,'on');loadLogs();
+  };
+  $('#tabSecurity').addEventListener('click',loadSecurity);
+  $('#tabLog').addEventListener('click',loadLogs);
+  loadSecurity();loadLogs();
+})();
 </script>
 </body>
 </html>

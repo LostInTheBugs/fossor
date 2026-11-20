@@ -76,8 +76,18 @@ def _audit(db: Session, machine: Machine | None, action: str, result: str = "ok"
 
 @router.get("")
 def list_machines(db: Session = Depends(get_db), _user=Depends(require_login)):
+    from app import pilotage
+
     machines = db.query(Machine).filter(Machine.enabled != False).all()
-    return [_mask_secret(m) for m in machines]
+    out = []
+    for machine in machines:
+        data = _mask_secret(machine)
+        data["simulation_disabled"] = pilotage.machine_armed(machine)
+        data["pilotage"] = pilotage.label(db, machine)
+        data["pilotable"] = not pilotage.is_asic(machine)
+        data["machine_kind"] = machine.machine_kind or "host"
+        out.append(data)
+    return out
 
 
 @router.post("")
@@ -475,3 +485,36 @@ async def deprovision_machine_account(
         raise HTTPException(status_code=400, detail=str(exc))
     _audit(db, machine, "deprovision", result.get("ok") and "ok" or "fail", actor=current_user if current_user else "system")
     return result
+
+
+@router.put("/{machine_id}/simulation")
+def set_machine_simulation(
+    machine_id: int,
+    payload: dict,
+    db: Session = Depends(get_db),
+    user=Depends(require_login),
+):
+    """Arme (« PILOTER ») ou désarme le pilotage réel d'une machine.
+
+    Le global reste maître : même armée, une machine reste simulée tant que la
+    simulation globale est active.  Un ASIC est refusé ici, pas seulement dans
+    l'UI.
+    """
+    from app import pilotage
+
+    machine = db.query(Machine).filter(Machine.id == machine_id).first()
+    if machine is None:
+        raise HTTPException(status_code=404, detail="Machine introuvable")
+    try:
+        label = pilotage.set_machine_real(
+            db, machine, bool(payload.get("real")), payload.get("confirm")
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    _audit(db, machine, "machine-simulation", "ok", f"{label} (demandé par {user})")
+    return {
+        "id": machine.id,
+        "simulation_disabled": pilotage.machine_armed(machine),
+        "pilotage": label,
+        "simulated": pilotage.simulated_for(db, machine),
+    }

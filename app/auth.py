@@ -10,6 +10,7 @@ router = APIRouter(prefix="/api", tags=["auth"])
 
 SERIALIZER: URLSafeTimedSerializer | None = None
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
+STAY_LOGGED_IN_DAYS = 30
 
 
 def _get_data_dir() -> Path:
@@ -56,19 +57,32 @@ def create_access_token(data: dict) -> str:
 
 
 def get_current_user(request: Request) -> str | None:
-    """Decode the session cookie and verify expiry.
+    """Session cookie, ou admin implicite sur un réseau de confiance.
 
-    Returns the 'sub' value (username) or None.
+    Quand l'authentification est désactivée et que la connexion **TCP** vient
+    d'une adresse de la liste, la requête est traitée comme l'admin, sans
+    cookie.  ``X-Forwarded-For`` n'est lu que si un proxy est déclaré : la
+    décision vit dans :mod:`app.auth_settings`.
     """
     token = request.cookies.get("fossor_session")
-    if not token:
-        return None
-    try:
-        s = _load_or_create_serializer()
-        payload = s.loads(token, max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60)
-        return payload.get("sub")
-    except (SignatureExpired, BadSignature, ValueError):
-        return None
+    if token:
+        try:
+            s = _load_or_create_serializer()
+            payload, issued = s.loads(
+                token, max_age=STAY_LOGGED_IN_DAYS * 86400, return_timestamp=True
+            )
+            if issued.tzinfo is None:
+                issued = issued.replace(tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - issued).total_seconds()
+            if payload.get("remember") or age <= ACCESS_TOKEN_EXPIRE_MINUTES * 60:
+                return payload.get("sub")
+        except (SignatureExpired, BadSignature, ValueError):
+            pass
+    from app import auth_settings
+
+    if auth_settings.bypass_for_request(request):
+        return "admin"
+    return None
 
 
 def require_login(request: Request):
@@ -87,7 +101,13 @@ def hash_password(plain: str) -> str:
 
 
 @router.post("/login")
-def login(request: Request, response: Response, username: str = Form(...), password: str = Form(...)):
+def login(
+    request: Request,
+    response: Response,
+    username: str = Form(...),
+    password: str = Form(...),
+    remember: str = Form(""),
+):
     admin_hash = os.environ.get("FOSSOR_ADMIN_PASSWORD_HASH")
     if not admin_hash:
         pw_env = os.environ.get("FOSSOR_ADMIN_PASSWORD")
@@ -107,14 +127,24 @@ def login(request: Request, response: Response, username: str = Form(...), passw
             finally:
                 db.close()
     if username == "admin" and verify_password(password, admin_hash):
-        token = create_access_token({"sub": "admin"})
+        from app import auth_settings
+        from app.database import SessionLocal
+
+        days = auth_settings.DEFAULT_STAY_DAYS
+        db = SessionLocal()
+        try:
+            days = auth_settings.read_settings(db)["stay_logged_in_days"]
+        finally:
+            db.close()
+        stay = str(remember or "").strip().lower() in {"1", "true", "on", "yes"}
+        token = create_access_token({"sub": "admin", "remember": stay})
         response.set_cookie(
             key="fossor_session",
             value=token,
             httponly=True,
             samesite="strict",
             path="/",
-            max_age=3600,
+            max_age=days * 86400 if stay else ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         )
         return {"ok": True, "message": "Connected"}
     raise HTTPException(status_code=401, detail="Invalid credentials")

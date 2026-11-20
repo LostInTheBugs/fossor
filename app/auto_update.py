@@ -210,6 +210,11 @@ async def _loop() -> None:
             db = SessionLocal()
             try:
                 tick(db)
+                from app import observability
+
+                observability.mark_routine(
+                    db, "updater", True, "battement de l'updater", interval_s=interval
+                )
             finally:
                 db.close()
         except Exception:  # pragma: no cover - la boucle ne meurt jamais

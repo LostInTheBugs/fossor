@@ -144,6 +144,7 @@ def init_db():
     _migrate_campaign_execution_mode()
     _migrate_machine_hiveos_column()
     _migrate_machine_fossor_host_column()
+    _migrate_machine_simulation_column()
     _migrate_spec_vm_pve_columns()
     _migrate_miner_binary_columns()
     _migrate_spec_vm_hashrate_columns()
@@ -163,6 +164,16 @@ def _migrate_machine_fossor_host_column():
         if "fossor_host" not in columns:
             conn.exec_driver_sql(
                 "ALTER TABLE machines ADD COLUMN fossor_host INTEGER NOT NULL DEFAULT 0"
+            )
+
+
+def _migrate_machine_simulation_column():
+    """Préprod : verrou de simulation par machine (0 = héritée du global)."""
+    with engine.begin() as conn:
+        columns = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(machines)")}
+        if "simulation_disabled" not in columns:
+            conn.exec_driver_sql(
+                "ALTER TABLE machines ADD COLUMN simulation_disabled INTEGER NOT NULL DEFAULT 0"
             )
 
 

@@ -29,7 +29,10 @@ body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,-app
     <div class="field"><label>Mot de passe</label><input id="password" name="password" type="password" required></div>
     <button class="btn" type="submit">Se connecter</button>
     <div class="err" id="errBox">Identifiants invalides</div>
-  </form>
+    <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin:14px 0 4px;color:var(--muted)">
+    <input type="checkbox" name="remember" value="1"> Rester connecté 30 jours
+  </label>
+</form>
 </div>
 <script>
 // Minimal selector helper — this page loads no external script.

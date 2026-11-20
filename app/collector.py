@@ -677,11 +677,38 @@ async def collect_all() -> list[dict[str, Any]]:
 # ── Scheduler ─────────────────────────────────────────────────────────
 async def _loop() -> None:
     while True:
+        interval = collect_interval()
         try:
-            await collect_all()
+            results = await collect_all()
+            failed = [row for row in results if not row.get("online")]
+            from app import observability
+            from app.database import SessionLocal
+
+            db = SessionLocal()
+            try:
+                observability.mark_routine(
+                    db,
+                    "collect",
+                    not failed,
+                    f"{len(results) - len(failed)}/{len(results)} machines jointes"
+                    + (f" ; en échec : {', '.join(str(r.get('machine_id')) for r in failed[:5])}" if failed else ""),
+                    interval_s=interval,
+                )
+            finally:
+                db.close()
         except Exception:  # pragma: no cover - defensive
             logger.warning("collecte globale en échec", exc_info=True)
-        interval = collect_interval()
+            try:
+                from app import observability
+                from app.database import SessionLocal
+
+                db = SessionLocal()
+                try:
+                    observability.mark_routine(db, "collect", False, "collecte en échec", interval_s=interval)
+                finally:
+                    db.close()
+            except Exception:
+                pass
         await asyncio.sleep(interval if interval > 0 else 60)
 
 
