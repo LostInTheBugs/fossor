@@ -377,6 +377,11 @@ class TestScheduler:
             from app.ai_config import set_setting
 
             campaign, _, _ = _seed(db, status="running", end_offset=60)
+            # Préprod : une action réelle exige que la machine soit armée.
+            from app.models import Machine
+
+            db.query(Machine).update({Machine.simulation_disabled: True})
+            db.commit()
             # Sans canal configuré, `enqueue` n'écrit rien : la matrice est le
             # seul chemin par lequel une notification existe (§4.14).
             config = notifications.get_config(db)

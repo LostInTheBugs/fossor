@@ -78,6 +78,13 @@ def label(db: Any, machine: Any) -> str:
     return "Simulation (globale)" if global_simulation(db) else "Pilotage réel"
 
 
+def campaign_locked(db: Any, campaign: Any) -> bool:
+    """Au moins une machine de la campagne n'est pas armée : tout reste simulé."""
+    from app.campaign_runner import campaign_targets
+
+    return any(not machine_armed(target.machine) for target in campaign_targets(db, campaign))
+
+
 def campaign_simulated(db: Any, campaign: Any) -> bool:
     """Une campagne tourne en réel seulement si **toutes** ses machines sont armées.
 

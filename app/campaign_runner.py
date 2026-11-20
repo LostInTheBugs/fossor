@@ -1397,7 +1397,7 @@ async def tick(
 
                 # Réel seulement si le global **et** toutes les machines de la
                 # campagne l'autorisent (une cible non armée rend le tout simulé).
-                camp_sim = pilotage.campaign_simulated(db, campaign)
+                camp_sim = sim or pilotage.campaign_locked(db, campaign)
                 if campaign.status == "approved":
                     results.append(await _start(db, campaign, moment, backend, camp_sim))
                 elif campaign.status == "running":

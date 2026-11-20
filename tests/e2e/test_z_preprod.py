@@ -22,6 +22,23 @@ os.environ["FOSSOR_DATA_DIR"] = E2E_DATA_DIR
 os.environ["DATABASE_URL"] = f"sqlite:///{DB_PATH}"  # l'image fixe /data : on force la base e2e
 
 
+def _cleanup(names: tuple[str, ...]) -> None:
+    """Retire les machines semées : la base e2e est partagée par la session."""
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine(f"sqlite:///{DB_PATH}")
+    with engine.begin() as conn:
+        for name in names:
+            row = conn.execute(
+                text("SELECT id FROM machines WHERE name = :name"), {"name": name}
+            ).first()
+            if row is None:
+                continue
+            conn.execute(text("DELETE FROM devices WHERE machine_id = :id"), {"id": row[0]})
+            conn.execute(text("DELETE FROM machines WHERE id = :id"), {"id": row[0]})
+    engine.dispose()
+
+
 def _seed() -> dict[str, int | str]:
     """ASIC (jamais pilotable) + machine hôte, et deux états de routine."""
     # Session dédiée : le conftest racine redirige DATABASE_URL vers tmp_path,
@@ -156,6 +173,8 @@ async def test_preprod_banner_routines_asic_and_simulation(e2e_server):
         assert restored.status == 200
 
         await browser.close()
+
+    _cleanup(("ASIC-E2E", "athlon-e2e"))
 
     assert not page_errors, page_errors
     assert not console_errors, console_errors

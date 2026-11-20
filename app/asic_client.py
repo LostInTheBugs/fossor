@@ -374,10 +374,11 @@ async def _login(session: _Session, base: str, username: str, password: str) -> 
     if response.status_code in (302, 303) and location:
         step = f"login : {response.status_code} → {location}"
         if _login_target_refused(location):
-            if _body_says_refused(response.text or ""):
+            if "loginpage" in location.lower() or _body_says_refused(response.text or ""):
                 raise AsicAuthError(f"identifiants refusés : {step} ; {trace}")
             raise AsicAuthError(
-                "session refusée après login (302 → /notfound) — voir la trace : " + trace
+                f"session refusée après login ({response.status_code} → {location})"
+                " — voir la trace : " + trace
             )
         # ``302 → /`` : succès, la session vient du Set-Cookie de la réponse.
         return f"{step} ; {trace}"

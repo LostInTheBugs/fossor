@@ -195,7 +195,7 @@ def _data_dir() -> Path:
 
 
 def _db_path() -> Path | None:
-    url = os.environ.get("DATABASE_URL") or ""
+    url = os.environ.get("DATABASE_URL") or "sqlite:////data/fossor.db"
     if not url.startswith("sqlite"):
         return None
     raw = url.split("sqlite:///", 1)[-1]

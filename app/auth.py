@@ -66,18 +66,22 @@ def get_current_user(request: Request) -> str | None:
     """
     token = request.cookies.get("fossor_session")
     if token:
+        s = _load_or_create_serializer()
+        payload = None
         try:
-            s = _load_or_create_serializer()
-            payload, issued = s.loads(
-                token, max_age=STAY_LOGGED_IN_DAYS * 86400, return_timestamp=True
-            )
-            if issued.tzinfo is None:
-                issued = issued.replace(tzinfo=timezone.utc)
-            age = (datetime.now(timezone.utc) - issued).total_seconds()
-            if payload.get("remember") or age <= ACCESS_TOKEN_EXPIRE_MINUTES * 60:
-                return payload.get("sub")
-        except (SignatureExpired, BadSignature, ValueError):
-            pass
+            payload = s.loads(token, max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60)
+        except SignatureExpired:
+            # Seul un cookie « rester connecté » dépasse l'heure de session.
+            try:
+                long_payload = s.loads(token, max_age=STAY_LOGGED_IN_DAYS * 86400)
+                if long_payload.get("remember"):
+                    payload = long_payload
+            except (SignatureExpired, BadSignature, ValueError):
+                payload = None
+        except (BadSignature, ValueError):
+            payload = None
+        if payload is not None:
+            return payload.get("sub")
     from app import auth_settings
 
     if auth_settings.bypass_for_request(request):

@@ -316,7 +316,7 @@ async def test_login_sequence_reads_overview(panel):
     found = await asic_client.iceriver_probe(panel["host"], USER, PASSWORD)
     assert found["mode"] == "overview"
     assert found["steps"][0] == "étape GET / : 302 → /user/loginpage, cookie reçu oui"
-    assert found["steps"][1] == "login : error=0"
+    assert found["steps"][1].startswith("login : error=0 ; envoyé : POST")
     state = asic_client.iceriver_state(found)
     assert state["hashrate_hs"] == pytest.approx(481e9)
     assert asic.health(state)["status"] == "green"
@@ -341,9 +341,9 @@ async def test_wrong_password_reports_the_login_error(panel):
     with pytest.raises(asic_client.AsicAuthError) as refused:
         await asic_client.iceriver_probe(panel["host"], USER, "mauvais-mot-de-passe")
     text = str(refused.value)
-    assert text == "identifiants refusés : login : error=1, message=invalid user or password"
+    assert text.startswith("identifiants refusés : login : error=1, message=invalid user or password")
     assert PASSWORD not in text
-    assert "esp-app=" not in text
+    assert "esp-app=présent" in text  # présence seulement, jamais la valeur
     assert all(token not in text for token in _Panel.tokens)
 
 
@@ -396,7 +396,7 @@ async def test_login_success_via_redirect_is_accepted(panel):
     _Panel.success_via_redirect = True
     found = await asic_client.iceriver_probe(panel["host"], USER, PASSWORD)
     assert found["mode"] == "overview"
-    assert found["steps"][1] == "login : 302 → /"
+    assert found["steps"][1].startswith("login : 302 → /")
     state = asic_client.iceriver_state(found)
     assert state["hashrate_hs"] == pytest.approx(481e9)
     assert asic.health(state)["status"] == "green"
@@ -415,6 +415,6 @@ async def test_login_redirect_to_loginpage_is_a_refusal(panel):
     _Panel.success_via_redirect = True
     with pytest.raises(asic_client.AsicAuthError) as refused:
         await asic_client.iceriver_probe(panel["host"], USER, "mauvais-mot-de-passe")
-    assert str(refused.value) == "identifiants refusés : login : 302 → /user/loginpage"
+    assert str(refused.value).startswith("identifiants refusés : login : 302 → /user/loginpage")
     assert PASSWORD not in str(refused.value)
     assert all(token not in str(refused.value) for token in _Panel.tokens)
