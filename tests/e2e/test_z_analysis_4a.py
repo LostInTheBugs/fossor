@@ -101,6 +101,7 @@ async def test_analysis_rules_and_hermes_proposal(e2e_server):
         await page.goto(E2E_URL + "/analysis", wait_until="domcontentloaded")
         nav_text = await page.inner_text("#nav")
         assert "Analyse des tokens" in nav_text
+        await page.click('#subTabs [data-tab="criteria"]')
         await page.wait_for_selector('tr[data-rule="freshness"]', timeout=15000)
 
         # 2. Édition au formulaire généré par le schéma, puis relecture réelle.

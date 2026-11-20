@@ -176,7 +176,7 @@ def post_analysis(
 ):
     """Enregistre une analyse ; rejouer la même ne crée pas de doublon."""
     try:
-        entry = A.normalize_analysis(payload)
+        entry = A.normalize_analysis(payload, strict=True)
     except A.AnalysisError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     digest = A.fingerprint(entry)

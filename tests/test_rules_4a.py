@@ -391,6 +391,8 @@ async def test_proposal_links_analysis_id(unauth_client):
                     "algo": "x",
                     "links": ["https://exemple.tld/neb"],
                     "verdict": "retenu",
+                    "reason": "Réseau actif et device libre : proposition justifiée.",
+                    "criteria": [{"key": "fenetre", "verdict": "ok", "note": "sorti cette nuit"}],
                     "pour": ["réseau actif"],
                     "contre": ["jeune"],
                 }
@@ -427,6 +429,8 @@ async def test_hermes_analysis_is_idempotent(unauth_client):
                 "algo": "NEBHASH",
                 "links": ["https://exemple.tld/neb"],
                 "verdict": "retenu",
+                "reason": "Mainnet en ligne, grille complète : retenu.",
+                "criteria": [{"key": "fenetre", "verdict": "ok", "note": "mainnet"}],
                 "pour": ["mainnet"],
                 "contre": ["jeune"],
             }

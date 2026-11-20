@@ -181,6 +181,7 @@ async def test_criteria_grid_is_stored_then_rendered(unauth_client, client):
                 "name": "GridCoin",
                 "algo": "Ethash",
                 "verdict": "surveillance",
+                "reason": "Fenêtre fraîche mais GPU à confirmer : rester en surveillance.",
                 "criteria": [
                     {"key": "fenetre", "verdict": "ok", "note": "sorti il y a 8 h"},
                     {"key": "gpu", "verdict": "warn", "note": "à confirmer"},

@@ -51,6 +51,8 @@ class HermesStub:
                             "age": "2 h",
                             "links": ["https://exemple.tld/ann"],
                             "verdict": "retenu",
+                            "reason": "Candidat de démonstration : réseau actif, device libre.",
+                            "criteria": [{"key": "fenetre", "verdict": "ok", "note": "2 h"}],
                             "pour": ["tick déclenché par Fossor"],
                             "contre": [],
                         }
@@ -141,6 +143,7 @@ async def test_veille_tick_from_analysis_screen(e2e_server):
         assert "stub-key" not in json.dumps(configured)
 
         await page.goto(E2E_URL + "/analysis", wait_until="domcontentloaded")
+        await page.click('#subTabs [data-tab="scans"]')
         assert await page.is_visible("#veilleBtn")
         await page.click("#veilleBtn")
 

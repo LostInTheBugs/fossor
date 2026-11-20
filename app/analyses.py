@@ -153,7 +153,13 @@ def split_ticker_name(raw: str) -> tuple[str, str]:
     return "", raw.strip()
 
 
-def normalize_candidate(raw: Any) -> dict[str, Any]:
+def normalize_candidate(raw: Any, strict: bool = False) -> dict[str, Any]:
+    """Candidat normalisé ; ``strict`` exige ``reason`` (et la grille si retenu/rejeté).
+
+    Le mode strict ne sert qu'à ``POST /api/hermes/analyses`` : un import
+    d'historique reste rétrocompatible, ses évaluations sans raison portent la
+    mention « raison non renseignée (import) » à l'affichage.
+    """
     if not isinstance(raw, dict):
         raise AnalysisError("candidat invalide : objet JSON attendu")
     label = _text(raw.get("name") or raw.get("nom"))
@@ -161,18 +167,32 @@ def normalize_candidate(raw: Any) -> dict[str, Any]:
     if not ticker:
         ticker, label = split_ticker_name(label)
     links = _string_list(raw.get("links") or raw.get("lien"))
+    verdict = normalize_verdict(raw.get("verdict"))
+    reason = _text(raw.get("reason") or raw.get("raison"), 2000)
+    criteria = normalize_criteria(raw.get("criteria"))
+    name = label or ticker or "?"
+    if strict:
+        if not reason:
+            raise AnalysisError(
+                f"candidat {ticker or name} : reason obligatoire "
+                "(1 à 2 phrases : pourquoi ce verdict, ce qui le ferait changer)"
+            )
+        if verdict in ("retenu", "rejete") and not criteria:
+            raise AnalysisError(
+                f"candidat {ticker or name} : criteria obligatoire pour un verdict « {verdict} »"
+            )
     candidate = {
-        "name": label or ticker or "?",
+        "name": name,
         "ticker": ticker,
         "algo": _text(raw.get("algo"), 200),
         "links": links,
-        "verdict": normalize_verdict(raw.get("verdict")),
+        "verdict": verdict,
+        "reason": reason,
         "pour": _string_list(raw.get("pour")),
         "contre": _string_list(raw.get("contre")),
     }
-    # Grille critère par critère (facultative : les analyses importées d'avant
-    # n'en ont pas et restent « non évalué » — rien n'est inventé).
-    criteria = normalize_criteria(raw.get("criteria"))
+    # Grille critère par critère (facultative hors strict : les analyses
+    # importées d'avant n'en ont pas et restent « non évalué » — rien n'est inventé).
     if criteria:
         candidate["criteria"] = criteria
     age = raw.get("age")
@@ -181,7 +201,7 @@ def normalize_candidate(raw: Any) -> dict[str, Any]:
     return candidate
 
 
-def normalize_analysis(raw: Any) -> dict[str, Any]:
+def normalize_analysis(raw: Any, strict: bool = False) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise AnalysisError("analyse invalide : objet JSON attendu")
     candidates = raw.get("candidates") or []
@@ -193,7 +213,7 @@ def normalize_analysis(raw: Any) -> dict[str, Any]:
         "action": normalize_action(raw.get("action")),
         "detail": _text(raw.get("action_detail") or raw.get("detail"), 8000),
         "delivered": bool(raw.get("delivered", False)),
-        "candidates": [normalize_candidate(item) for item in candidates],
+        "candidates": [normalize_candidate(item, strict=strict) for item in candidates],
     }
     return normalized
 
@@ -340,6 +360,81 @@ def normalize_criteria(value: Any) -> list[dict[str, str]]:
             verdict = "na"
         out.append({"key": key, "verdict": verdict, "note": _text(item.get("note"), 500)})
     return out
+
+
+_LAUNCH_NEG = re.compile(
+    r"pas (encore )?lanc|non lanc|pas avant|pr[ée]vu[es]? (le|pour|en|d[ée]but)|attendu[es]? (le|pour|en)",
+    re.IGNORECASE,
+)
+_LAUNCH_POS = re.compile(
+    r"mainnet (actif|en ligne|d[ée]j[àa] lanc)|est (actif|en ligne|d[ée]j[àa] lanc)|d[ée]j[àa] lanc[ée]",
+    re.IGNORECASE,
+)
+_MONTHS = r"janv|f[ée]vr|mars|avr|mai|juin|juil|ao[uû]t|sept|oct|nov|d[ée]c"
+_MAINNET_DATE = re.compile(
+    r"mainnet[^.;\n]{0,40}?(\d{1,2})(?:er)?\s+(" + _MONTHS + r")",
+    re.IGNORECASE,
+)
+
+
+def _short(text: str, limit: int = 120) -> str:
+    text = re.sub(r"\s+", " ", text or "").strip()
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _contradiction(previous_text: str, text: str) -> str:
+    """Signaux factuels opposés entre deux évaluations (« pas lancé » → « actif »)."""
+    previous_text = previous_text or ""
+    text = text or ""
+    prev_neg = bool(_LAUNCH_NEG.search(previous_text))
+    cur_neg = bool(_LAUNCH_NEG.search(text))
+    prev_pos = bool(_LAUNCH_POS.search(previous_text))
+    cur_pos = bool(_LAUNCH_POS.search(text))
+    if (prev_neg and cur_pos) or (prev_pos and cur_neg):
+        return f"« {_short(previous_text)} » puis « {_short(text)} »"
+    left = _MAINNET_DATE.search(previous_text)
+    right = _MAINNET_DATE.search(text)
+    if left and right and left.group(0).lower() != right.group(0).lower():
+        return f"« {_short(previous_text)} » puis « {_short(text)} »"
+    return ""
+
+
+def coherence_warnings(
+    verdict: str,
+    contre: list[str],
+    reason: str,
+    criteria: list[dict[str, str]],
+    previous: dict[str, Any] | None = None,
+    text: str = "",
+) -> list[str]:
+    """Contrôles de cohérence **affichés**, jamais bloquants.
+
+    Une note d'exploitation (« jobs cron armés ») n'est pas un argument sur le
+    token : un verdict « surveillance » sans aucun « contre » ni raison est
+    signalé, et une contradiction factuelle avec l'évaluation précédente aussi.
+    """
+    warnings: list[str] = []
+    label = VERDICT_LABELS.get(verdict, verdict)
+    if verdict in ("surveillance", "rejete") and not contre and not reason:
+        warnings.append(
+            f"verdict « {label} » sans aucun argument « contre » ni raison : il n'est pas justifié."
+        )
+    if verdict == "retenu":
+        kos = [item.get("key", "") for item in criteria if item.get("verdict") == "ko"]
+        if kos:
+            warnings.append(
+                "verdict « retenu » alors que le critère " + ", ".join(f"« {key} »" for key in kos) + " est ko."
+            )
+    if previous:
+        previous_label = VERDICT_LABELS.get(previous.get("verdict", ""), previous.get("verdict", ""))
+        if previous.get("verdict") != verdict and not reason:
+            warnings.append(
+                f"verdict changé ({previous_label} → {label}) sans raison : l'écart n'est pas expliqué."
+            )
+        contradictory = _contradiction(previous.get("detail", ""), text)
+        if contradictory and not reason:
+            warnings.append(f"contredit l'évaluation précédente sans raison : {contradictory}.")
+    return warnings
 
 
 def _norm_key(value: Any) -> str:
@@ -493,21 +588,36 @@ def token_rows(
                     "first_ts": ts,
                     "last_ts": ts,
                     "age": "",
+                    "reason": "",
+                    "detail": "",
+                    "warnings": [],
+                    "aliases": [],
                     "pour": [],
                     "contre": [],
                     "evaluations": 0,
                     "history": [],
                 }
             verdict = verdict_key(candidate.get("verdict"))
+            contre = _string_list(candidate.get("contre"))
+            criteria = normalize_criteria(candidate.get("criteria"))
+            reason = _text(candidate.get("reason") or candidate.get("raison"), 2000)
+            if not reason and analysis.get("source") == "import":
+                reason = "raison non renseignée (import)"
+            detail = _text(analysis.get("detail"), 1000)
+            previous = row["history"][-1] if row["history"] else None
             entry = {
                 "ts": ts,
                 "run": _text(analysis.get("run"), 80),
+                "source": _text(analysis.get("source"), 20) or "hermes",
                 "verdict": verdict,
                 "verdict_label": VERDICT_LABELS.get(verdict, _text(candidate.get("verdict"), 40) or verdict),
                 "age": _text(candidate.get("age"), 80),
+                "reason": reason,
+                "detail": detail,
                 "pour": _string_list(candidate.get("pour")),
-                "contre": _string_list(candidate.get("contre")),
-                "criteria": normalize_criteria(candidate.get("criteria")),
+                "contre": contre,
+                "criteria": criteria,
+                "warnings": coherence_warnings(verdict, contre, reason, criteria, previous, detail),
             }
             for link in _string_list(candidate.get("links")):
                 if link not in row["links"]:
@@ -523,6 +633,9 @@ def token_rows(
                 row["verdict"] = verdict
                 row["verdict_label"] = entry["verdict_label"]
                 row["age"] = entry["age"]
+                row["reason"] = entry["reason"]
+                row["detail"] = entry["detail"]
+                row["warnings"] = entry["warnings"]
                 row["pour"] = entry["pour"]
                 row["contre"] = entry["contre"]
                 row["ticker"] = ticker or row["ticker"]
@@ -530,6 +643,15 @@ def token_rows(
                 row["algo"] = _text(candidate.get("algo"), 200) or row["algo"]
     for row in rows.values():
         row["history"].reverse()
+        row["aliases"] = [
+            {
+                "canonical": item.get("canonical"),
+                "member": item.get("member"),
+                "mode": item.get("mode") or "merge",
+            }
+            for item in (aliases or [])
+            if uf.find(_norm_key(item.get("canonical"))) == row["key"]
+        ]
     return sorted(
         rows.values(),
         key=lambda item: _stamp_key(item["last_ts"], default_year),

@@ -205,6 +205,7 @@ async def test_criteres_tokens_grille_bandeau(e2e_server, tmp_path):
             await _shot(page, shots, "01-tokens-1280.png")
 
             # Page des règles : les critères sont éditables dans l'ordre.
+            await page.click('#subTabs [data-tab="criteria"]')
             row = page.locator('[data-rule="criteria"]')
             await row.scroll_into_view_if_needed()
             await row.locator("[data-act=edit]").click()
@@ -224,6 +225,7 @@ async def test_criteres_tokens_grille_bandeau(e2e_server, tmp_path):
             # Écran étroit : les cellules passent sous le nom, rien n'est coupé.
             await page.set_viewport_size({"width": 390, "height": 844})
             await page.goto(E2E_URL + "/analysis", wait_until="domcontentloaded", timeout=15000)
+            await page.click('#subTabs [data-tab="tokens"]')
             await page.wait_for_selector("#tokRows tr", timeout=15000)
             big_narrow = page.locator("#tokRows tr").filter(has_text="BIGCOIN").first
             await big_narrow.locator("[data-hist]").click()
