@@ -260,6 +260,7 @@ class TestPowerApiWithFakeShelly:
         db = SessionLocal()
         try:
             machine = await self._machine(db, name="rig-confirm")
+            machine.simulation_disabled = True  # machine armée : action réelle
             machine_id = machine.id
             db.add(MachineStatus(machine_uuid=machine.uuid, ts=datetime.datetime.now(UTC).isoformat(),
                                  online=True, algo="", miner="", coin=""))
@@ -377,6 +378,8 @@ class TestExpensiveHoursIntegration:
                 "enabled": True, "mode": "stop", "threshold_eur_kwh": 0.30,
                 "trigger_negative_net": False, "simulation": False,
             })
+            machine.simulation_disabled = True  # machine armée : action réelle
+            db.commit()
             start_miner()
             pid = state["process"].pid
             print(f"### PS AVANT (pid {pid})\n{ps_line(pid)}")

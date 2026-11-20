@@ -13,6 +13,7 @@ from app.ai_config import get_setting, set_setting
 from app.database import get_db
 from app.dependencies import require_login
 from app.models import AuditLog, Device, Machine
+from app import pilotage
 
 router = APIRouter(prefix="/api/machines", tags=["hiveos"])
 
@@ -49,7 +50,7 @@ def _view(db: Session, machine: Machine) -> dict:
     view["os_kind"] = machine.os_kind
     view["os_kind_detected"] = machine.os_kind_detected
     view["watchdog_ack"] = ack
-    view["simulation"] = True
+    view["simulation"] = pilotage.simulated_for(db, machine)
     return view
 
 
@@ -76,7 +77,7 @@ async def probe_hiveos(machine_id: int, db: Session = Depends(get_db), user=Depe
                 "(§4.1 ter) avant de lancer la sonde."
             ),
         )
-    simulated = bool(get_setting(db, "simulation_mode", True))
+    simulated = pilotage.simulated_for(db, machine)
     try:
         data = await HR.probe(machine, simulated=simulated)
     except HR.HiveosError as exc:

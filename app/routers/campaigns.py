@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app import campaigns as C
 from app import campaign_runner as RUN
+from app import pilotage
 from app import spec_vm as V
 from app.database import get_db
 from app.dependencies import require_login
@@ -250,7 +251,7 @@ def list_campaigns(
         (item for item in payload if item["status"] in ("running", "stopping")), None
     )
     return {
-        "simulation": RUN.simulation_enabled(db),
+        "simulation": pilotage.global_simulation(db),
         "restore_timeout_s": RUN.restore_timeout(db),
         "campaigns": payload,
         "current": current,
@@ -318,7 +319,7 @@ def campaign_options(db: Session = Depends(get_db), _user=Depends(require_login)
         db.query(MinerProfile).filter(MinerProfile.enabled == True).order_by(MinerProfile.name.asc()).all()  # noqa: E712
     )
     return {
-        "simulation": RUN.simulation_enabled(db),
+        "simulation": pilotage.global_simulation(db),
         # §4.6 : mode par défaut du spec mining et modes proposés à la création.
         "default_mode": spec_mode(db),
         "modes": [{"value": mode, "label": V.MODE_LABELS[mode]} for mode in V.SPEC_MODES],

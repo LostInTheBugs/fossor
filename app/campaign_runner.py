@@ -530,12 +530,6 @@ class MinerBackend:
 
 
 # ── Réglages et journal ───────────────────────────────────────────────
-def simulation_enabled(db: Any) -> bool:
-    from app.routers.miners import simulation_enabled as _sim
-
-    return _sim(db)
-
-
 def restore_timeout(db: Any) -> int:
     from app.ai_config import get_setting
 
@@ -1382,7 +1376,9 @@ async def tick(
 
     moment = now or C.now_utc()
     backend = backend or MinerBackend()
-    sim = simulation_enabled(db) if simulated is None else bool(simulated)
+    from app import pilotage as _pilotage
+
+    sim = _pilotage.global_simulation(db) if simulated is None else bool(simulated)
     results: list[dict[str, Any]] = []
     if _LOCK is None:
         _LOCK = asyncio.Lock()
@@ -1397,7 +1393,11 @@ async def tick(
 
                 # Réel seulement si le global **et** toutes les machines de la
                 # campagne l'autorisent (une cible non armée rend le tout simulé).
-                camp_sim = sim or pilotage.campaign_locked(db, campaign)
+                camp_sim = (
+                    pilotage.campaign_simulated(db, campaign)
+                    if simulated is None
+                    else bool(simulated)
+                )
                 if campaign.status == "approved":
                     results.append(await _start(db, campaign, moment, backend, camp_sim))
                 elif campaign.status == "running":

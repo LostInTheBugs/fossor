@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app import pilotage
 from app import energy, rentability
 from app.ai_config import get_setting, set_setting
 from app.database import get_db
@@ -303,4 +304,4 @@ def set_default(choice: DefaultChoice, db: Session = Depends(get_db), user=Depen
     db.commit()
     # §4.19 : le choix n'arme rien — il sera lu au prochain retour au défaut.
     detail["launched"] = False
-    return {"ok": True, "choice": detail, "simulation": get_setting(db, "simulation_mode", True)}
+    return {"ok": True, "choice": detail, "simulation": pilotage.global_simulation(db)}

@@ -292,7 +292,18 @@ async def evaluate(
     decision = ER.decide(
         rule, price_eur_kwh=float(price["price_eur_kwh"]), machines=payload
     )
-    if simulate is not None:
+    if simulate is None:
+        # Décision par le parc concerné : réel seulement si toutes les
+        # machines impliquées sont armées (jamais le global).
+        from app import pilotage
+        from app.models import Machine
+
+        ids = [int(entry["machine_id"]) for entry in payload]
+        rows = db.query(Machine).filter(Machine.id.in_(ids)).all() if ids else []
+        decision["simulated"] = bool(decision.get("simulated")) or not rows or any(
+            pilotage.simulated_for(db, row) for row in rows
+        )
+    else:
         decision["simulated"] = bool(simulate)
 
     if decision["simulated"]:

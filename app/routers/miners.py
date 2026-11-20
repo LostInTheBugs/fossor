@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app import miner_remote as R
 from app import miners as M
+from app import pilotage
 from app.ai_config import get_setting, set_setting
 from app.database import get_db
 from app.dependencies import require_login
@@ -322,7 +323,7 @@ def machine_miner_view(
     ).all()
     chosen = machine.default_miner_profile_id or default_profile_id(db)
     return {
-        "simulation": simulation_enabled(db),
+        "simulation": pilotage.simulated_for(db, machine),
         "machine_id": machine.id,
         "auth_type": machine.auth_type,
         "pilotable": machine.auth_type == "fossor_key",
@@ -376,7 +377,7 @@ async def start_miner(
         _audit(db, machine, "miner-start", "fail", str(exc))
         raise HTTPException(status_code=400, detail=str(exc))
 
-    simulated = simulation_enabled(db)
+    simulated = pilotage.simulated_for(db, machine)
     try:
         result = await R.start(machine, profile_to_dict(profile), argv, simulated=simulated, user=R.service_user(machine))
     except R.MinerError as exc:
@@ -403,7 +404,7 @@ async def stop_miner(
     machine = _machine(db, machine_id)
     _require_pilotable(machine)
     profile = _selected_profile(db, machine, data.get("profile_id"))
-    simulated = simulation_enabled(db)
+    simulated = pilotage.simulated_for(db, machine)
     try:
         result = await R.stop(
             machine, profile_to_dict(profile), simulated=simulated, user=R.service_user(machine)
@@ -431,7 +432,7 @@ async def miner_status(
     machine = _machine(db, machine_id)
     _require_pilotable(machine)
     profile = _selected_profile(db, machine, profile_id)
-    simulated = simulation_enabled(db)
+    simulated = pilotage.simulated_for(db, machine)
     try:
         result = await R.status(
             machine, profile_to_dict(profile), simulated=simulated, user=R.service_user(machine)

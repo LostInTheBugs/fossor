@@ -5,9 +5,10 @@ Deux règles, tenues ici pour être testables sans passer par l'UI :
 * un ASIC est joint par IP, en **lecture seule** : il alimente le suivi mais
   n'entre jamais dans une campagne, une proposition Hermes, la règle « heures
   chères » ni la capacité libre du contexte ;
-* une action réelle exige **deux** autorisations : la simulation globale doit
-  être désactivée *et* la machine doit être armée (« PILOTER »).  Par défaut une
-  machine hérite du global, donc rien ne change en production.
+* une action réelle exige **une** autorisation : la machine doit être armée
+  (« PILOTER »).  Une machine non armée reste simulée quel que soit le global ;
+  le global ON est seulement la valeur par défaut des machines non armées, et
+  le passer à OFF n'arme aucune machine.
 """
 
 from __future__ import annotations
@@ -68,35 +69,41 @@ def machine_armed(machine: Any) -> bool:
 
 
 def simulated_for(db: Any, machine: Any) -> bool:
-    """Réel seulement si le global **et** la machine l'autorisent."""
-    return global_simulation(db) or not machine_armed(machine)
+    """La machine est-elle simulée ? **Une seule règle fait foi.**
+
+    * machine armée (« PILOTER ») → actions réelles, même si le global est ON ;
+    * machine non armée → simulation, toujours, quel que soit le global.
+
+    Le global ON reste la valeur par défaut des machines non armées : le passer
+    à OFF n'arme **aucune** machine.
+    """
+    return not machine_armed(machine)
 
 
 def label(db: Any, machine: Any) -> str:
-    if not machine_armed(machine):
-        return "Simulation"
-    return "Simulation (globale)" if global_simulation(db) else "Pilotage réel"
+    if machine_armed(machine):
+        return "Pilotage réel"
+    return "Simulation (globale)" if global_simulation(db) else "Simulation (machine non armée)"
 
 
 def campaign_locked(db: Any, campaign: Any) -> bool:
-    """Au moins une machine de la campagne n'est pas armée : tout reste simulé."""
+    """Au moins une machine de la campagne est simulée : le lot l'est aussi."""
     from app.campaign_runner import campaign_targets
 
-    return any(not machine_armed(target.machine) for target in campaign_targets(db, campaign))
+    return any(simulated_for(db, target.machine) for target in campaign_targets(db, campaign))
 
 
 def campaign_simulated(db: Any, campaign: Any) -> bool:
-    """Une campagne tourne en réel seulement si **toutes** ses machines sont armées.
+    """Une campagne est réelle seulement si **toutes** ses machines sont armées.
 
-    Une cible non armée rend la campagne simulée : aucune machine de Fred ne peut
-    être pilotée par ricochet parce qu'une autre de la même campagne l'est.
+    Une cible non armée rend la campagne simulée pour tout le lot : aucune
+    machine n'est pilotée par ricochet.  Toute la décision passe par
+    :func:`simulated_for`, jamais par le global.
     """
-    if global_simulation(db):
-        return True
     from app.campaign_runner import campaign_targets
 
     targets = campaign_targets(db, campaign)
-    return any(not machine_armed(target.machine) for target in targets)
+    return not targets or any(simulated_for(db, target.machine) for target in targets)
 
 
 def set_machine_real(db: Any, machine: Any, real: bool, confirm: str | None) -> str:

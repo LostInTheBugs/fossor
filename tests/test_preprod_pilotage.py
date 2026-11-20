@@ -142,14 +142,14 @@ async def test_machine_simulation_requires_piloter_then_stays_under_global(clien
     )
     assert armed.status_code == 200
     assert armed.json()["simulation_disabled"] is True
-    # Le global est resté en simulation : rien ne devient réel.
-    assert armed.json()["simulated"] is True
-    assert armed.json()["pilotage"] == "Simulation (globale)"
+    # Machine armée : elle pilote en réel, même avec le global ON.
+    assert armed.json()["simulated"] is False
+    assert armed.json()["pilotage"] == "Pilotage réel"
 
     listing = await client.get("/api/machines")
     row = next(item for item in listing.json() if item["id"] == host.id)
     assert row["simulation_disabled"] is True
-    assert row["pilotage"] == "Simulation (globale)"
+    assert row["pilotage"] == "Pilotage réel"
 
 
 @pytest.mark.asyncio
@@ -170,7 +170,7 @@ async def test_real_piloting_needs_both_switches(client):
         row.simulation_disabled = False
         db.commit()
         assert pilotage.simulated_for(db, row) is True
-        assert pilotage.label(db, row) == "Simulation"
+        assert pilotage.label(db, row) == "Simulation (machine non armée)"
         set_setting(db, "simulation_mode", True)
         db.commit()
     finally:

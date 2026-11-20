@@ -194,3 +194,13 @@ sources/
 ## License
 
 MIT — See [LICENSE](LICENSE) for details.
+
+## Pilotage réel par machine
+
+Une machine armée (`simulation_disabled = true`, posée avec le mot `PILOTER`)
+exécute ses actions en réel, **même si la simulation globale est ON**. Une
+machine non armée reste simulée quel que soit le global. Le global ON est la
+valeur par défaut des machines non armées ; le passer à OFF n'arme aucune
+machine. La décision passe par une seule fonction, `pilotage.simulated_for(db,
+machine)`. Les ASIC ne sont jamais pilotés.
+

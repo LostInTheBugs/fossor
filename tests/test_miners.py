@@ -52,7 +52,7 @@ BAD_WALLETS = [
     "wallet&&id",
     "wallet\nid",
     "court",
-    "a" * 129,
+    "a" * 161,
     "wallet'quote",
     "wallet|cat",
 ]

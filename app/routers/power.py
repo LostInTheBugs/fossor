@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app import pilotage
 from app import power_control as PC
 from app.database import get_db
 from app.dependencies import require_login
@@ -175,7 +176,7 @@ async def power_action(
     payload = payload or {}
     machine = _machine(db, machine_id)
     row = _controller(db, machine_id)
-    simulated = bool(payload.get("simulated", False))
+    simulated = pilotage.simulated_for(db, machine)
     online = _online(db, machine)
 
     try:

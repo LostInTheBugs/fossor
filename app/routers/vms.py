@@ -23,7 +23,7 @@ from app.ai_config import get_setting, set_setting
 from app.database import get_db
 from app.dependencies import require_login
 from app.models import AuditLog, Campaign, CampaignEvent, Machine, MinerProfile, SpecVm
-from app.routers.miners import simulation_enabled
+from app import pilotage
 
 router = APIRouter(prefix="/api", tags=["vms"])
 
@@ -208,7 +208,7 @@ def read_spec_settings(db: Session = Depends(get_db), _user=Depends(require_logi
             "node_port": V.DEFAULT_NODE_PORT,
             "wallet_backup_path": f"{V.DATA_DIR}/wallet.dat",
         },
-        "simulation": simulation_enabled(db),
+        "simulation": pilotage.global_simulation(db),
     }
 
 
@@ -250,7 +250,7 @@ def write_spec_settings(data: dict, db: Session = Depends(get_db), user=Depends(
 async def host_check(data: dict, db: Session = Depends(get_db), _user=Depends(require_login)):
     """Détection seulement : libvirt utilisable, ou « Proxmox : pilote à venir »."""
     machine = _host(db, int(data.get("machine_id") or 0))
-    simulated = simulation_enabled(db)
+    simulated = pilotage.simulated_for(db, machine)
     result = await VR.hypervisor(machine, simulated=simulated)
     if result.get("driver") == "proxmox":
         # §2.9 : vm_host Proxmox = pveversion **et** /dev/kvm (pilote qm/pvesh).
@@ -301,7 +301,7 @@ def read_vm(vm_id: int, db: Session = Depends(get_db), _user=Depends(require_log
 async def collect_vm(vm_id: int, db: Session = Depends(get_db), _user=Depends(require_login)):
     row = _vm(db, vm_id)
     machine, backend, model = _vm_backend(db, row)
-    simulated = simulation_enabled(db)
+    simulated = pilotage.simulated_for(db, machine)
     from app.routers.miners import profile_to_dict
     from app.models import MinerProfile
 
@@ -335,7 +335,7 @@ async def check_backup(vm_id: int, db: Session = Depends(get_db), user=Depends(r
     if not row.backup_path:
         raise HTTPException(status_code=400, detail="Aucun chemin de sauvegarde enregistré")
     machine, backend, model = _vm_backend(db, row)
-    simulated = simulation_enabled(db)
+    simulated = pilotage.simulated_for(db, machine)
     wallet_mode = "file"
     if row.campaign_id:
         campaign = db.query(Campaign).filter(Campaign.id == row.campaign_id).first()
@@ -397,7 +397,7 @@ async def stop_vm(vm_id: int, db: Session = Depends(get_db), user=Depends(requir
     """Éteint la VM **en la conservant** : le wallet y est."""
     row = _vm(db, vm_id)
     machine, backend, model = _vm_backend(db, row)
-    simulated = simulation_enabled(db)
+    simulated = pilotage.simulated_for(db, machine)
     if not simulated and backend.kind == "libvirt":
         live = await backend.list(machine, simulated=False)
         found = next((item for item in live["vms"] if item["name"] == row.name), None)
@@ -434,7 +434,7 @@ async def destroy_vm(vm_id: int, data: dict, db: Session = Depends(get_db), user
             backup = json.loads(row.backup_state)
         except (TypeError, ValueError):
             backup = None
-    simulated = simulation_enabled(db)
+    simulated = pilotage.simulated_for(db, machine)
     try:
         result = await backend.destroy(
             machine,

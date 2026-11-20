@@ -33,7 +33,7 @@ LATER_MODES: tuple[str, ...] = ()
 TEMPLATE_VARS = ("wallet", "pool", "worker", "gpus", "threads", "api_port", "vm_node")
 
 PATTERNS: dict[str, str] = {
-    "wallet": r"^[A-Za-z0-9:._-]{8,128}$",
+    "wallet": r"^[A-Za-z0-9:._+/=-]{8,160}$",
     "pool": r"^(solo|stratum(\+tcp|\+ssl)?://[A-Za-z0-9.-]+:\d{2,5})$",
     "worker": r"^[A-Za-z0-9_-]{1,32}$",
     "gpus": r"^\d+(,\d+)*$",

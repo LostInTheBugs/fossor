@@ -14,6 +14,7 @@ that fails when called.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 from dataclasses import dataclass
@@ -389,6 +390,9 @@ async def start(
 
     if simulated:
         return _simulated(commands, {"fallback_commands": [s.command() for s in fallback]})
+    if os.environ.get("FOSSOR_E2E_FAKE_DRIVER") == "1":
+        return {"simulated": False, "ok": True, "mode": "fake", "fake_driver": True,
+                "commands": [step.command() for step in commands]}
 
     executed: list[str] = []
     probe: dict[str, Any] = {}
@@ -458,6 +462,9 @@ async def stop(
     systemd_steps = stop_plan_systemd(unit, user)
     if simulated:
         return _simulated(systemd_steps, {"fallback_commands": [s.command() for s in stop_plan_nohup(profile, user)]})
+    if os.environ.get("FOSSOR_E2E_FAKE_DRIVER") == "1":
+        return {"simulated": False, "ok": True, "mode": "fake", "fake_driver": True,
+                "commands": [step.command() for step in systemd_steps]}
 
     executed: list[str] = []
     probe_step = Step("outils disponibles", _sh(PROBE_SCRIPT))

@@ -267,7 +267,7 @@ async def post_proposal(
     # Une machine absente de la base ne lance jamais rien.
     simulated = any(
         machines.get(device.machine_id) is None
-        or not PIL.machine_armed(machines[device.machine_id])
+        or PIL.simulated_for(db, machines[device.machine_id])
         for device in devices
     )
     plan = R.plan_auto_launch(db, kind, simulated)

@@ -73,6 +73,15 @@ async def test_tokens_evalues_filtres(e2e_server):
 @pytest.mark.asyncio
 async def test_dashboard_badge_dernier_evenement(e2e_server):
     status = json.loads((FIXTURES / "parite-status.json").read_text(encoding="utf-8"))
+    # La base e2e est partagée : les campagnes des autres tests ont des
+    # événements plus récents. On date l'import pour que « dernier événement »
+    # désigne bien celui du scénario, sans toucher au code.
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    status["updated"] = now.isoformat()
+    for index, event in enumerate(status.get("events") or []):
+        event["ts"] = (now - timedelta(minutes=index)).isoformat()
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
         context = await browser.new_context(viewport={"width": 1280, "height": 900})

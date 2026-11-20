@@ -64,6 +64,10 @@ async def test_electricity_tariffs_rule_and_power_controller(e2e_server):
     created = api.post("/api/machines", json={"name": "rig-e2e-prise", "host": "192.0.2.90"})
     assert created.status_code in (200, 201), created.text
     machine_id = created.json()["id"]
+    # Règle par machine : sans armement, la coupure reste simulée.
+    armed = api.put(f"/api/machines/{machine_id}/simulation",
+                    json={"real": True, "confirm": "PILOTER"})
+    assert armed.status_code == 200, armed.text
     saved = api.put(f"/api/machines/{machine_id}/power-controller", json={
         "kind": "shelly_gen1", "url": fake.url, "max_per_day": 3, "min_delay_s": 5,
     })

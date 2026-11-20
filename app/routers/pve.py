@@ -19,7 +19,7 @@ from app.ai_config import get_setting, set_setting
 from app.database import get_db
 from app.dependencies import require_login
 from app.models import AuditLog
-from app.routers.miners import simulation_enabled
+from app import pilotage
 from app.routers.vms import _host
 
 router = APIRouter(prefix="/api", tags=["pve"])
@@ -102,7 +102,7 @@ def read_pve_settings(db: Session = Depends(get_db), _user=Depends(require_login
             for m in hosts
         ],
         "checksum_algos": list(P.CHECKSUM_ALGOS),
-        "simulation": simulation_enabled(db),
+        "simulation": pilotage.global_simulation(db),
     }
 
 
@@ -131,7 +131,6 @@ async def read_pve_cache(db: Session = Depends(get_db), _user=Depends(require_lo
     """Cache d'image du pilote : taille, chemin, contenu (lecture seule)."""
     from app import pve_remote as PR
     from app.models import Machine
-    from app.routers.miners import simulation_enabled
 
     model = stored_pve_model(db)
     if not model:
@@ -143,7 +142,7 @@ async def read_pve_cache(db: Session = Depends(get_db), _user=Depends(require_lo
     if machine is None:
         raise HTTPException(status_code=400, detail="Machine hôte introuvable")
     try:
-        info = await PR.cache_info(machine, model, simulated=simulation_enabled(db))
+        info = await PR.cache_info(machine, model, simulated=pilotage.simulated_for(db, machine))
         info["configured"] = True
         return info
     except Exception as exc:
@@ -155,7 +154,6 @@ async def clear_pve_cache(db: Session = Depends(get_db), user=Depends(require_lo
     """« Vider le cache » : supprime le dossier de travail du pilote sur l'hôte."""
     from app import pve_remote as PR
     from app.models import Machine
-    from app.routers.miners import simulation_enabled
 
     model = stored_pve_model(db)
     if not model:
@@ -164,7 +162,7 @@ async def clear_pve_cache(db: Session = Depends(get_db), user=Depends(require_lo
     if machine is None:
         raise HTTPException(status_code=400, detail="Machine hôte introuvable")
     try:
-        result = await PR.clear_cache(machine, simulated=simulation_enabled(db))
+        result = await PR.clear_cache(machine, simulated=pilotage.simulated_for(db, machine))
     except Exception as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     _audit(db, user, "spec-pve-cache-clear", result.get("path") or "",
@@ -209,7 +207,7 @@ async def inspect_pve(data: dict, db: Session = Depends(get_db), _user=Depends(r
     if data.get("model"):
         model.update({key: value for key, value in data["model"].items() if value is not None})
     try:
-        return await PR.inspect(machine, simulated=simulation_enabled(db), model=model)
+        return await PR.inspect(machine, simulated=pilotage.simulated_for(db, machine), model=model)
     except PR.PveRemoteError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
@@ -219,6 +217,6 @@ async def detect_pve(data: dict, db: Session = Depends(get_db), _user=Depends(re
     """``pveversion`` **et** ``/dev/kvm`` : confirme (ou non) ``vm_host``."""
     machine = _host(db, int(data.get("machine_id") or 0))
     try:
-        return await PR.detect(machine, simulated=simulation_enabled(db))
+        return await PR.detect(machine, simulated=pilotage.simulated_for(db, machine))
     except PR.PveRemoteError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
