@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
-from app import ai_client, ai_config
+from app import ai_client, ai_config, veille
 from app.ai_config import AIError, WHICHES
 from app.database import get_db
 from app.dependencies import require_login
@@ -74,6 +74,29 @@ async def test_ai_provider(
         summary = f"which={which} erreur={result.get('error')} latency_ms={result.get('latency_ms')}"
         _audit(db, "ai-test", "erreur", summary)
     return result
+
+
+@router.get("/veille")
+def get_veille(db: Session = Depends(get_db), _user=Depends(require_login)):
+    """État du dernier tick + cadence de la règle « cadence de la veille »."""
+    return veille.snapshot(db)
+
+
+@router.post("/veille/run", status_code=202)
+def run_veille(
+    request: Request,
+    db: Session = Depends(get_db),
+    _user=Depends(require_login),
+):
+    """Déclenche un tick Hermes ; le tick tourne en arrière-plan (polling GET)."""
+    ok, reason = veille.provider_ready(db)
+    if not ok:
+        raise HTTPException(status_code=400, detail=f"Veille indisponible : {reason}")
+    state = veille.trigger(db, "ui", str(request.base_url).rstrip("/"))
+    if state.get("already_running"):
+        raise HTTPException(status_code=409, detail="Une veille est déjà en cours")
+    _audit(db, "veille-hermes", "lancée", "tick déclenché depuis l'écran Analyse des tokens")
+    return veille.snapshot(db)
 
 
 @router.post("/token")

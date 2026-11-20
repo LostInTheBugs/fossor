@@ -2,6 +2,22 @@
 
 ## 2026.11.011 (en cours)
 
+### Veille pilotée par Fossor (étape 4b)
+
+- **Tick de veille** déclenché par Fossor : bouton « Lancer une veille maintenant » dans
+  Analyse des tokens, et cadence de la règle `watch_cadence` (elle prend le relais après
+  le premier tick manuel). Fossor appelle le provider `hermes-agent` (§4.12) avec une
+  consigne courte qui charge le skill `spec-mining-fossor` ; l'état du dernier tick
+  (heure, durée, résultat, analyses, candidats, propositions) est affiché.
+- **Contexte enrichi** : `GET /api/hermes/context` expose les profils utilisables
+  (id, coin, logiciel, mode) sans wallet ni cmdline, pour qu'une proposition puisse
+  désigner un profil réel.
+- Le tick tourne en arrière-plan (thread) et ne peut ni lancer ni arrêter un mineur :
+  aucune commande SSH dans ce chemin, les propositions attendent l'approbation de Fred.
+- **E2E HiveOS stabilisé** : le test attend l'état de la campagne après approbation et
+  traite « Campagne running » comme un démarrage réussi (le planificateur peut gagner
+  la course).
+
 ### Règles d'analyse et API Hermes (étape 4a)
 
 - **Règles/triggers** (§4.8) : douze règles par défaut (fraîcheur 72 h, ASIC-only exclu,

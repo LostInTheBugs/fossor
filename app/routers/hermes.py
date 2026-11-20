@@ -142,6 +142,19 @@ def context(db: Session = Depends(get_db), _actor: str = Depends(require_hermes_
             }
             for coin in catalogue
         ],
+        # Profils utilisables pour une proposition : jamais le wallet, jamais
+        # l'URL du binaire ni la cmdline — seulement de quoi choisir un profil.
+        "profiles": [
+            {
+                "id": profile.id,
+                "name": profile.name,
+                "coin": profile.coin,
+                "software": profile.software,
+                "execution_mode": profile.execution_mode,
+                "active": bool(profile.enabled),
+            }
+            for profile in db.query(MinerProfile).order_by(MinerProfile.name).limit(200).all()
+        ],
         "capacity": R.free_capacity(db),
         "last_analysis": A.analysis_to_dict(last) if last is not None else None,
         "limits": {

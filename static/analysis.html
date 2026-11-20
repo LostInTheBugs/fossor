@@ -77,6 +77,16 @@ label{display:block;color:var(--muted);font-size:11px;font-weight:600;margin-bot
   </div>
 
   <div class="card">
+    <h2>Veille Hermes</h2>
+    <div class="row">
+      <button class="btn" id="veilleBtn">Lancer une veille maintenant</button>
+      <span class="sub" id="veilleCadence"></span>
+    </div>
+    <div id="veilleMsg"></div>
+    <div class="panel" id="veilleState"><div class="sub">Aucun tick enregistré.</div></div>
+  </div>
+
+  <div class="card">
     <h2>Journal des analyses</h2>
     <div id="analysesMsg"></div>
     <div id="analyses"></div>
@@ -284,6 +294,63 @@ label{display:block;color:var(--muted);font-size:11px;font-weight:600;margin-bot
     }
   });
 
+  var veilleTimer = null;
+  function loadVeille() {
+    fetch("/api/config/ai/veille", { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error(r.status)); })
+      .then(function (data) {
+        var t = data.last_tick || null;
+        var btn = $("#veilleBtn");
+        btn.disabled = !!data.running;
+        btn.textContent = data.running ? "Veille en cours…" : "Lancer une veille maintenant";
+        $("#veilleCadence").textContent = "Cadence : toutes les " + data.cadence_hours + " h" +
+          (data.cadence_enabled ? "" : " (règle désactivée)");
+        if (!t) {
+          $("#veilleState").innerHTML = '<div class="sub">Aucun tick enregistré.' +
+            (data.provider_ready ? "" : " " + esc(data.provider_reason)) + "</div>";
+        } else {
+          var status = t.status === "ok" ? "Terminé" : (t.status === "running" ? "En cours" : "Échec");
+          var when = t.finished_at || t.started_at;
+          var duration = t.duration_s == null ? "—" : (t.duration_s + " s");
+          $("#veilleState").innerHTML =
+            '<div class="row" style="justify-content:space-between">' +
+            "<div><b>" + esc(status) + "</b> — " + esc(fmtDate(when)) + "</div>" +
+            '<div class="mono">déclencheur ' + esc(t.trigger || "—") + " · durée " + esc(duration) + "</div></div>" +
+            '<div class="mono" style="margin-top:6px">' + esc(t.result || "") + "</div>" +
+            '<div class="mono" style="margin-top:6px">' + (t.analyses || 0) + " analyse(s) · " +
+            (t.candidates || 0) + " candidat(s) · " + (t.proposals || 0) + " proposition(s)</div>";
+        }
+        if (data.running && !veilleTimer) {
+          veilleTimer = setInterval(loadVeille, 4000);
+        } else if (!data.running && veilleTimer) {
+          clearInterval(veilleTimer);
+          veilleTimer = null;
+          loadAnalyses();
+        }
+      })
+      .catch(function (err) { msg($("#veilleMsg"), "État de la veille indisponible : " + err.message); });
+  }
+
+  $("#veilleBtn").addEventListener("click", function () {
+    msg($("#veilleMsg"), "");
+    $("#veilleBtn").disabled = true;
+    fetch("/api/config/ai/veille/run", { method: "POST", credentials: "same-origin" })
+      .then(function (r) {
+        return r.json().then(function (data) {
+          if (!r.ok) { throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail)); }
+          return data;
+        });
+      })
+      .then(function () {
+        msg($("#veilleMsg"), "Veille lancée : elle tourne en arrière-plan.", "ok");
+        loadVeille();
+      })
+      .catch(function (err) {
+        $("#veilleBtn").disabled = false;
+        msg($("#veilleMsg"), err.message);
+      });
+  });
+
   function loadAnalyses() {
     fetch("/api/analyses?limit=60", { credentials: "same-origin" })
       .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error(r.status)); })
@@ -345,6 +412,7 @@ label{display:block;color:var(--muted);font-size:11px;font-weight:600;margin-bot
   $("#importBtn").addEventListener("click", function () { importRequest(false); });
 
   loadRules();
+  loadVeille();
   loadAnalyses();
 })();
 </script>

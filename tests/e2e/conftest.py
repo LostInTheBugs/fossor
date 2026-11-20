@@ -23,6 +23,8 @@ def e2e_server():
         "DATABASE_URL": f"sqlite:///{E2E_DATA_DIR}/fossor.db",
         "FOSSOR_ADMIN_PASSWORD": "adminpass",
         "FOSSOR_MASTER_KEY": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v=",
+        # Pas de tick automatique pendant la suite : le test 4b déclenche le sien.
+        "FOSSOR_VEILLE_SCHEDULER": "0",
     }
     # Clean slate
     import shutil

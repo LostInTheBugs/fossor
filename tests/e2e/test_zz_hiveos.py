@@ -186,7 +186,25 @@ async def test_hiveos_screen_and_campaign(e2e_server):
                 };
                 const created = await post('/api/campaigns', payload);
                 await post('/api/campaigns/' + created.id + '/approve', {});
-                await post('/api/campaigns/' + created.id + '/start', {});
+                // Le planificateur peut démarrer la campagne approuvée avant
+                // ce POST : on attend l'état, et un 409 « déjà running » est
+                // un succès, pas un échec.
+                for (let i = 0; i < 30; i += 1) {
+                    const res = await fetch('/api/campaigns/' + created.id);
+                    const current = await res.json();
+                    if (current.status === 'running') { return created.id; }
+                    if (current.status === 'done' || current.status === 'failed') { break; }
+                    await new Promise((resolve) => setTimeout(resolve, 200));
+                }
+                const started = await fetch('/api/campaigns/' + created.id + '/start', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'
+                });
+                if (!started.ok) {
+                    const text = await started.text();
+                    if (!text.includes('Campagne running')) {
+                        throw new Error('start ' + started.status + ' ' + text);
+                    }
+                }
                 return created.id;
             }""",
             {
