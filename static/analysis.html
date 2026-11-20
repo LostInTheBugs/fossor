@@ -56,6 +56,16 @@ label{display:block;color:var(--muted);font-size:11px;font-weight:600;margin-bot
 .cand .cols b{font-size:10.5px;text-transform:uppercase;letter-spacing:.3px;color:var(--muted)}
 .stage{font-size:10px;border:1px solid var(--yellow);color:var(--yellow);border-radius:999px;padding:1px 7px;margin-left:6px}
 .hist{font-size:11.5px;border-top:1px solid #232b37;padding:6px 0}
+.tokbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.chipbtn{background:#0f141b;color:var(--muted);border:1px solid var(--border);border-radius:999px;padding:4px 11px;font-size:11.5px;font-weight:600}
+.chipbtn:hover{color:var(--txt)}
+.chipbtn.sel{background:#1a2230;border-color:var(--accent);color:var(--txt)}
+.toktab .pour li{color:#9fe0b4}
+.toktab .contre li{color:#f0a1a1}
+.toktab ul{margin:2px 0 0 14px;font-size:11px}
+.toktab .toklinks a{color:var(--accent);text-decoration:none;font-size:10.5px;margin-right:6px}
+.toktab .tokname{font-weight:700;font-size:12.5px}
+.toktab .histbox{background:#0f141b}
 </style>
   <script src="/static/nav.js" defer></script>
 </head>
@@ -84,6 +94,21 @@ label{display:block;color:var(--muted);font-size:11px;font-weight:600;margin-bot
     </div>
     <div id="veilleMsg"></div>
     <div class="panel" id="veilleState"><div class="sub">Aucun tick enregistré.</div></div>
+  </div>
+
+  <div class="card">
+    <h2>Tokens évalués</h2>
+    <p class="sub" style="margin-bottom:10px">Une ligne par token, agrégée sur toutes les analyses. Filtres cumulables (verdicts + recherche) ; l'historique se déplie ligne par ligne.</p>
+    <div class="row" style="margin-bottom:10px">
+      <input id="tokSearch" type="text" placeholder="Rechercher un nom ou un ticker" style="max-width:320px">
+      <span class="sub" id="tokCount"></span>
+    </div>
+    <div class="tokbar" id="tokFilters"></div>
+    <div id="tokMsg"></div>
+    <table class="toktab"><thead><tr>
+      <th>Token</th><th>Dernier verdict</th><th>Algo</th><th>Âge</th>
+      <th>1re éval.</th><th>Dernière éval.</th><th>Pour / contre</th><th>Évals</th>
+    </tr></thead><tbody id="tokRows"></tbody></table>
   </div>
 
   <div class="card">
@@ -377,6 +402,110 @@ label{display:block;color:var(--muted);font-size:11px;font-weight:600;margin-bot
       .catch(function (err) { msg($("#analysesMsg"), "Journal indisponible : " + err.message); });
   }
 
+  var tokState = { rows: [], verdicts: [], sel: new Set(), q: "" };
+
+  function deburr(value) {
+    return String(value == null ? "" : value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  }
+
+  function tokAnchor(key) {
+    return String(key || "").replace(/[^A-Za-z0-9_-]/g, "_");
+  }
+
+  function previewList(items, css) {
+    var list = (items || []);
+    if (!list.length) { return ""; }
+    var shown = list.slice(0, 3).map(function (item) { return "<li>" + esc(item) + "</li>"; }).join("");
+    var more = list.length > 3 ? '<li class="mono">+' + (list.length - 3) + ' autre(s)</li>' : "";
+    return '<ul class="' + css + '">' + shown + more + "</ul>";
+  }
+
+  function renderTokFilters() {
+    var parts = ['<button class="chipbtn' + (tokState.sel.size === 0 ? " sel" : "") +
+      '" data-tokfilter="">Tous (' + tokState.rows.length + ")</button>"];
+    tokState.verdicts.forEach(function (entry) {
+      var on = tokState.sel.has(entry.value) ? " sel" : "";
+      parts.push('<button class="chipbtn' + on + '" data-tokfilter="' + esc(entry.value) + '">' +
+        esc(entry.label) + " (" + entry.count + ")</button>");
+    });
+    $("#tokFilters").innerHTML = parts.join("");
+  }
+
+  function renderTokens() {
+    var query = deburr(tokState.q);
+    var rows = tokState.rows.filter(function (row) {
+      if (tokState.sel.size && !tokState.sel.has(row.verdict)) { return false; }
+      if (query && deburr(row.ticker + " " + row.name).indexOf(query) < 0) { return false; }
+      return true;
+    });
+    $("#tokCount").textContent = rows.length + " / " + tokState.rows.length + " token(s)" +
+      " · " + tokState.rows.reduce(function (acc, row) { return acc + row.evaluations; }, 0) + " évaluation(s)";
+    var html = rows.map(function (row) {
+      var anchor = tokAnchor(row.key);
+      var cls = ["retenu", "surveillance", "rejete"].indexOf(row.verdict) >= 0 ? row.verdict : "scope";
+      var links = (row.links || []).map(function (link) {
+        var label = /github/i.test(link) ? "GitHub" : (/explor/i.test(link) ? "explorer" : (/bitcointalk|ANN/i.test(link) ? "ANN" : link.replace(/^https?:\/\//, "").slice(0, 22)));
+        return '<a href="' + esc(link) + '" target="_blank" rel="noopener">' + esc(label) + "</a>";
+      }).join("");
+      var history = (row.history || []).map(function (item) {
+        return '<div class="hist"><span class="mono">' + esc(fmtDate(item.ts)) + "</span> — " +
+          '<span class="chip ' + (["retenu", "surveillance", "rejete"].indexOf(item.verdict) >= 0 ? item.verdict : "scope") + '">' +
+          esc(item.verdict_label || item.verdict) + "</span> " + esc(item.run || "") +
+          (item.age ? ' <span class="mono">· âge ' + esc(item.age) + "</span>" : "") +
+          '<div class="cols" style="margin-top:4px"><div><b>Pour</b>' + (previewList(item.pour, "pour") || '<div class="mono">—</div>') +
+          '</div><div><b>Contre</b>' + (previewList(item.contre, "contre") || '<div class="mono">—</div>') + "</div></div></div>";
+      }).join("");
+      return '<tr><td><div class="tokname">' + esc(row.ticker || row.name) + "</div>" +
+        '<div class="mono">' + esc(row.name || "") + "</div>" +
+        (links ? '<div class="toklinks">' + links + "</div>" : "") + "</td>" +
+        '<td><span class="chip ' + cls + '">' + esc(row.verdict_label || row.verdict) + "</span></td>" +
+        '<td class="mono">' + esc(row.algo || "—") + "</td>" +
+        "<td>" + esc(row.age || "—") + "</td>" +
+        '<td class="mono">' + esc(fmtDate(row.first_ts)) + "</td>" +
+        '<td class="mono">' + esc(fmtDate(row.last_ts)) + "</td>" +
+        "<td>" + (previewList(row.pour, "pour") || '<div class="mono">—</div>') +
+        (previewList(row.contre, "contre")) + "</td>" +
+        '<td><button class="btn sm ghost" data-hist="' + esc(anchor) + '">' + row.evaluations + " éval.</button></td></tr>" +
+        '<tr class="histbox" data-histrow="' + esc(anchor) + '" style="display:none"><td colspan="8">' + history + "</td></tr>";
+    }).join("");
+    $("#tokRows").innerHTML = html || '<tr><td colspan="8" class="sub">Aucun token ne correspond aux filtres.</td></tr>';
+  }
+
+  function loadTokens() {
+    fetch("/api/analyses/tokens", { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error(r.status)); })
+      .then(function (data) {
+        tokState.rows = data.tokens || [];
+        tokState.verdicts = data.verdicts || [];
+        renderTokFilters();
+        renderTokens();
+      })
+      .catch(function (err) { msg($("#tokMsg"), "Tokens évalués indisponibles : " + err.message); });
+  }
+
+  $("#tokSearch").addEventListener("input", function (event) {
+    tokState.q = event.target.value;
+    renderTokens();
+  });
+
+  document.addEventListener("click", function (event) {
+    var chip = event.target.closest("[data-tokfilter]");
+    if (chip) {
+      var value = chip.getAttribute("data-tokfilter");
+      if (!value) { tokState.sel.clear(); }
+      else if (tokState.sel.has(value)) { tokState.sel.delete(value); }
+      else { tokState.sel.add(value); }
+      renderTokFilters();
+      renderTokens();
+      return;
+    }
+    var hist = event.target.closest("[data-hist]");
+    if (hist) {
+      var row = document.querySelector('[data-histrow="' + hist.getAttribute("data-hist") + '"]');
+      if (row) { row.style.display = row.style.display === "none" ? "table-row" : "none"; }
+    }
+  });
+
   function importRequest(dryRun) {
     var url = $("#importUrl").value.trim();
     var file = $("#importFile").files[0];
@@ -403,7 +532,7 @@ label{display:block;color:var(--muted);font-size:11px;font-weight:600;margin-bot
             (item.candidates || []).map(function (c) { return (c.ticker || c.name) + " (" + c.verdict + ")"; }).join(", "));
         });
         msg($("#importMsg"), lines.join("\n"), data.dry_run ? "ok" : "ok");
-        if (!data.dry_run) { loadAnalyses(); }
+        if (!data.dry_run) { loadAnalyses(); loadTokens(); }
       })
       .catch(function (err) { msg($("#importMsg"), err.message); });
   }
@@ -413,6 +542,7 @@ label{display:block;color:var(--muted);font-size:11px;font-weight:600;margin-bot
 
   loadRules();
   loadVeille();
+  loadTokens();
   loadAnalyses();
 })();
 </script>

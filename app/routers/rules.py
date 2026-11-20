@@ -156,6 +156,27 @@ def list_analyses(
     return {"analyses": [A.analysis_to_dict(row) for row in rows], "count": len(rows)}
 
 
+@router.get("/analyses/tokens")
+def token_table(
+    verdicts: str = "",
+    q: str = "",
+    db: Session = Depends(get_db),
+    _user=Depends(require_login),
+):
+    """Tableau « Tokens évalués » : une ligne par token, agrégée sur toutes les analyses."""
+    rows = db.query(Analysis).order_by(Analysis.ts.asc(), Analysis.id.asc()).all()
+    tokens = A.token_rows([A.analysis_to_dict(row) for row in rows])
+    selected = [item.strip() for item in verdicts.split(",") if item.strip()]
+    filtered = A.filter_token_rows(tokens, selected, q)
+    return {
+        "tokens": filtered,
+        "total": len(tokens),
+        "filtered": len(filtered),
+        "evaluations": sum(row["evaluations"] for row in tokens),
+        "verdicts": A.verdict_catalog(tokens),
+    }
+
+
 @router.get("/analyses/{analysis_id}")
 def read_analysis(
     analysis_id: int, db: Session = Depends(get_db), _user=Depends(require_login)

@@ -149,6 +149,7 @@ def init_db():
     _migrate_miner_binary_columns()
     _migrate_spec_vm_hashrate_columns()
     _migrate_campaign_analysis_id()
+    _migrate_mined_campaign_events()
 
 
 def _migrate_spec_vm_pve_columns():
@@ -267,6 +268,11 @@ def _migrate_campaign_execution_mode():
 def _migrate_campaign_analysis_id():
     """Add campaigns.analysis_id (§4.9/§5.4) — analyse Hermes d'origine."""
     _add_column_if_missing("campaigns", "analysis_id", "analysis_id INTEGER")
+
+
+def _migrate_mined_campaign_events():
+    """Add mined_campaigns.events — prolongations et notes (parité mining.html)."""
+    _add_column_if_missing("mined_campaigns", "events", "events JSON")
 
 
 def _migrate_machine_status_api_error_column():

@@ -227,3 +227,115 @@ def fetch_document(url: str) -> Any:
         return json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise AnalysisError(f"JSON invalide : {exc}") from exc
+
+
+VERDICT_LABELS = {"retenu": "retenu", "surveillance": "surveillance", "rejete": "rejeté"}
+BASE_VERDICTS = ("retenu", "surveillance", "rejete")
+
+
+def verdict_key(value: Any) -> str:
+    """Clé de verdict stable ; un verdict inconnu garde son propre libellé."""
+    raw = _text(value)
+    text = _strip_accents(raw.lower())
+    if text.startswith("retenu"):
+        return "retenu"
+    if text.startswith("surveill"):
+        return "surveillance"
+    if text.startswith("rejet") or not text:
+        return "rejete"
+    return re.sub(r"[^a-z0-9]+", "-", text).strip("-") or "rejete"
+
+
+def token_rows(analyses: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Une ligne par token, agrégée sur toutes les analyses (ordre chronologique)."""
+    rows: dict[str, dict[str, Any]] = {}
+    ordered = sorted(enumerate(analyses), key=lambda item: (item[1].get("ts") or "", item[0]))
+    for _index, analysis in ordered:
+        ts = _text(analysis.get("ts"), 40)
+        for candidate in analysis.get("candidates") or []:
+            ticker = _text(candidate.get("ticker"), 20).upper()
+            name = _text(candidate.get("name"), 200)
+            key = ticker or _strip_accents(name.lower())
+            if not key:
+                continue
+            row = rows.get(key)
+            if row is None:
+                row = rows[key] = {
+                    "key": key,
+                    "ticker": ticker,
+                    "name": name or ticker,
+                    "algo": "",
+                    "links": [],
+                    "verdict": "rejete",
+                    "verdict_label": "rejeté",
+                    "first_ts": ts,
+                    "last_ts": ts,
+                    "age": "",
+                    "pour": [],
+                    "contre": [],
+                    "evaluations": 0,
+                    "history": [],
+                }
+            verdict = verdict_key(candidate.get("verdict"))
+            entry = {
+                "ts": ts,
+                "run": _text(analysis.get("run"), 80),
+                "verdict": verdict,
+                "verdict_label": VERDICT_LABELS.get(verdict, _text(candidate.get("verdict"), 40) or verdict),
+                "age": _text(candidate.get("age"), 80),
+                "pour": _string_list(candidate.get("pour")),
+                "contre": _string_list(candidate.get("contre")),
+            }
+            for link in _string_list(candidate.get("links")):
+                if link not in row["links"]:
+                    row["links"].append(link)
+            row["history"].append(entry)
+            row["evaluations"] += 1
+            if ts and (not row["first_ts"] or ts < row["first_ts"]):
+                row["first_ts"] = ts
+            if ts >= (row["last_ts"] or ""):
+                row["last_ts"] = ts
+                row["verdict"] = verdict
+                row["verdict_label"] = entry["verdict_label"]
+                row["age"] = entry["age"]
+                row["pour"] = entry["pour"]
+                row["contre"] = entry["contre"]
+                row["ticker"] = ticker or row["ticker"]
+                row["name"] = name or row["name"]
+                row["algo"] = _text(candidate.get("algo"), 200) or row["algo"]
+    for row in rows.values():
+        row["history"].reverse()
+    return sorted(rows.values(), key=lambda item: item["last_ts"] or "", reverse=True)
+
+
+def verdict_catalog(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Puces de filtre : les trois verdicts de base puis ceux présents dans les données."""
+    counts: dict[str, int] = {}
+    labels: dict[str, str] = {}
+    for row in rows:
+        key = row["verdict"]
+        counts[key] = counts.get(key, 0) + 1
+        labels[key] = row.get("verdict_label") or VERDICT_LABELS.get(key, key)
+    order = list(BASE_VERDICTS) + sorted(key for key in counts if key not in BASE_VERDICTS)
+    return [
+        {"value": key, "label": labels.get(key, VERDICT_LABELS.get(key, key)), "count": counts.get(key, 0)}
+        for key in order
+    ]
+
+
+def filter_token_rows(
+    rows: list[dict[str, Any]], verdicts: list[str] | None = None, query: str = ""
+) -> list[dict[str, Any]]:
+    """Sélection multiple de verdicts (vide = tous) et recherche nom/ticker."""
+    selected = {_text(item, 40) for item in (verdicts or []) if _text(item, 40)}
+    needle = _strip_accents(_text(query, 120).lower())
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if selected and row["verdict"] not in selected:
+            continue
+        if needle:
+            haystack = _strip_accents(f"{row.get('ticker', '')} {row.get('name', '')}".lower())
+            if needle not in haystack:
+                continue
+        out.append(row)
+    return out

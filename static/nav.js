@@ -14,6 +14,7 @@
     ["/analysis", "🔎 Analyse des tokens"],
     ["/mined", "🪙 Tokens minés"],
     ["/followup", "📈 Suivi"],
+    ["/help", "📖 Comment ça marche"],
     ["/settings", "⚙️ Configuration"],
     ["/audit", "📋 Log"]
   ];

@@ -170,6 +170,16 @@ def _campaign(
 
     address = _s(entry.get("adresse") or entry.get("wallet")) or None
 
+    events: list[dict[str, Any]] = []
+    verdict = _s(entry.get("verdict"))
+    if verdict and state != "active":
+        events.append(
+            {
+                "ts": _s(entry.get("end_iso") or entry.get("start_iso")),
+                "type": "end",
+                "msg": verdict,
+            }
+        )
     return {
         "legacy_key": key,
         "source": "legacy",
@@ -189,6 +199,7 @@ def _campaign(
         "hashrate": _s(entry.get("hashrate")) or None,
         "links": _links(entry),
         "notes": _s(entry.get("notes") or entry.get("note")) or None,
+        "events": events,
         "last_balance": balance,
         "balance_note": balance_note,
     }
@@ -268,6 +279,32 @@ def _live_campaigns(status: dict[str, Any], live: dict[str, Any], known: set[str
         campaign["hashrate"] = hashrate or None
         out.append(campaign)
     return out
+
+
+def _attach_events(campaigns: list[dict[str, Any]], events: Any) -> None:
+    """Rattache chaque événement global à sa campagne (ticker ou nom cité)."""
+    for event in events or []:
+        if not isinstance(event, dict):
+            continue
+        message = _s(event.get("msg") or event.get("message"))
+        if not message:
+            continue
+        target = None
+        for campaign in campaigns:
+            ticker = _s(campaign.get("coin_ticker")).upper()
+            name = _s(campaign.get("coin_name"))
+            hit = (ticker and re.search(rf"\b{re.escape(ticker)}\b", message, re.IGNORECASE)) or (
+                name and name.lower() in message.lower()
+            )
+            if hit:
+                if campaign.get("state") == "active":
+                    target = campaign
+                    break
+                target = target or campaign
+        if target is not None:
+            target.setdefault("events", []).append(
+                {"ts": _s(event.get("ts")), "type": _s(event.get("type")) or "note", "msg": message}
+            )
 
 
 def build_plan(
@@ -366,6 +403,8 @@ def build_plan(
         campaigns.append(_campaign(_campaign_key("history", ticker, entry), entry, ticker, state, balances, markets))
         remember_coin(ticker, entry)
         remember_wallet(ticker, entry)
+
+    _attach_events(campaigns, status.get("events"))
 
     return {
         "source": source,

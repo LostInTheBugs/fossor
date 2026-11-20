@@ -96,7 +96,8 @@ def _patch_key():
 class TestWhitelist:
     def test_only_whitelisted_commands(self):
         assert set(WHITELISTED_COMMANDS.keys()) == {
-            "identify", "detect_hw", "collect_stats", "inventory", "miner_api", "hiveos_probe"
+            "identify", "detect_hw", "collect_stats", "inventory", "miner_api", "hiveos_probe",
+            "solo_getbalance"
         }
 
     def test_collect_stats_has_five_sections_and_no_sudo(self):

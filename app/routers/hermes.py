@@ -187,7 +187,7 @@ def post_analysis(
 
 
 @router.post("/proposals", status_code=201)
-def post_proposal(
+async def post_proposal(
     payload: R.ProposalIn,
     db: Session = Depends(get_db),
     _actor: str = Depends(require_hermes_token),
@@ -256,10 +256,62 @@ def post_proposal(
         "proposée",
         f"{len(devices)} device(s), mode {campaign.execution_mode}",
     )
+    from app import campaigns as C
+    from app import pilotage as PIL
+    from app.models import Machine
+
+    kinds = {device.kind for device in devices}
+    kind = "cpu" if kinds == {"cpu"} else ("gpu" if kinds == {"gpu"} else "")
+    machines = {machine.id: machine for machine in db.query(Machine).all()}
+    # « simulation désactivée » = machine armée (verrou local ou global levé).
+    # Une machine absente de la base ne lance jamais rien.
+    simulated = any(
+        machines.get(device.machine_id) is None
+        or not PIL.machine_armed(machines[device.machine_id])
+        for device in devices
+    )
+    plan = R.plan_auto_launch(db, kind, simulated)
+    started = False
+    reason = plan["reason"]
+    if plan["launch"]:
+        C.apply_transition(campaign, "approved")
+        RUN.log_event(
+            db,
+            campaign,
+            "approved",
+            "approbation automatique (règle auto_launch)",
+            actor="hermes",
+        )
+        db.commit()
+        from app.routers.campaigns import start_campaign
+
+        try:
+            await start_campaign(campaign.id, db, "hermes")
+            db.refresh(campaign)
+            started = campaign.status == "running"
+        except HTTPException as exc:
+            reason = f"lancement refusé : {exc.detail}"
+        db.refresh(campaign)
+    elif plan["allowed"]:
+        RUN.log_event(
+            db,
+            campaign,
+            "auto_launch_simulated",
+            "règle auto_launch active, machine en simulation : lancement simulé",
+            actor="hermes",
+            simulated=True,
+        )
+        db.commit()
+    message = "Proposition déposée : elle attend l'approbation de Fred."
+    if started:
+        message = "Campagne lancée automatiquement (règle auto_launch)."
+    elif plan["allowed"]:
+        message = "Règle auto_launch active : lancement simulé, la campagne reste proposée."
     return {
         "campaign": _campaign_brief(db, campaign),
-        "status": "proposed",
-        "auto_launch": False,
+        "status": campaign.status,
+        "auto_launch": bool(started),
+        "auto_launch_detail": {**plan, "started": started, "kind": kind, "simulated": bool(simulated), "reason": reason},
         "stage": "4b",
-        "message": "Proposition déposée : elle attend l'approbation de Fred.",
+        "message": message,
     }

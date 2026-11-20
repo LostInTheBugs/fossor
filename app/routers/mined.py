@@ -121,6 +121,9 @@ def _campaign_json(
     return {
         "id": row.id,
         "key": row.legacy_key,
+        "origin": "import",
+        "status": "running" if row.state == "active" else "done",
+        "events": row.events or [],
         "coin": row.coin_name or row.coin_ticker,
         "ticker": row.coin_ticker,
         "state": row.state,

@@ -1,0 +1,65 @@
+{
+  "analyses": [
+    {
+      "ts": "2026-11-01T06:00Z",
+      "run": "tick 06h",
+      "action": "rien",
+      "action_detail": "Scan de test, aucun lancement. Données anonymisées.",
+      "candidates": [
+        {
+          "nom": "NOVA (Nova)",
+          "algo": "RandomX",
+          "age": "~2j",
+          "lien": "https://example.invalid/ann",
+          "verdict": "surveillance",
+          "pour": [
+            "p1",
+            "p2"
+          ],
+          "contre": [
+            "c1"
+          ]
+        },
+        {
+          "nom": "Brique",
+          "ticker": "BRK",
+          "algo": "Yespower",
+          "age": "1j",
+          "links": [
+            "https://github.com/example/brique",
+            "https://explorer.invalid/brk"
+          ],
+          "verdict": "surveillance",
+          "pour": [
+            "p2"
+          ],
+          "contre": [
+            "c2"
+          ]
+        }
+      ]
+    },
+    {
+      "ts": "2026-11-03T18:00Z",
+      "run": "tick 18h",
+      "action": "prolongation",
+      "action_detail": "Nova confirmée : deuxième évaluation.",
+      "candidates": [
+        {
+          "nom": "NOVA (Nova)",
+          "algo": "RandomX",
+          "age": "~4j",
+          "lien": "https://example.invalid/ann",
+          "verdict": "retenu",
+          "pour": [
+            "p3",
+            "p4"
+          ],
+          "contre": [
+            "c3"
+          ]
+        }
+      ]
+    }
+  ]
+}

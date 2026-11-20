@@ -360,6 +360,8 @@ class MinedCampaign(Base):
     hashrate: Mapped[str | None] = mapped_column(Text, nullable=True)
     links: Mapped[dict] = mapped_column(JSON, default=dict)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Parité mining.html : prolongations et notes datées reprises de mining-status.json.
+    events: Mapped[list] = mapped_column(JSON, default=list)
     last_balance: Mapped[float | None] = mapped_column(Float, nullable=True)
     balance_note: Mapped[str] = mapped_column(String(160), default="")
     created_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())

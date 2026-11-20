@@ -49,13 +49,25 @@ header h1{font-size:26px}
 .campaign-card .meta{color:var(--muted);font-size:11.5px;margin-top:3px}
 .empty{color:var(--muted);font-size:13px;padding:26px;text-align:center;border:1px dashed var(--border);border-radius:12px}
 .foot{color:var(--muted);font-size:11px;margin-top:16px;text-align:right}
+#modeBadge{text-transform:none;letter-spacing:0}
+.parite-title{font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700;margin:0 0 8px 2px}
+.parite-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;margin-bottom:22px}
+.parite-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 16px}
+.parite-card .ticker{font-size:16px;font-weight:700}
+.parite-card .meta{color:var(--muted);font-size:11.5px;margin-top:3px}
+.parite-card .note{color:#c9d1d9;font-size:12px;margin-top:6px;white-space:pre-wrap}
+.parite-card .bal{font-size:13px;margin-top:6px}
+.event-card{background:var(--card);border:1px solid var(--border);border-left:5px solid var(--accent);border-radius:12px;padding:12px 16px;margin-bottom:22px}
+.event-card .when{color:var(--muted);font-size:11px}
+.event-card .what{font-weight:700;font-size:14px;margin-top:2px}
+.event-card .detail{color:#c9d1d9;font-size:12.5px;margin-top:5px;white-space:pre-wrap}
 </style>
   <script src="/static/nav.js" defer></script>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <div><h1>⛏️ Fossor</h1><span style="color:var(--muted);font-size:13px">État de santé</span></div>
+    <div><h1>⛏️ Fossor <span class="chip off" id="modeBadge">…</span></h1><span style="color:var(--muted);font-size:13px">État de santé</span></div>
     <div style="display:flex;gap:10px;align-items:center">
       <span id="userBadge" class="chip on">admin</span>
       <button class="btn sm outline" id="logoutBtn">Déconnexion</button>
@@ -73,6 +85,12 @@ header h1{font-size:26px}
     <div class="box"><span class="k">Campagne en cours</span><span class="v" id="sCampaign">—</span></div>
     <div class="box"><span class="k">Dernière collecte</span><span class="v" id="sAge">—</span></div>
   </div>
+
+  <h2 class="parite-title">Dernier événement</h2>
+  <div class="event-card" id="lastEventCard"><span style="color:var(--muted)">Chargement…</span></div>
+
+  <h2 class="parite-title">Campagnes en cours</h2>
+  <div class="parite-grid" id="pariteCampaigns"></div>
 
   <h2 class="section-title">Campagne en cours</h2>
   <div id="routineStrip" style="display:flex;gap:10px;flex-wrap:wrap;margin:16px 0 2px"></div>
@@ -232,6 +250,82 @@ async function loadCampaign() {
   }
 }
 
+function pariteTs(value) {
+  if (!value) return "—";
+  const d = new Date(value);
+  return isNaN(d.getTime()) ? String(value) : d.toLocaleString("fr-FR");
+}
+
+async function nodeBalance(ticker, target) {
+  target.textContent = "lecture du nœud…";
+  try {
+    const res = await fetch("/api/parite/balance/" + encodeURIComponent(ticker), { credentials: "same-origin" });
+    const data = await res.json();
+    if (data.ok) {
+      target.textContent = Number(data.balance).toLocaleString("fr-FR", { maximumFractionDigits: 8 }) +
+        " " + (data.unit || ticker) + " · " + (data.source || "nœud");
+    } else {
+      target.textContent = "nœud indisponible : " + (data.reason || "réponse illisible");
+    }
+  } catch (err) {
+    target.textContent = "nœud indisponible : " + err.message;
+  }
+}
+
+function pariteCampaign(row) {
+  const anchor = String(row.key || "").replace(/[^A-Za-z0-9_-]/g, "_");
+  const end = row.unlimited ? "sans limite" : pariteTs(row.end_at);
+  const ext = row.extension_count
+    ? '<div class="meta">Prolongations : ' + row.extension_count + " — " +
+      row.extensions.map((item) => pariteTs(item.ts)).join(", ") + "</div>"
+    : "";
+  const balance = row.balance == null ? "—" : Number(row.balance).toLocaleString("fr-FR", { maximumFractionDigits: 8 }) +
+    " " + (row.balance_unit || "");
+  const source = row.solo
+    ? '<div class="bal" id="bal-' + anchor + '">' + balance + " · " + esc(row.balance_source || "valeur importée") +
+      ' <button class="btn sm outline" data-node="' + esc(row.ticker) + '" data-target="bal-' + anchor + '">Lire le nœud</button></div>'
+    : '<div class="bal">' + balance + ' <span class="meta">· ' + esc(row.balance_source || "") + " · " + pariteTs(row.balance_ts) + "</span></div>";
+  return '<div class="parite-card" data-parite="' + esc(row.key) + '">' +
+    '<div class="ticker">' + esc(row.ticker || row.coin) + " · " + esc(row.mode || "host") +
+    ' <span class="chip on">' + esc(row.origin || "fossor") + "</span></div>" +
+    '<div class="meta">' + esc(row.name || "") + " · " + esc(row.machine || "machine non précisée") + "</div>" +
+    '<div class="meta">Début ' + pariteTs(row.start_at) + " · échéance " + esc(end) + "</div>" + ext +
+    '<div class="meta">Hashrate : ' + esc(row.hashrate || "—") + "</div>" + source +
+    (row.note ? '<div class="note">' + esc(row.note.slice(0, 400)) + "</div>" : "") +
+    "</div>";
+}
+
+async function loadParite() {
+  const badge = $("#modeBadge");
+  try {
+    const res = await fetch("/api/parite/overview", { credentials: "same-origin" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    badge.textContent = (data.mode && data.mode.label) || "pearl";
+    badge.className = "chip " + (data.mode && data.mode.kind === "spec" ? "off" : "on");
+    const ev = data.last_event;
+    $("#lastEventCard").innerHTML = ev
+      ? '<div class="when">' + esc(pariteTs(ev.ts)) + " · " + esc(ev.coin || "") + " · " + esc(ev.kind || "") + "</div>" +
+        '<div class="what">' + esc(ev.text || "") + "</div>" +
+        (ev.detail ? '<div class="detail">' + esc(ev.detail) + "</div>" : "")
+      : '<span style="color:var(--muted)">Aucun événement significatif enregistré.</span>';
+    const rows = data.campaigns || [];
+    $("#pariteCampaigns").innerHTML = rows.length
+      ? rows.map(pariteCampaign).join("")
+      : '<div class="empty">Aucune campagne en cours.</div>';
+  } catch (err) {
+    badge.textContent = "indisponible";
+    $("#lastEventCard").innerHTML = '<span style="color:var(--muted)">Parité indisponible : ' + esc(err.message) + ".</span>";
+  }
+}
+
+document.addEventListener("click", function (event) {
+  const btn = event.target.closest("[data-node]");
+  if (!btn) { return; }
+  const target = document.getElementById(btn.getAttribute("data-target"));
+  if (target) { nodeBalance(btn.getAttribute("data-node"), target); }
+});
+
 async function load() {
   // Chaque bloc échoue seul : une erreur de santé ne laisse plus la carte de
   // campagne sur « Chargement… » ni les tuiles sur un tiret muet.
@@ -259,8 +353,10 @@ $("#logoutBtn").addEventListener("click", async () => {
   window.location.href = "/";
 });
 
+loadParite();
 load();
 setInterval(load, 30000);
+setInterval(loadParite, 30000);
 </script>
 <script>
 (function(){

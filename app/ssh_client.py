@@ -150,6 +150,14 @@ WHITELISTED_COMMANDS: dict[str, str] = {
     # SRBMiner / miner HTTP API bound to 127.0.0.1 on the machine: the
     # container cannot reach it, so the request is relayed through SSH
     # (fallback used by the collector; {port} is validated as an int).
+    # Parité mining.html : solde du nœud solo BigCoin (Ryzen .155), lecture seule.
+    "solo_getbalance": textwrap.dedent(
+        """\
+        echo '### BALANCE'
+        /home/administrator/bigcoin-mine/bigcoin/bigcoin-cli -datadir=/home/administrator/bigcoin-mine/bigcoin/data getbalance 2>/dev/null
+        exit 0
+        """
+    ).strip(),
     "miner_api": (
         "curl -s -m 5 http://127.0.0.1:{port}/ 2>/dev/null "
         "|| wget -qO- -T 5 http://127.0.0.1:{port}/ 2>/dev/null "
@@ -771,6 +779,26 @@ CPU_PROBE_USER_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 #: Relative form accepted for a ``*-cli`` / ``-datadir`` resolved from cwd.
 CPU_PROBE_REL_RE = re.compile(r"^[A-Za-z0-9_.\-/]{1,300}$")
 CPU_PROBE_BIN_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,80}$")
+
+
+async def ssh_solo_getbalance(machine: Any, actor: str = "system") -> dict[str, Any]:
+    """Solde du nœud solo — ``getbalance`` en liste blanche, jamais d'écriture."""
+    pinned_fp = (getattr(machine, "host_key", None) or "").strip() or None
+    pinned_public_key = (getattr(machine, "host_key_public", None) or "").strip() or None
+
+    return await _run_whitelisted(
+        host=machine.host,
+        port=machine.ssh_port,
+        username=machine.ssh_user,
+        secret=_machine_secret(machine),
+        auth_type=machine.auth_type,
+        pinned_fp=pinned_fp,
+        pinned_public_key=pinned_public_key,
+        command=WHITELISTED_COMMANDS["solo_getbalance"],
+        machine_id=machine.id,
+        audit_kind="collect",
+        actor=actor,
+    )
 
 
 def cpu_probe_command(probes: dict[str, Any]) -> str:

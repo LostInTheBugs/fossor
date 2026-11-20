@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fossor — Comment ça marche</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#12161c;--card:#1a2029;--border:#2c3544;--txt:#e6edf3;--muted:#8b98a9;--accent:#4f8cff;--green:#3fb950;--red:#f85149;--yellow:#d29922}
+body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;min-height:100vh}
+.wrap{max-width:980px;margin:0 auto;padding:28px 18px 48px}
+header{display:flex;justify-content:space-between;align-items:center;margin-bottom:22px;gap:12px;flex-wrap:wrap}
+header h1{font-size:26px}
+.sub{color:var(--muted);font-size:13px}
+.nav-tabs{display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.nav-tabs a{color:var(--muted);padding:8px 16px;font-size:13.5px;font-weight:600;text-decoration:none;border:1px solid transparent;border-bottom:none;border-radius:10px 10px 0 0}
+.nav-tabs a:hover{color:var(--txt)}
+.nav-tabs a.active{background:var(--card);border-color:var(--border);color:var(--txt)}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:14px}
+.card h2{font-size:15px;margin-bottom:8px}
+.card h2 .num{color:var(--accent);margin-right:6px}
+.card p,.card li{color:#c9d1d9;font-size:13.5px;line-height:1.55}
+.card ul,.card ol{margin:6px 0 4px 22px}
+.card p+p,.card p+ul,.card ul+p{margin-top:8px}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin-top:10px}
+.mini{background:#0f141b;border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+.mini b{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin-bottom:5px}
+table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}
+th{text-align:left;color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;padding:6px;border-bottom:1px solid var(--border)}
+td{padding:7px 6px;border-bottom:1px solid #232b37;vertical-align:top}
+tr:last-child td{border-bottom:none}
+.chip{display:inline-block;font-size:10px;font-weight:700;padding:2px 9px;border-radius:999px;text-transform:uppercase;letter-spacing:.3px}
+.chip.retenu{background:#1a3a2a;color:var(--green);border:1px solid var(--green)}
+.chip.surveillance{background:#3a2f1a;color:var(--yellow);border:1px solid var(--yellow)}
+.chip.rejete{background:#3a1a1a;color:var(--red);border:1px solid var(--red)}
+.mono{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;color:var(--muted)}
+.flow{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+.flow .step{background:#0f141b;border:1px solid var(--border);border-radius:999px;padding:5px 12px;font-size:12px}
+.flow .arrow{color:var(--accent);font-weight:700}
+</style>
+  <script src="/static/nav.js" defer></script>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div><h1>📖 Comment ça marche</h1><span class="sub">La veille propose, Fossor valide, Fred approuve — ou le lancement automatique s'applique.</span></div>
+  </header>
+  <nav id="nav"></nav>
+
+  <div class="flow">
+    <span class="step">Hermes : veille</span><span class="arrow">→</span>
+    <span class="step">Fossor : règles et validation</span><span class="arrow">→</span>
+    <span class="step">Fred : approbation</span><span class="arrow">→</span>
+    <span class="step">Lancement (manuel ou auto)</span>
+  </div>
+
+  <div class="card">
+    <h2><span class="num">a.</span> Principe</h2>
+    <p>Par défaut, toutes les machines minent le token de référence (Pearl). La veille cherche des coins tout juste lancés, minables par nos machines, pour les miner tôt pendant que le réseau est petit. Ce n'est pas un calcul de rentabilité immédiate.</p>
+    <p>Dans Fossor, le partage est net : <b>Hermes propose</b> une analyse et, si un candidat est retenu, une proposition de campagne ; <b>Fossor valide</b> cette proposition contre ses règles (fraîcheur, rôle des devices, capacité, durée, part réseau) ; <b>Fred approuve</b>, sauf si la règle de lancement automatique est active pour le type de device concerné.</p>
+  </div>
+
+  <div class="card">
+    <h2><span class="num">b.</span> Les machines</h2>
+    <table>
+      <thead><tr><th>Machine</th><th>Hardware</th><th>Rôle</th></tr></thead>
+      <tbody>
+        <tr><td>rig7095FA</td><td>4×RTX 3070 + RTX 3080</td><td>Pearl (GPU) ; CPU partagé avec les campagnes CPU</td></tr>
+        <tr><td>Ryzen-5-3600</td><td>RTX 4080</td><td>Pearl ; VMs jetables pour le CPU ; GPU de spec si un coin est retenu</td></tr>
+        <tr><td>athlon-3000g</td><td>3×RTX 5060 Ti + Athlon 3000G</td><td>Pearl</td></tr>
+      </tbody>
+    </table>
+    <p class="sub" style="margin-top:8px">Les devices autorisés au spec mining portent le rôle « token par défaut + spec mining » : un device réservé à autre chose n'est jamais proposé.</p>
+  </div>
+
+  <div class="card">
+    <h2><span class="num">c.</span> Le cycle</h2>
+    <p>Le tick de veille est déclenché par Fossor (bouton ou cadence de la règle <span class="mono">watch_cadence</span>, 6 h par défaut). Hermes lit le contexte Fossor, scanne ses sources (ANN Altcoins de Bitcointalk, nouveaux coins de miningpoolstats, versions de SRBMiner-Multi / lolMiner / BzMiner), filtre, évalue, puis dépose une analyse — et une proposition seulement si un candidat est retenu et minable.</p>
+    <p>Aucune commande SSH n'est exécutée par le tick : Fossor ne lance ni n'arrête un mineur à cette étape.</p>
+  </div>
+
+  <div class="card">
+    <h2><span class="num">d.</span> Filtre et évaluation</h2>
+    <div class="grid3">
+      <div class="mini"><b>Critères de sélection</b>
+        <ul><li>Coin de moins de 72 h (idéal &lt; 48 h)</li><li>Minable (GPU NVIDIA ou CPU)</li><li>Miner connu ou officiel vérifiable</li></ul>
+      </div>
+      <div class="mini"><b>Éliminés d'office</b>
+        <ul><li>Algorithmes ASIC dès le lancement (SHA-256, Scrypt…)</li><li>Tokens ERC/BNB/Solana</li><li>Browser-mining</li><li>« IA » sans miner</li></ul>
+      </div>
+      <div class="mini"><b>Pas éliminés d'office</b>
+        <ul><li>CPU-only</li><li>Pool absent, unique ou solo au lancement</li><li>Coin de 3 à 7 jours avec signaux frais (→ surveillance)</li><li>Coin déjà listé (→ rentabilité estimée en €/j)</li></ul>
+      </div>
+    </div>
+    <p style="margin-top:10px">Utilité, équipe (compte Bitcointalk, GitHub), fraîcheur, signaux on-chain. Red flags : premine cachée, dev totalement anonyme, algo maison + binaire invérifiable, demande de seed, faille consensus ouverte.</p>
+  </div>
+
+  <div class="card">
+    <h2><span class="num">e.</span> Verdicts</h2>
+    <p>Trois verdicts : <span class="chip retenu">retenu</span> <span class="chip surveillance">surveillance</span> <span class="chip rejete">rejeté</span> — mêmes couleurs que les puces de filtre de l'onglet <b>Analyse des tokens</b>. Un verdict supplémentaire présent dans les données obtient sa propre puce.</p>
+  </div>
+
+  <div class="card">
+    <h2><span class="num">f.</span> Décision de bascule</h2>
+    <p>S'y ajoute une condition : (a) moins de 72 h, (b) minable avec un miner fiable, (c) aucun red flag critique, (d) au moins un signal positif. En cas de doute, pas de bascule. Fossor refuse en plus une proposition hors fenêtre de fraîcheur, sur un device non autorisé, occupé, ou dont la durée dépasse la règle de durée.</p>
+    <ul>
+      <li>GPU → la 4080 passe dans la VM de spec (Pearl coupé sur la 4080 seulement)</li>
+      <li>CPU → VM specbox jetable (Pearl intact)</li>
+      <li>Toujours un wallet neuf dédié, créé dans la VM</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2><span class="num">g.</span> Pendant une campagne</h2>
+    <ul>
+      <li>Durée de base 96 h</li>
+      <li>« La sauce prend » → prolongation +96 h</li>
+      <li>« Ça sent le sapin » → arrêt anticipé et retour Pearl</li>
+      <li>Neutre → jusqu'à l'échéance</li>
+      <li>Campagnes CPU : sans limite, arrêt seulement si chaîne morte ou décision de Fred</li>
+    </ul>
+    <p>Le tableau de bord affiche l'échéance, les prolongations, le hashrate, le solde du wallet et la dernière note. Pour une campagne solo, le solde vient du nœud (commande <span class="mono">getbalance</span> en liste blanche, lecture seule) ; sinon c'est la dernière valeur importée, avec sa date.</p>
+  </div>
+
+  <div class="card">
+    <h2><span class="num">h.</span> Messages</h2>
+    <p>Messages à Fred : uniquement bascule, prolongation, rapport de fin. Sinon silence. Fossor journalise chaque décision dans le Log et dans les événements de campagne.</p>
+  </div>
+
+  <div class="card">
+    <h2><span class="num">i.</span> D'où viennent les données</h2>
+    <table>
+      <thead><tr><th>Fichier</th><th>Source</th><th>Cadence</th><th>Écran</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">mining-live.json</td><td>Collecteur mining-live</td><td>Toutes les 5 min</td><td>Tableau de bord</td></tr>
+        <tr><td class="mono">mining-status.json</td><td>État poussé par la veille</td><td>Événementiel</td><td>Tableau de bord / Tokens minés</td></tr>
+        <tr><td class="mono">mining-analyses.json</td><td>Une analyse par tick</td><td>1 par tick (60 dernières conservées)</td><td>Analyse des tokens</td></tr>
+      </tbody>
+    </table>
+    <p style="margin-top:10px">Ces fichiers sont importés par Fossor (prévisualisation puis import idempotent). Les archives d'origine ne sont jamais modifiées.</p>
+  </div>
+
+  <div class="card">
+    <h2><span class="num">j.</span> Lancement automatique</h2>
+    <p>La règle <span class="mono">auto_launch</span> peut être activée séparément pour le GPU et pour le CPU. Quand elle est active, une proposition validée par Fossor est lancée sans approbation, <b>uniquement</b> sur des devices autorisés et des machines dont la simulation est désactivée ; sinon, elle est simulée. Elle est livrée désactivée : Fred confirme avant de l'activer.</p>
+  </div>
+</div>
+</body>
+</html>

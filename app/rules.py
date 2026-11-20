@@ -69,7 +69,7 @@ class AutoLaunchParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     gpu: bool = Field(False, description="Lancer une campagne GPU dès qu'un token est retenu")
-    cpu: bool = Field(True, description="Lancer une campagne CPU dès qu'un token est retenu")
+    cpu: bool = Field(False, description="Lancer une campagne CPU dès qu'un token est retenu")
 
 
 class GpuDurationParams(BaseModel):
@@ -162,8 +162,8 @@ RULE_SPECS: tuple[dict[str, Any], ...] = (
     {
         "id": "auto_launch",
         "name": "Lancement auto si « retenu »",
-        "description": "GPU : non (proposition) · CPU : oui — à confirmer par Fred. "
-        "Étape 4b : aucun lancement automatique n'est exécuté pour l'instant.",
+        "description": "GPU et CPU séparément, désactivés par défaut. Actif : une proposition "
+        "validée est lancée sans approbation sur des devices autorisés, sauf machine en simulation.",
         "scope": "launch",
         "enabled": False,
         "model": AutoLaunchParams,
@@ -309,6 +309,25 @@ def rule_to_dict(rule: Rule) -> dict[str, Any]:
         "schema": schema_of(rule.id),
         "stage": "4b" if rule.id == "auto_launch" else None,
     }
+
+
+def plan_auto_launch(db: Session, kind: str, simulated: bool) -> dict[str, Any]:
+    """Décide d'un lancement automatique, **séparément** pour GPU et CPU.
+
+    * règle désactivée ou drapeau du type absent → aucun lancement ;
+    * simulation active → lancement simulé, jamais exécuté ;
+    * sinon → lancement autorisé (l'appelant approuve et démarre).
+    """
+    rule = db.get(Rule, "auto_launch")
+    if rule is None or not rule.enabled:
+        return {"allowed": False, "launch": False, "simulated": bool(simulated), "reason": "règle « auto_launch » désactivée"}
+    params = rule.params or {}
+    flag = bool(params.get("gpu" if kind == "gpu" else "cpu", False)) if kind in ("gpu", "cpu") else False
+    if not flag:
+        return {"allowed": False, "launch": False, "simulated": bool(simulated), "reason": f"lancement auto {kind or 'inconnu'} désactivé"}
+    if simulated:
+        return {"allowed": True, "launch": False, "simulated": True, "reason": "simulation activée : lancement simulé"}
+    return {"allowed": True, "launch": True, "simulated": False, "reason": ""}
 
 
 def enabled_rules(db: Session) -> dict[str, Rule]:

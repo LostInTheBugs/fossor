@@ -71,6 +71,10 @@ app.include_router(asic_router)
 app.include_router(rentability_router)
 app.include_router(vms_router)
 
+from app.routers.parite import router as parite_router
+
+app.include_router(parite_router)
+
 
 @app.get("/analysis", response_class=HTMLResponse)
 def analysis_page(request: Request):
@@ -80,6 +84,16 @@ def analysis_page(request: Request):
     if not get_current_user(request):
         return RedirectResponse(url="/", status_code=303)
     return HTMLResponse((STATIC_DIR / "analysis.html").read_text())
+
+
+@app.get("/help", response_class=HTMLResponse)
+def help_page(request: Request):
+    """Écran « Comment ça marche » — repris de l'onglet de mining.html."""
+    from app.auth import get_current_user
+
+    if not get_current_user(request):
+        return RedirectResponse(url="/", status_code=303)
+    return HTMLResponse((STATIC_DIR / "help.html").read_text())
 
 
 @app.get("/mined", response_class=HTMLResponse)
