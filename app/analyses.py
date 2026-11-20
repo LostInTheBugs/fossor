@@ -39,6 +39,68 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+_EPOCH = datetime.min.replace(tzinfo=timezone.utc)
+_TS_FORMATS = (
+    "%Y-%m-%dT%H:%M:%S",
+    "%Y-%m-%dT%H:%M",
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d %H:%M",
+    "%Y-%m-%d",
+    "%d/%m/%Y %H:%M",
+    "%d/%m/%Y",
+)
+
+
+def parse_ts(value: Any, default_year: int | None = None) -> datetime | None:
+    """Horodatage d'analyse → ``datetime`` comparable, ou ``None``.
+
+    L'historique de veille mélange les écritures : ISO avec ``Z`` ou un décalage
+    (``2026-10-29T23:43:00+01:00``, ``2026-10-27T17:02+0100``), et des dates
+    jour/mois saisies à la main (``17/11 05:50``). Comparer ces chaînes classe
+    « 17/11 05:50 » **avant** toute date ISO (le « 1 » est plus petit que le
+    « 2 » de l'année) : un verdict « retenu » récent était alors écrasé par une
+    surveillance ancienne. On compare donc des instants, jamais du texte.
+    """
+    text = _text(value, 40)
+    if not text:
+        return None
+    iso = re.sub(r"([+-]\d{2})(\d{2})$", r"\1:\2", text.replace("Z", "+00:00"))
+    try:
+        moment: datetime | None = datetime.fromisoformat(iso)
+    except ValueError:
+        moment = None
+    if moment is None:
+        for fmt in _TS_FORMATS:
+            try:
+                moment = datetime.strptime(text, fmt)
+                break
+            except ValueError:
+                continue
+    if moment is None:
+        short = re.fullmatch(r"(\d{1,2})/(\d{1,2})(?:\s+(\d{1,2}):(\d{2}))?", text)
+        if short and default_year:
+            moment = datetime(
+                default_year,
+                int(short.group(2)),
+                int(short.group(1)),
+                int(short.group(3) or 0),
+                int(short.group(4) or 0),
+                tzinfo=timezone.utc,
+            )
+    if moment is None:
+        return None
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
+def _stamp_key(value: Any, default_year: int) -> tuple[int, datetime, str]:
+    """Clé de tri stable : instants d'abord, texte non datable ensuite."""
+    text = _text(value, 40)
+    moment = parse_ts(text, default_year=default_year)
+    if moment is None:
+        return (0, _EPOCH, text)
+    return (1, moment, text)
+
+
 def _text(value: Any, limit: int = 4000) -> str:
     return str(value or "").strip()[:limit]
 
@@ -74,10 +136,20 @@ def _string_list(value: Any) -> list[str]:
 
 
 def split_ticker_name(raw: str) -> tuple[str, str]:
-    """« NEB (Neural Engine Byte) » → ``("NEB", "Neural Engine Byte")``."""
+    """« NEB (Neural Engine Byte) » → ``("NEB", "Neural Engine Byte")``.
+
+    Les deux conventions existent dans l'historique : « NEB (Neural Engine
+    Byte) » met le ticker devant, « Nival (NVL) » le met entre parenthèses. Le
+    membre le plus court est le ticker (un nom de token dépasse rarement trois
+    caractères) — sinon « NIVAL (NVL) » ressortait avec le ticker « NIVAL » et
+    le nom « NVL », inversés à l'écran.
+    """
     match = _TICKER_NAME.match(raw)
     if match:
-        return match.group(1).upper()[:20], match.group(2).strip()
+        left, inner = match.group(1).strip(), match.group(2).strip()
+        if len(_norm_key(inner)) < len(_norm_key(left)) and len(_norm_key(inner)) <= 12:
+            return inner.upper()[:20], left
+        return left.upper()[:20], inner
     return "", raw.strip()
 
 
@@ -390,9 +462,17 @@ def token_rows(
     """Une ligne par token regroupé, agrégée sur toutes les analyses."""
     rows: dict[str, dict[str, Any]] = {}
     uf = token_groups(analyses, aliases)
-    ordered = sorted(enumerate(analyses), key=lambda item: (item[1].get("ts") or "", item[0]))
+    years = [dt.year for dt in (parse_ts(item.get("ts")) for item in analyses) if dt is not None]
+    default_year = max(years) if years else datetime.now(timezone.utc).year
+    ordered = sorted(
+        enumerate(analyses),
+        key=lambda item: (_stamp_key(item[1].get("ts"), default_year), item[0]),
+    )
+    first_keys: dict[str, tuple[int, datetime, str]] = {}
+    last_keys: dict[str, tuple[int, datetime, str]] = {}
     for _index, analysis in ordered:
         ts = _text(analysis.get("ts"), 40)
+        stamp = _stamp_key(ts, default_year)
         for candidate in analysis.get("candidates") or []:
             ids = candidate_identifiers(candidate)
             if not ids["all"]:
@@ -434,9 +514,11 @@ def token_rows(
                     row["links"].append(link)
             row["history"].append(entry)
             row["evaluations"] += 1
-            if ts and (not row["first_ts"] or ts < row["first_ts"]):
+            if ts and (key not in first_keys or stamp < first_keys[key]):
+                first_keys[key] = stamp
                 row["first_ts"] = ts
-            if ts >= (row["last_ts"] or ""):
+            if key not in last_keys or stamp >= last_keys[key]:
+                last_keys[key] = stamp
                 row["last_ts"] = ts
                 row["verdict"] = verdict
                 row["verdict_label"] = entry["verdict_label"]
@@ -448,7 +530,11 @@ def token_rows(
                 row["algo"] = _text(candidate.get("algo"), 200) or row["algo"]
     for row in rows.values():
         row["history"].reverse()
-    return sorted(rows.values(), key=lambda item: item["last_ts"] or "", reverse=True)
+    return sorted(
+        rows.values(),
+        key=lambda item: _stamp_key(item["last_ts"], default_year),
+        reverse=True,
+    )
 
 
 def verdict_catalog(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

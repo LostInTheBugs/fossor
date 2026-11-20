@@ -7,7 +7,7 @@ Clicking each button must produce zero console/page errors.  The machine uses
 from __future__ import annotations
 
 import pytest
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, expect
 
 from tests.e2e.conftest import E2E_URL
 
@@ -104,7 +104,7 @@ async def test_machines_action_buttons_and_form_modes(e2e_server):
         # ── 🔌 test (connection refused, no crash) ───────────────────
         await row.locator("button[title='Tester la connexion SSH']").click()
         await page.locator("#toast.err").first.wait_for(timeout=15000)
-        assert await row.locator("button[title='Tester la connexion SSH']").is_enabled()
+        await expect(row.locator("button[title='Tester la connexion SSH']")).to_be_enabled()
 
         # ── 🔍 detect ────────────────────────────────────────────────
         await row.locator("button:has-text('🔍 Détecter le matériel')").click()

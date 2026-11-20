@@ -141,6 +141,8 @@ td{padding:8px 6px;border-bottom:1px solid #232b37;vertical-align:top}
         <div class="help">vm et hybrid arrivent à l'étape 3c.</div></div>
       <div class="field narrow"><label><input type="checkbox" id="fGovernor"> Gouverneur CPU performance au démarrage</label>
         <div class="help">Écrit <code>performance</code> dans scaling_governor avant le lancement (root, échec toléré).</div></div>
+      <div class="field narrow"><label><input type="checkbox" id="fTty"> Fournir un TTY au mineur</label>
+        <div class="help"><code>/usr/bin/script -qfec</code> autour de la commande : SRBMiner tombe en SIGSEGV sans terminal. Refus si <code>script</code> est absent.</div></div>
       <div class="field narrow"><label><input type="checkbox" id="fEnabled" checked> Actif</label></div>
     </div>
     <div class="actions">
@@ -217,6 +219,7 @@ const openForm=(p)=>{
   $('#fMode').value=p?p.execution_mode:'host';
   $('#fEnabled').checked=p?p.enabled:true;
   $('#fGovernor').checked=p?!!p.cpu_governor:false;
+  $('#fTty').checked=p?!!p.tty_wrapper:false;
   $('#formErr').textContent='';
   hint();
   $('#modal').classList.add('open');
@@ -242,7 +245,8 @@ $('#saveBtn').onclick=async()=>{
     binary_source:$('#fBinarySource').value,
     threads:parseInt($('#fThreads').value,10)||0,
     execution_mode:$('#fMode').value,enabled:$('#fEnabled').checked,
-    cpu_governor:$('#fGovernor').checked
+    cpu_governor:$('#fGovernor').checked,
+    tty_wrapper:$('#fTty').checked
   };
   const r=await api(id?'/api/miner/profiles/'+id:'/api/miner/profiles',
     {method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});

@@ -19,7 +19,7 @@ import uuid as uuid_lib
 from datetime import datetime, timezone
 
 import pytest
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, expect
 
 from tests.e2e.conftest import E2E_DATA_DIR, E2E_URL, defer_newest_proposed_campaign
 from tests.e2e.test_z_spec_vms import (  # noqa: F401 — mêmes graines que l'écran
@@ -211,7 +211,7 @@ async def test_fiche_vm_controle_puis_destruction_au_clic(e2e_server):
         await page.click("#tabSpec")
         await page.wait_for_selector(f"#vmDestroy{vm_id}", timeout=10000)
         await page.locator(f"#vmConfirm{vm_id}").fill("DETRUIRE")
-        assert await page.locator(f"#vmDestroy{vm_id}").is_enabled() is True
+        await expect(page.locator(f"#vmDestroy{vm_id}")).to_be_enabled()
         await page.locator(f"#vmDestroy{vm_id}").click()
         for _ in range(60):
             if any(url.endswith(f"/api/vms/{vm_id}/destroy") for url, _ in responses):

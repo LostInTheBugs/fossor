@@ -187,6 +187,10 @@ def validate_profile(data: dict[str, Any]) -> dict[str, Any]:
     # Gouverneur CPU « performance » au démarrage : désactivé par défaut.
     cpu_governor = _as_bool(data.get("cpu_governor"))
 
+    # TTY fourni par ``script`` : SRBMiner est tombé en SIGSEGV sous une unité
+    # systemd nue (constat Ryzen). Désactivé par défaut.
+    tty_wrapper = _as_bool(data.get("tty_wrapper"))
+
     wallet_mode = str(data.get("wallet_mode") or "file").strip().lower()
     _require(wallet_mode in ("file", "pool_address"),
              "wallet : file (fichier local) ou pool_address (adresse de pool seule)")
@@ -216,6 +220,7 @@ def validate_profile(data: dict[str, Any]) -> dict[str, Any]:
         "threads": int(_validated("threads", str(data.get("threads")))) if data.get("threads") else 0,
         "worker": worker,
         "cpu_governor": cpu_governor,
+        "tty_wrapper": tty_wrapper,
     }
 
 
@@ -325,6 +330,22 @@ def exec_start(argv: list[str]) -> str:
     return " ".join(systemd_quote(a) for a in argv)
 
 
+TTY_WRAPPER = "/usr/bin/script"
+
+
+def wrapped_argv(argv: list[str]) -> list[str]:
+    """Enveloppe ``argv`` dans ``script`` pour rendre un pseudo-terminal au mineur.
+
+    ``script -qfec "<commande>" /dev/null`` : ``-q`` silencieux, ``-f`` vidage
+    immédiat, ``-e`` remonte le code de sortie du mineur, ``-c`` la commande.
+    La commande est reconstruite par :func:`shlex.join` — chaque valeur est citée
+    pour le shell qui la relit (wallet contenant ``+``, ``/`` ou ``=`` compris),
+    jamais concaténée à la main.
+    """
+    _require(bool(argv), "commande vide")
+    return [TTY_WRAPPER, "-qfec", shlex.join(argv), "/dev/null"]
+
+
 # Gouverneur CPU : le profil peut demander ``performance`` au démarrage.
 # ``tee`` reçoit un fichier par cœur (glob expansé par le shell) et ignore
 # ceux qui n'existent pas ; ``+`` exécute en root, ``-`` tolère l'échec
@@ -359,7 +380,7 @@ def render_unit(
             f"User={user}",
             f"WorkingDirectory={install_dir(profile['software'], profile['version'])}",
             *([governor_exec_start_pre()] if profile.get("cpu_governor") else []),
-            f"ExecStart={exec_start(argv)}",
+            f"ExecStart={exec_start(wrapped_argv(argv) if profile.get('tty_wrapper') else argv)}",
             "Restart=on-failure",
             "RestartSec=10",
             "KillSignal=SIGTERM",

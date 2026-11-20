@@ -118,6 +118,25 @@ def _migrate_machine_hiveos_column() -> None:
             conn.exec_driver_sql("ALTER TABLE machines ADD COLUMN hiveos_json TEXT")
 
 
+def _migrate_miner_tty_wrapper():
+    """Option ``tty_wrapper`` des profils (SRBMiner sans TTY → SIGSEGV)."""
+    _add_column_if_missing(
+        "miner_profiles", "tty_wrapper", "tty_wrapper BOOLEAN NOT NULL DEFAULT 0"
+    )
+
+
+def _migrate_machine_name_typo():
+    """« Ryen-5-3600 » → « Ryzen-5-3600 » : coquille de saisie, idempotente.
+
+    Seul le nom **exact** est réécrit : une machine renommée à la main garde son
+    nom, et un second démarrage ne change plus rien.
+    """
+    with engine.begin() as conn:
+        conn.exec_driver_sql(
+            "UPDATE machines SET name = 'Ryzen-5-3600' WHERE name = 'Ryen-5-3600'"
+        )
+
+
 def _migrate_miner_binary_columns():
     """Binaire fourni par Fossor et wallet de pool (profil mineur)."""
     _add_column_if_missing("miner_profiles", "api_kind", "api_kind VARCHAR(20) NOT NULL DEFAULT ''")
@@ -181,6 +200,8 @@ def init_db():
     _migrate_machine_simulation_column()
     _migrate_spec_vm_pve_columns()
     _migrate_miner_binary_columns()
+    _migrate_miner_tty_wrapper()
+    _migrate_machine_name_typo()
     _migrate_spec_vm_hashrate_columns()
     _migrate_campaign_analysis_id()
     _migrate_mined_campaign_events()

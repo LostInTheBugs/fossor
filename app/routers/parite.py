@@ -83,8 +83,12 @@ async def parite_balance_refresh(
 def parite_token_verdicts(db: Session = Depends(get_db), _user=Depends(require_login)):
     """Compteurs de verdicts pour les puces de l'onglet « Tokens évalués »."""
     from app import analyses as A
-    from app.models import Analysis
+    from app.models import Analysis, TokenAlias
 
     rows = db.query(Analysis).order_by(Analysis.ts.asc(), Analysis.id.asc()).all()
-    tokens = A.token_rows([A.analysis_to_dict(row) for row in rows])
+    aliases = [
+        {"canonical": row.canonical, "member": row.member, "mode": row.mode}
+        for row in db.query(TokenAlias).order_by(TokenAlias.id).all()
+    ]
+    tokens = A.token_rows([A.analysis_to_dict(row) for row in rows], aliases)
     return {"verdicts": A.verdict_catalog(tokens), "total": len(tokens)}

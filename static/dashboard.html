@@ -305,7 +305,7 @@ async function loadParite() {
     badge.className = "chip " + (data.mode && data.mode.kind === "spec" ? "off" : "on");
     const ev = data.last_event;
     $("#lastEventCard").innerHTML = ev
-      ? '<div class="when">' + esc(pariteTs(ev.ts)) + " · " + esc(ev.coin || "") + " · " + esc(ev.kind || "") + "</div>" +
+      ? '<div class="when">' + esc(pariteTs(ev.ts)) + (ev.age ? " (" + esc(ev.age) + ")" : "") + " · " + esc(ev.coin || "") + " · " + esc(ev.kind || "") + "</div>" +
         '<div class="what">' + esc(ev.text || "") + "</div>" +
         (ev.detail ? '<div class="detail">' + esc(ev.detail) + "</div>" : "")
       : '<span style="color:var(--muted)">Aucun événement significatif enregistré.</span>';

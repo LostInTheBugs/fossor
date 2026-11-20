@@ -149,6 +149,8 @@ class MinerProfile(Base):
     worker: Mapped[str] = mapped_column(String(32), default="", server_default="")
     # Gouverneur CPU « performance » au démarrage (ExecStartPre en root).
     cpu_governor: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # Pseudo-terminal fourni par ``script`` : SRBMiner plante sans TTY (SIGSEGV).
+    tty_wrapper: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())

@@ -126,6 +126,45 @@ def _coin_catalogue(db) -> dict[str, Any]:
     return {"hosts": hosts, "tickers": tickers, "names": names, "aliases": aliases}
 
 
+def _virt_section(stdout: str) -> str:
+    """Bloc ``### VIRT`` d'une collecte (KVM / KVM_DOMAIN), sinon ``""``."""
+    keep = False
+    lines: list[str] = []
+    for line in (stdout or "").splitlines():
+        if line.startswith("### "):
+            keep = line[4:].strip() == "VIRT"
+            continue
+        if keep:
+            lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def apply_virt(db, machine: Any, stdout: str) -> bool:
+    """Réaligne ``machines.vm_host`` sur la sonde de **chaque** collecte.
+
+    La détection matérielle n'écrit ``vm_host`` qu'au clic « Détecter » : une
+    SVM activée au BIOS après coup laissait la fiche à ``vm_host=false`` alors
+    que ``/dev/kvm`` existait. La collecte lit déjà ``KVM=1`` et
+    ``KVM_DOMAIN=…``, on s'en sert à chaque tour. Rend ``True`` si la valeur a
+    changé.
+    """
+    section = _virt_section(stdout)
+    if not section:
+        return False
+    from app.hw_parser import parse_virt
+
+    virt = parse_virt(section)
+    if "kvm" not in virt:
+        return False
+    capable = bool(virt.get("vm_capable", virt.get("kvm")))
+    if bool(machine.vm_host) == capable:
+        return False
+    machine.vm_host = capable
+    db.add(machine)
+    db.commit()
+    return True
+
+
 def _store_raw_collection(db, machine, stdout: str) -> None:
     """Keep the last raw collection, masked (admin diagnostic screen)."""
     from app.external_miners import mask_raw_collect
@@ -859,6 +898,7 @@ async def collect_machine(machine_id: int) -> dict[str, Any]:
         combined = raw.get("stdout", "")
         if cpu_probe_raw:
             combined = "### CPU_PROBE\n" + cpu_probe_raw + "\n" + combined
+        apply_virt(db, machine, raw.get("stdout", ""))
         _store_raw_collection(db, machine, combined)
         rows = _store_metrics(db, machine, stats, ts)
         return {

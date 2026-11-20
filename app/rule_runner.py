@@ -393,7 +393,19 @@ async def evaluate(
                 ),
             )
             resumed.append({"machine_id": machine.id, "name": machine.name, **verdict})
-        return {"decision": decision, "price": price, "executed": [], "resumed": resumed}
+        restored: list[dict[str, Any]] = []
+        if rule.get("enabled"):
+            # Prix revenu sous le seuil : la réduction décidée en « heures
+            # chères » est annulée ici, sans planification propre (la règle
+            # reste manuelle).
+            restored = (await restore(db, now=moment, actor=actor)).get("restored") or []
+        return {
+            "decision": decision,
+            "price": price,
+            "executed": [],
+            "resumed": resumed,
+            "restored": restored,
+        }
 
     from app.models import Machine
 
@@ -509,32 +521,72 @@ async def evaluate(
     return {"decision": decision, "price": price, "executed": executed, "resumed": resumed}
 
 
-async def restore(db: Session, *, now: datetime | None = None, actor: str = "system") -> dict[str, Any]:
-    """Restaure les power limits d'origine consignés par la dernière décision."""
-    from app.models import EnergyRuleEvent, Machine
+async def restore(
+    db: Session,
+    *,
+    now: datetime | None = None,
+    actor: str = "system",
+    runner: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
+    """Annule les power limits posés par la règle (valeur d'origine).
+
+    Appelée par l'évaluation suivante quand le prix est revenu sous le seuil :
+    sans cela une réduction décidée en « heures chères » restait appliquée pour
+    toujours. Idempotente — un couple (machine, device) dont la dernière entrée
+    est déjà un ``resume`` est ignoré, sinon chaque tick rejouerait la remise.
+    """
+    from app.models import Device, EnergyRuleEvent, Machine
 
     moment = _now(now)
     rows = (
         db.query(EnergyRuleEvent)
-        .filter(EnergyRuleEvent.kind == "action", EnergyRuleEvent.device_uuid.isnot(None))
+        .filter(
+            EnergyRuleEvent.kind.in_(("action", "resume")),
+            EnergyRuleEvent.device_uuid.isnot(None),
+        )
         .order_by(EnergyRuleEvent.id.desc())
-        .limit(200)
+        .limit(400)
         .all()
     )
-    done: list[dict[str, Any]] = []
-    seen: set[tuple[int, str]] = set()
+    latest: dict[tuple[int, str], EnergyRuleEvent] = {}
     for row in rows:
-        if "power limit" not in (row.detail or ""):
-            continue
         key = (int(row.machine_id or 0), str(row.device_uuid))
-        if key in seen:
+        latest.setdefault(key, row)
+    done: list[dict[str, Any]] = []
+    for key, event in latest.items():
+        if event.kind != "action" or "power limit" not in (event.detail or ""):
             continue
-        seen.add(key)
         machine = db.query(Machine).filter(Machine.id == key[0]).first()
         if machine is None:
             continue
-        _journal(db, "resume", machine_id=machine.id, device_uuid=key[1],
-                 simulated=False, now=moment,
-                 detail="power limit : retour à la valeur d'origine demandé")
-        done.append({"machine_id": machine.id, "device_uuid": key[1]})
+        device = db.query(Device).filter(Device.uuid == key[1]).first()
+        if device is None or device.index is None:
+            continue
+        limits = await read_limits(machine)
+        bound = limits.get(int(device.index)) if isinstance(limits, dict) else None
+        default = bound.get("default") if isinstance(bound, dict) else None
+        if default is None:
+            _journal(
+                db, "error", machine_id=machine.id, device_uuid=key[1], simulated=False,
+                now=moment,
+                detail="retour au power limit d'origine impossible : défaut de la carte illisible",
+            )
+            continue
+        power_runner = runner or POWER_LIMIT_RUNNER or _default_power_runner
+        try:
+            await power_runner(machine, int(device.index), float(default))
+        except Exception as exc:
+            _journal(
+                db, "error", machine_id=machine.id, device_uuid=key[1], simulated=False,
+                now=moment, detail=f"retour au power limit d'origine échoué : {exc}",
+            )
+            continue
+        _journal(
+            db, "resume", machine_id=machine.id, device_uuid=key[1], simulated=False,
+            now=moment,
+            detail=f"power limit : retour à {float(default):.0f} W (valeur d'origine)",
+        )
+        done.append(
+            {"machine_id": machine.id, "device_uuid": key[1], "watts": float(default)}
+        )
     return {"restored": done}

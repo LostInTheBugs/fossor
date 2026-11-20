@@ -114,7 +114,7 @@ def _sh(script: str, *args: str) -> tuple[str, ...]:
 
 
 PROBE_SCRIPT = (
-    "for t in curl wget tar sha256sum systemctl setsid nvidia-smi; do "
+    "for t in curl wget tar sha256sum systemctl setsid nvidia-smi script; do "
     'if command -v "$t" >/dev/null 2>&1; then echo "TOOL:$t"; '
     'else echo "MISSING:$t"; fi; done; '
     'echo "INIT:$(ps -p 1 -o comm= 2>/dev/null | tr -d " ")"; '
@@ -501,6 +501,13 @@ async def start(
     missing = sorted(probe.get("missing", set()) & {"tar", "sha256sum"})
     if missing:
         raise MinerError(f"outils requis absents sur la machine : {', '.join(missing)}")
+
+    # TTY demandé : ``script`` (util-linux) doit exister AVANT toute installation.
+    if profile.get("tty_wrapper") and "script" in (probe.get("missing") or set()):
+        raise MinerError(
+            "option TTY activée pour ce profil mais « script » (util-linux) est "
+            "absent de la machine — installation refusée, aucun fichier écrit"
+        )
 
     # Install: download (ou push Fossor), verify *before* extraction, clean up.
     if str(profile.get("binary_source") or "url").strip().lower() == "fossor":

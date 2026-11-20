@@ -45,6 +45,7 @@ PROFILE_FIELDS = (
     "threads",
     "worker",
     "cpu_governor",
+    "tty_wrapper",
     "enabled",
 )
 

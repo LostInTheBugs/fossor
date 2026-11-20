@@ -85,7 +85,24 @@ def split_event(message: str) -> tuple[str, str]:
     return text, ""
 
 
-def event_entry(ts: Any, coin: str, kind: str, message: str, source: str) -> dict[str, Any]:
+def relative_age(value: Any, now: datetime | None = None) -> str:
+    """Âge lisible : « il y a 3 j », « il y a 2 h », « il y a 5 min »."""
+    moment = parse_iso(value)
+    if moment is None:
+        return ""
+    seconds = int(((now or datetime.now(timezone.utc)) - moment).total_seconds())
+    if seconds < 60:
+        return "à l'instant"
+    if seconds < 3600:
+        return f"il y a {seconds // 60} min"
+    if seconds < 86400:
+        return f"il y a {seconds // 3600} h"
+    return f"il y a {seconds // 86400} j"
+
+
+def event_entry(
+    ts: Any, coin: str, kind: str, message: str, source: str, now: datetime | None = None
+) -> dict[str, Any]:
     text, detail = split_event(message)
     return {
         "ts": _s(ts, 40),
@@ -94,6 +111,7 @@ def event_entry(ts: Any, coin: str, kind: str, message: str, source: str) -> dic
         "text": text,
         "detail": detail,
         "source": source,
+        "age": relative_age(ts, now),
     }
 
 
