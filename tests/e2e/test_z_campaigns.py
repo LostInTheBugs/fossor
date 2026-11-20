@@ -11,7 +11,7 @@ import uuid as uuid_lib
 import pytest
 from playwright.async_api import async_playwright
 
-from tests.e2e.conftest import E2E_DATA_DIR, E2E_URL
+from tests.e2e.conftest import E2E_DATA_DIR, E2E_URL, defer_newest_proposed_campaign
 
 ADMIN_PASSWORD = "adminpass"
 WALLET = "prl1demo" + "q" * 30
@@ -121,7 +121,10 @@ async def test_campaigns_page_cycle_simule(e2e_server):
         row = await page.inner_text("#rows")
         assert "FAKE" in row
 
-        # 3. Approbation puis démarrage immédiat (simulation).
+        # 3. Approbation puis démarrage immédiat (simulation). Le planificateur
+        #    (tick 10 s) peut prendre la campagne approuvée avant le clic :
+        #    on écarte l'échéance, seul le clic la rend due.
+        defer_newest_proposed_campaign()
         await page.click('button[data-act="approve"]')
         await page.wait_for_function(
             "document.querySelector('#rows').textContent.includes('approuvée')", timeout=10000

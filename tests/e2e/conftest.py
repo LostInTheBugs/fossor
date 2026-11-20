@@ -1,6 +1,7 @@
 """E2E test fixtures — start a real uvicorn server for Playwright."""
 
 import os
+import sqlite3
 import subprocess
 import time
 from pathlib import Path
@@ -11,6 +12,33 @@ import pytest
 E2E_PORT = 18765
 E2E_DATA_DIR = "/tmp/fossor_e2e_data"
 E2E_URL = f"http://127.0.0.1:{E2E_PORT}"
+
+
+def defer_newest_proposed_campaign(minutes: int = 60) -> int:
+    """Écarte l'échéance de la campagne qui vient d'être créée.
+
+    La boucle des campagnes tourne toutes les 10 s dans le serveur e2e et
+    démarre toute campagne approuvée dont ``start_at`` est passé : entre
+    l'approbation et le clic « Démarrer maintenant », elle peut prendre la
+    campagne et journaliser « preflight-refused ». En repoussant ``start_at``
+    avant l'approbation, seul le clic — qui la remet à l'instant — peut la
+    rendre due ; la course disparaît.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    when = (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat()
+    conn = sqlite3.connect(f"{E2E_DATA_DIR}/fossor.db", timeout=20)
+    try:
+        row = conn.execute(
+            "SELECT MAX(id) FROM campaigns WHERE status='proposed'"
+        ).fetchone()
+        assert row and row[0], "aucune campagne proposée à écarter"
+        campaign_id = int(row[0])
+        conn.execute("UPDATE campaigns SET start_at=? WHERE id=?", (when, campaign_id))
+        conn.commit()
+    finally:
+        conn.close()
+    return campaign_id
 
 
 @pytest.fixture(scope="session")

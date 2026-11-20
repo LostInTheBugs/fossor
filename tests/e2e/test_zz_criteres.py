@@ -1,12 +1,14 @@
 """E2E — tokens regroupés avec grille de critères, règles éditables, bandeau réel.
 
-Les captures sont écrites dans ``/app/preuves`` (volume monté par la commande
-de la suite) : ce sont les preuves du rapport, prises sur le code de l'étape.
+Les captures vont dans ``FOSSOR_E2E_SHOTS`` s'il est défini, sinon dans le
+``tmp_path`` du test : jamais à la racine, jamais dans l'arbre des sources. Un
+dossier non inscriptible (clone monté en lecture seule) n'échoue pas le test.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 
@@ -16,7 +18,26 @@ from playwright.async_api import async_playwright
 from tests.e2e.conftest import E2E_DATA_DIR, E2E_URL
 
 ADMIN_PASSWORD = "adminpass"
-EVIDENCE = Path("/preuves")
+
+
+def _evidence_dir(tmp_path: Path) -> Path | None:
+    """Dossier des captures, ou None s'il n'est pas inscriptible."""
+    raw = os.environ.get("FOSSOR_E2E_SHOTS", "").strip()
+    base = Path(raw) if raw else tmp_path
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+        probe = base / ".ecriture"
+        probe.write_text("", encoding="utf-8")
+        probe.unlink()
+    except OSError:
+        return None
+    return base
+
+
+async def _shot(page, directory: Path | None, name: str) -> None:
+    if directory is None:
+        return
+    await page.screenshot(path=str(directory / name), full_page=True)
 
 ANALYSES = [
     {
@@ -113,8 +134,8 @@ def _cleanup() -> None:
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_criteres_tokens_grille_bandeau(e2e_server):
-    EVIDENCE.mkdir(parents=True, exist_ok=True)
+async def test_criteres_tokens_grille_bandeau(e2e_server, tmp_path):
+    shots = _evidence_dir(tmp_path)
     errors: list[str] = []
     _seed()
     try:
@@ -181,7 +202,7 @@ async def test_criteres_tokens_grille_bandeau(e2e_server):
                     el => ({text: el.innerText, clipped: el.scrollWidth > el.clientWidth + 1}))"""
             )
             assert wide and all(not item["clipped"] for item in wide), wide
-            await page.screenshot(path=str(EVIDENCE / "01-tokens-1280.png"), full_page=True)
+            await _shot(page, shots, "01-tokens-1280.png")
 
             # Page des règles : les critères sont éditables dans l'ordre.
             row = page.locator('[data-rule="criteria"]')
@@ -195,7 +216,7 @@ async def test_criteres_tokens_grille_bandeau(e2e_server):
             label_inputs = page.locator('#critRows .critrow input[data-cfield="label"]')
             labels = [await label_inputs.nth(i).input_value() for i in range(rows)]
             assert labels[0] == "Fenêtre de sortie" and labels[4] == "Compatible avec les GPU de Fred"
-            await page.screenshot(path=str(EVIDENCE / "02-regles-criteres.png"), full_page=True)
+            await _shot(page, shots, "02-regles-criteres.png")
             await page.locator('[data-rule="criteria"]').scroll_into_view_if_needed()
             await page.locator('[data-act="save"][data-id="criteria"]').click()
             await page.wait_for_selector("#rulesMsg .ok", timeout=10000)
@@ -212,7 +233,7 @@ async def test_criteres_tokens_grille_bandeau(e2e_server):
             )
             assert narrow and all(not item["clipped"] for item in narrow), narrow
             assert "Fenêtre de sortie" in await big_narrow.locator("xpath=following-sibling::tr[1]").inner_text()
-            await page.screenshot(path=str(EVIDENCE / "03-tokens-390.png"), full_page=True)
+            await _shot(page, shots, "03-tokens-390.png")
             await browser.close()
         assert not errors, errors
     finally:

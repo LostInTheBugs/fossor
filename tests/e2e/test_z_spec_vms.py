@@ -11,7 +11,7 @@ import uuid as uuid_lib
 import pytest
 from playwright.async_api import async_playwright
 
-from tests.e2e.conftest import E2E_DATA_DIR, E2E_URL
+from tests.e2e.conftest import E2E_DATA_DIR, E2E_URL, defer_newest_proposed_campaign
 
 ADMIN_PASSWORD = "adminpass"
 WALLET = "prl1demo" + "q" * 30
@@ -153,6 +153,10 @@ async def test_spec_mining_modele_vm_et_destruction_protegee(e2e_server):
             "document.querySelector('#rows').textContent.includes('proposée')", timeout=10000
         )
         assert "mode vm" in await page.inner_text("#rows")
+        # Même course que test_zz_hiveos : le planificateur (tick 10 s) peut
+        # démarrer la campagne approuvée avant le clic « Démarrer maintenant ».
+        # On écarte l'échéance : seul le clic la rend due.
+        defer_newest_proposed_campaign()
         await page.click('button[data-act="approve"]')
         await page.wait_for_function(
             "document.querySelector('#rows').textContent.includes('approuvée')", timeout=10000

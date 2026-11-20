@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 import pytest
 from playwright.async_api import async_playwright
 
-from tests.e2e.conftest import E2E_DATA_DIR, E2E_URL
+from tests.e2e.conftest import E2E_DATA_DIR, E2E_URL, defer_newest_proposed_campaign
 from tests.e2e.test_z_spec_vms import (  # noqa: F401 — mêmes graines que l'écran
     ADMIN_PASSWORD,
     IMAGE_URL,
@@ -166,6 +166,9 @@ async def test_fiche_vm_controle_puis_destruction_au_clic(e2e_server):
         await page.wait_for_function(
             "document.querySelector('#rows').textContent.includes('proposée')", timeout=10000
         )
+        # Le planificateur (tick 10 s) peut prendre la campagne approuvée
+        # avant le clic : on écarte l'échéance, seul le clic la rend due.
+        defer_newest_proposed_campaign()
         await page.click('button[data-act="approve"]')
         await page.wait_for_function(
             "document.querySelector('#rows').textContent.includes('approuvée')", timeout=10000
