@@ -242,7 +242,7 @@ def test_backup_check_puis_destroy_apres_provisionnement_echoue(monkeypatch):
     try:
         row, machine = _row(db)
         monkeypatch.setattr(VR, "_vm_backend", lambda _db, _row: (machine, fake, {}))
-        monkeypatch.setattr(VR, "simulation_enabled", lambda _db: False)
+        monkeypatch.setattr("app.pilotage.simulated_for", lambda _db, _machine: False)
         monkeypatch.setattr(VR, "backup_max_age_days", lambda _db: 7)
 
         verdict = asyncio.run(VR.check_backup(row.id, db=db, user="test"))
@@ -271,7 +271,7 @@ def test_backup_check_vm_avec_wallet_ne_masque_pas_un_absent(monkeypatch):
     try:
         row, machine = _row(db, state="running", wallet="demo1pna00000000000000000000000000000000000")
         monkeypatch.setattr(VR, "_vm_backend", lambda _db, _row: (machine, fake, {}))
-        monkeypatch.setattr(VR, "simulation_enabled", lambda _db: False)
+        monkeypatch.setattr("app.pilotage.simulated_for", lambda _db, _machine: False)
         monkeypatch.setattr(VR, "backup_max_age_days", lambda _db: 7)
         verdict = asyncio.run(VR.check_backup(row.id, db=db, user="test"))
         assert verdict["verified"] is False
