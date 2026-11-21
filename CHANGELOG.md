@@ -1,6 +1,34 @@
 # Changelog
 
-## 2026.11.020 (en cours)
+## 2026.11.021 — 2026-11-21
+
+### Coffre des wallets
+
+- **Phrase maîtresse** : dérivée par Argon2id, les entrées sont chiffrées en AES-256-GCM ; le coffre se verrouille automatiquement.
+- **Phrase exigée même sans authentification** : désactiver la connexion à l'application ne dispense pas de la phrase maîtresse.
+- **Dépôt par Hermes scellé** : écrit sans relecture possible ; chaque révélation est auditée.
+
+### Collecte
+
+- **Mineurs sous le compte de service** : les processus lancés par Fossor sont de nouveau vus, hashrate CPU de l'athlon compris.
+
+### API du mineur
+
+- **Relais SSH** : il interroge `/summary` ; plus de faux « API injoignable ».
+
+### Interface
+
+- **Bandeau de simulation** : affiché seulement s'il reste des machines simulées.
+- **Configuration → Général** : état effectif de chaque réglage.
+- **Onglet Coffre** (`/vault`) : navigation unifiée.
+
+### Livraison et dettes
+
+- **Analyse sans candidat** : doit porter une raison.
+- **e2e de la fiche VM** : stabilisé.
+- **Garde-fou `pre-push`**.
+
+## 2026.11.020 — 2026-11-21
 
 ### Durcissement TLS des ASIC
 
