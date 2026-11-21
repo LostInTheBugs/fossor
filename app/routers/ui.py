@@ -34,6 +34,15 @@ def settings_page(request: Request):
     return HTMLResponse((STATIC_DIR / "settings.html").read_text())
 
 
+@router.get("/vault", response_class=HTMLResponse)
+def vault_page(request: Request):
+    """Onglet Coffre : même écran que Réglages, panneau Coffre ouvert par la route."""
+    if not get_current_user(request):
+        return RedirectResponse(url="/", status_code=303)
+    require_login(request)
+    return HTMLResponse((STATIC_DIR / "settings.html").read_text())
+
+
 @router.get("/audit", response_class=HTMLResponse)
 def audit_page(request: Request):
     if not get_current_user(request):

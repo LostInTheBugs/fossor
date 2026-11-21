@@ -14,7 +14,7 @@
     ["/analysis", "🔎 Analyse des tokens"],
     ["/mined", "🪙 Tokens minés"],
     ["/followup", "📈 Suivi"],
-    ["/settings?vault=1", "🔐 Coffre"],
+    ["/vault", "🔐 Coffre"],
     ["/help", "📖 Comment ça marche"],
     ["/settings", "⚙️ Configuration"],
     ["/audit", "📋 Log"]
@@ -24,15 +24,11 @@
   var path = window.location.pathname.replace(/\/+$/, "") || "/";
   mount.className = "nav-tabs";
   mount.innerHTML = "";
-  var vaultView = '';
-  try {
-    vaultView = new URLSearchParams(window.location.search).get("vault") === "1" ? "?vault=1" : "";
-  } catch (err) { vaultView = ""; }
   LINKS.forEach(function (entry) {
     var link = document.createElement("a");
     link.setAttribute("href", entry[0]);
     link.textContent = entry[1];
-    if (path === entry[0] && !(entry[0] === "/settings" && vaultView)) {
+    if (path === entry[0]) {
       link.className = "active";
       link.setAttribute("aria-current", "page");
     }

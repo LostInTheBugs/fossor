@@ -1909,7 +1909,7 @@ loadIgpu();
   $('#tabVault').addEventListener('click',loadVault);
   $('#tabSecurity').addEventListener('click',loadSecurity);
   $('#tabLog').addEventListener('click',loadLogs);
-  if(new URLSearchParams(location.search).get('vault')==='1'){const vt=$('#tabVault');if(vt)vt.click();}
+  if(location.pathname.replace(/\/+$/,'')==='/vault'||new URLSearchParams(location.search).get('vault')==='1'){const vt=$('#tabVault');if(vt)vt.click();}
   loadSecurity();loadLogs();
 })();
 </script>

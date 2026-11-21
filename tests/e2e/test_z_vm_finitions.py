@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sqlite3
 import uuid as uuid_lib
 from datetime import datetime, timezone
@@ -227,4 +228,69 @@ async def test_fiche_vm_controle_puis_destruction_au_clic(e2e_server):
 
         assert console_errors == [], console_errors
         assert page_errors == [], page_errors
+        await browser.close()
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_fiche_vm_appelle_backup_check_et_rafraichit_la_liste(e2e_server):
+    """Comportement de la fiche VM : un seul chargement, puis un rafraîchissement.
+
+    Aucune chaîne de code n'est comparée : le navigateur compte les requêtes.
+    ``loadSpec`` doit charger ``/api/vms`` une fois ; le bouton « Contrôle
+    sauvegarde » doit appeler ``/api/vms/{id}/backup-check`` puis rafraîchir la
+    liste une seule fois.
+    """
+    vms_calls: list[str] = []
+    backup_calls: list[str] = []
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        context = await browser.new_context()
+        page = await context.new_page()
+
+        async def on_vms(route):
+            vms_calls.append(route.request.url)
+            await route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps([{
+                    "id": 42, "name": "vm-e2e", "state": "running",
+                    "vcpus": 1, "memory_mb": 512, "ip": "192.0.2.42",
+                }]),
+            )
+
+        async def on_backup(route):
+            backup_calls.append(route.request.url)
+            await route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({"verified": True, "reason": "sauvegarde vérifiée (e2e)"}),
+            )
+
+        await page.route(re.compile(r"/api/vms$"), on_vms)
+        await page.route(re.compile(r"/api/vms/\d+/backup-check$"), on_backup)
+
+        await page.goto(E2E_URL + "/", wait_until="domcontentloaded", timeout=15000)
+        await page.fill("#username", "admin")
+        await page.fill("#password", ADMIN_PASSWORD)
+        await page.locator("button[type=submit]").click()
+        await page.wait_for_url("**/dashboard", timeout=15000)
+
+        await page.goto(E2E_URL + "/settings", wait_until="domcontentloaded", timeout=15000)
+        async with page.expect_response(re.compile(r"/api/vms$")) as loaded:
+            await page.click("#tabSpec")
+        assert (await loaded.value).ok
+        await page.wait_for_timeout(400)
+        assert len(vms_calls) == 1, vms_calls
+
+        async with page.expect_response(
+            re.compile(r"/api/vms/\d+/backup-check$")
+        ) as checked:
+            await page.click('button[data-vm="42"][data-vmact="backup"]')
+        assert (await checked.value).ok
+        await page.wait_for_timeout(400)
+        assert len(backup_calls) == 1, backup_calls
+        assert len(vms_calls) == 2, vms_calls
+
         await browser.close()

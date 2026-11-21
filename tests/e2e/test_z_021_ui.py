@@ -74,7 +74,7 @@ async def test_bandeau_absent_general_effectif_et_coffre(e2e_server):
         await page.screenshot(path=f"{SHOTS}/021-general.png", full_page=True)
 
         # Onglet principal « Coffre » : visible dans la navigation et ouvre le panneau.
-        link = page.locator('nav#nav a[href="/settings?vault=1"]')
+        link = page.locator('nav#nav a[href="/vault"]')
         assert await link.count() == 1
         await link.click()
         await page.wait_for_selector("#panel-vault", state="visible", timeout=10000)

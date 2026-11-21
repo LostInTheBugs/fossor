@@ -203,16 +203,6 @@ def test_version_inconnue_ne_conseille_rien():
 
 
 # ── 4. Fiche VM : routes réelles et rafraîchissement ──────────────────────
-def test_fiche_vm_appelle_backup_check_et_rafraichit_la_liste():
-    html = (ROOT / "static" / "settings.html").read_text()
-    assert "'backup-check':verb" in html
-    assert "'/api/vms/'+id+'/'+route" in html
-    # La liste se charge avec l'écran, même si les réglages échouent.
-    assert "async function loadSpec(){\n  loadVmList();" in html
-    # Et se rafraîchit après l'action, y compris en échec.
-    assert "const d=await r.json();\n  await loadVmList();" in html
-
-
 def test_le_test_e2e_electricite_attend_le_contenu():
     text = (ROOT / "tests" / "e2e" / "test_z_power.py").read_text()
     assert "textContent.includes('€/kWh')" in text
