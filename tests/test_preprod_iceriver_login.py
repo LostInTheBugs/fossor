@@ -32,8 +32,8 @@ class _FakeSession:
     def __init__(self, response, cookie_names=()):
         self.client = _FakeClient(response, list(cookie_names))
 
-    async def _note_certificate(self, url):
-        return None
+    async def client_for(self, url):
+        return self.client
 
 
 def _response(status: int, location: str = "", body: str = "") -> httpx.Response:

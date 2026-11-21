@@ -16,13 +16,17 @@ services:
     build: .
     image: ${FOSSOR_IMAGE:-ghcr.io/lostinthebugs/fossor}:${FOSSOR_IMAGE_TAG:-latest}
     ports:
-      - "${FOSSOR_PORT:-8008}:8008"
+      # FOSSOR_BIND=127.0.0.1 pour n'écouter que sur la boucle locale (proxy
+      # TLS devant).  Défaut 0.0.0.0 : ne pas exposer sur Internet sans HTTPS.
+      - "${FOSSOR_BIND:-0.0.0.0}:${FOSSOR_PORT:-8008}:8008"
     volumes:
       - ./data:/data
     environment:
       - DATABASE_URL=sqlite:////data/fossor.db
       - FOSSOR_ADMIN_PASSWORD=${FOSSOR_ADMIN_PASSWORD}
       - FOSSOR_MASTER_KEY=${FOSSOR_MASTER_KEY}
+      # true derrière un proxy HTTPS : cookie de session `Secure`.
+      - FOSSOR_COOKIE_SECURE=${FOSSOR_COOKIE_SECURE:-false}
       # L'application doit connaître l'image qu'elle exécute : c'est ce nom que
       # la demande de mise à jour transmet, et l'updater refuse tout autre.
       - FOSSOR_IMAGE=${FOSSOR_IMAGE:-ghcr.io/lostinthebugs/fossor}

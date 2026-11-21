@@ -307,6 +307,29 @@ async def test_changed_certificate_is_refused(https_panel):
     assert "certificat changé" in str(changed.value)
 
 
+async def test_other_certificate_refused_before_any_credential(https_panel, tmp_path):
+    """Un autre certificat que l'épinglé : refus avant tout envoi d'identifiant.
+
+    Le faux serveur journalise chaque requête HTTP reçue : son journal doit
+    rester vide, ce qui prouve que le mot de passe n'est jamais parti.
+    """
+    autre = tmp_path / "autre"
+    autre.mkdir()
+    _cert, _key, autre_empreinte = _write_cert(autre)
+    _PanelHandler.records = []
+    with pytest.raises(asic_client.AsicCertError) as changed:
+        await asic_client.poll(
+            "iceriver",
+            https_panel["host"],
+            username=USER,
+            password=PASSWORD,
+            cert_sha256=autre_empreinte,
+        )
+    assert "certificat changé" in str(changed.value)
+    assert _PanelHandler.records == [], _PanelHandler.records
+    assert PASSWORD not in json.dumps(_PanelHandler.records)
+
+
 async def test_expired_session_does_one_new_login(https_panel):
     _PanelHandler.drop_next_panel = True
     state = await asic_client.poll(

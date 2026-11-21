@@ -1,6 +1,133 @@
 # Changelog
 
-## 2026.11.011 (en cours)
+## 2026.11.020 (en cours)
+
+### Durcissement TLS des ASIC
+
+- **Empreinte épinglée sur la connexion qui porte la requête** : le certificat observé est validé contre l'empreinte, puis un `SSLContext` (`cadata`, `CERT_REQUIRED`, `check_hostname=False`) ne fait confiance qu'à ce certificat. Un autre certificat fait échouer la poignée de main **avant** tout envoi d'identifiant ; le premier contact (TOFU) est inchangé.
+- **Tests** : certificat épinglé accepté, autre certificat refusé avec journal du faux serveur vide, TOFU conservé.
+
+### Exposition réseau
+
+- **`FOSSOR_BIND`** (défaut `0.0.0.0`) : `"${FOSSOR_BIND:-0.0.0.0}:${FOSSOR_PORT:-8008}:8008"`.
+- **`FOSSOR_COOKIE_SECURE`** (défaut `false`) : cookie de session `Secure` derrière un proxy HTTPS.
+- Documentation : ne pas exposer sur Internet sans HTTPS.
+
+### Updater
+
+- **Option `docker-socket-proxy`** (`docker-compose.socket-proxy.yml`, désactivée par défaut) : l'updater ne monte plus le socket brut, le proxy n'ouvre que conteneurs, images, réseaux et volumes. Modèle de confiance et limite (auto-mise à jour du compagnon) documentés.
+
+### Livraison et dettes
+
+- `README.md` à jour (version, arborescence réelle, installation, sécurité), `LICENSE` MIT (LostInTheBugs, 2026).
+- **e2e `#vmDestroy`** : la liste des VM était rendue deux fois par `loadSpec()` ; le second rendu remplaçait `#vmConfirm` après le `fill` du test. Un seul rendu désormais.
+- **Registre des wallets** : règle de consignation immédiate dans `~/mining-wallets/REGISTRE.md` (mode 600) ; inventaire créé sur le Ryzen.
+
+## 2026.11.019 — 2026-11-21
+
+- **Tick de veille borné** : 15 minutes de recherche au plus, puis dépôt de l'analyse avec ce qui a été trouvé.
+- **Identifiant stable** : un seul UUID du POST à l'état final, plus de nouvel identifiant à chaque écriture.
+- **Compteurs réels** : analyses, candidats et propositions du tick sont comptés depuis le dépôt, plus depuis une valeur par défaut.
+- **Journal des appels Hermes** : méthode, chemin et code de chaque requête reçue, dans l'écran de veille.
+- **Verrou libéré** en fin de tick, y compris en cas d'erreur.
+
+## 2026.11.018 — 2026-11-21
+
+- **Tokens évalués** : le dernier verdict retenu est celui de l'évaluation la plus récente ; les dates sont comparées en vrai `datetime`, même quand les formats diffèrent d'un token à l'autre.
+- **Profils** : nouvelle option `tty_wrapper` — lance le mineur via `script -qfec`, nécessaire à SRBMiner sur certains hôtes.
+- **Règle « heures chères »** : `restore()` branché — les réglages sont annulés au retour du prix bas ; la règle reste déclenchée manuellement.
+- **Machines** : « Ryen-5-3600 » renommée « Ryzen-5-3600 » (migration idempotente) ; re-détection de KVM.
+- **Carte « Dernier événement »** : date affichée en relatif.
+
+## 2026.11.017 — 2026-11-20
+
+- **Critères de Fred dans Fossor** : règle « Critères d'évaluation » éditable (5 critères, nuances, bonus, pour/contre), servie à la veille par `/api/hermes/context` ; compatibilité GPU calculée sur l'inventaire réel ; grille critère par critère pour chaque évaluation.
+- **Tokens évalués** : regroupement par nom normalisé et alias ticker ↔ nom, verdicts normalisés, table d'alias éditable (fusionner / séparer).
+- **Interface** : bandeau de simulation exact (machines en pilotage réel citées), colonnes et dates lisibles.
+- **Binaires** : « Adopter le binaire installé » (sha256 vérifié sur place) et téléversement depuis la machine.
+- **Lancement automatique** : GPU et CPU par défaut, la règle reste désactivée.
+- **Sécurité du dépôt** : garde-fou contre les IP réelles ; e2e stabilisés (captures hors racine, course du planificateur).
+
+## 2026.11.016 — 2026-11-20
+
+### Collecte multi-profils
+
+- **Collecte multi-profils** : une machine dont les devices ont chacun leur token par défaut (ex. Pearl sur les GPU, KSH sur le CPU) est collectée profil par profil, via l'API déclarée ou le journal de l'unité. Le hashrate est attribué aux devices du profil, les shares sont additionnées.
+- `/miner/status` renvoie l'état par profil (plus de 400 quand aucun profil n'est choisi pour la machine).
+- **Libellés** : la simulation globale est la valeur par défaut des machines non armées.
+
+## 2026.11.015 — 2026-11-20
+
+- **Mineurs lancés par Fossor** : le collecteur lit l'API déclarée dans le profil (hashrate GPU, shares) et, pour un mineur CPU sans API, le journal de l'unité.
+- **Installation poussée par SSH** quand `binary_source=fossor` (sha256 vérifié, plus de téléchargement depuis la machine).
+- **Option de profil « gouverneur CPU performance »** au démarrage (désactivée par défaut).
+- **Hashrate et vivacité des VM** décidés machine par machine.
+- **Pool** : `host:port` nu accepté selon le logiciel.
+
+## 2026.11.014 — 2026-11-20
+
+### Parité mining.html
+
+- **Tableau « Tokens évalués »** : agrégation par token, puces de verdict, recherche et historique.
+- **Tableau de bord** : carte « Dernier événement », badge de mode, campagnes en cours (échéance, prolongations, solde wallet, `getbalance` solo en lecture seule).
+- **Import idempotent** des campagnes de `mining-status.json`.
+- Page « Comment ça marche ».
+
+### Lancement automatique
+
+- Lancement automatique **GPU / CPU séparés**, livré **désactivé**.
+
+### Pilotage réel par machine
+
+- Une machine armée (PILOTER) agit en réel même quand la simulation globale est ON ; une machine non armée reste toujours simulée.
+
+### Wallets
+
+- `+`, `/` et `=` acceptés dans les wallets (jusqu'à 160 caractères).
+
+## 2026.11.013 — 2026-11-20
+
+### Authentification et réseau de confiance
+
+- **Authentification désactivable** pour un réseau de confiance : bandeau permanent sur chaque page pour rappeler le mode ouvert, garde-fous conservés (rôles, audit, routes d'administration tracées).
+- **Session de 30 jours** : le cookie signé reste valable 30 jours, sans reconnexion imposée en cours de journée.
+
+### Journal
+
+- **Niveau réglable** depuis Configuration ; les tâches de routine (tick de veille, collecte, vérification des versions) passent en voyants sur le tableau de bord au lieu de remplir le journal.
+
+### Campagnes et simulation
+
+- **ASIC exclus des campagnes** : un ASIC n'est plus profilé ni lancé, il reste suivi en lecture seule (hashrate, température, consommation).
+- **Simulation par machine** : le mode simulation se choisit machine par machine, les machines réelles et simulées cohabitent dans le même parc et la carte le signale.
+
+### ASIC — IceRiver (« pbv081 »)
+
+- **Login avec les en-têtes du navigateur** : `Origin`, `Referer` et `User-Agent` sont envoyés comme le ferait un navigateur, le firmware les exige désormais.
+- **Trace détaillée par étape** : chaque échange (`GET /`, login, `/overview`) laisse une trace horodatée avec le statut, pour diagnostiquer un refus du firmware.
+
+## 2026.11.012 — 2026-11-20
+
+### IceRiver pbv081 — login accepté sur 302
+
+- **Succès** : un login qui répond 302 vers l'accueil est un succès (défaut réel du KS0 de Fred) ; il était jusque-là traité comme un échec.
+
+### Fixtures
+
+- **Adresses de test** écrites de zéro, aucune adresse réelle.
+- **Garde-fou** : un test échoue si une fixture contient un vrai wallet.
+
+### Hashrate CPU — unité de cpuminer-opt
+
+- **Unité prouvée** : le binaire cpuminer-opt 26.1 de Korsh (yespower N=256, r=8) imprime « Mh/s » pour une valeur en kH/s (×1000). La sonde hôte et la collecte dans la VM appliquent la correction et ne prennent plus « TTF @ … » pour des H/s.
+- **Fixture réelle** : les lignes du log de l'athlon (TTF + « Net hash rate (est) ») servent de test.
+
+### Campagnes VM — finitions
+
+- Clé de saut supprimée après la dernière VM, SSH réessayé, carte VM corrigée (`1faf9e5`).
+
+## 2026.11.011 — 2026-11-20
+
 
 ### Veille pilotée par Fossor (étape 4b)
 

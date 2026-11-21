@@ -141,11 +141,10 @@ async def test_session_turns_every_httpx_error_into_asic_error(failure):
         raise exc_type(f"{failure} simulée")
 
     session = asic_client._Session()
-    await session.client.aclose()
-    session.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    session._plain_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     try:
         with pytest.raises(asic_client.AsicError) as raised:
             await session.request("GET", "http://127.0.0.1:1/api/system/info")
     finally:
-        await session.client.aclose()
+        await session._plain_client.aclose()
     assert failure in str(raised.value), str(raised.value)

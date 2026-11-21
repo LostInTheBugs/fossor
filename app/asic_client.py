@@ -124,13 +124,8 @@ def _origin_text(url: str) -> str:
     return f"{parts.scheme}://{parts.hostname}{port}"
 
 
-async def certificate_sha256(host: str, port: int = 443, timeout: float = TIMEOUT_S) -> str:
-    """Empreinte SHA-256 du certificat présenté, en hexadécimal séparé par ``:``.
-
-    La vérification de chaîne est volontairement désactivée : les firmwares
-    ASIC utilisent un certificat auto-signé (« mkcert development certificate »).
-    C'est l'empreinte, épinglée à l'ajout, qui sert d'ancre de confiance.
-    """
+async def certificate_der(host: str, port: int = 443, timeout: float = TIMEOUT_S) -> bytes:
+    """Certificat DER présenté par ``host:port`` (poignée de main TLS seule)."""
     import ssl
 
     context = ssl.create_default_context()
@@ -154,8 +149,40 @@ async def certificate_sha256(host: str, port: int = 443, timeout: float = TIMEOU
             pass
     if not der:
         raise AsicError(f"certificat illisible sur {host}:{port} : aucun certificat présenté")
+    return der
+
+
+def fingerprint(der: bytes) -> str:
+    """Empreinte SHA-256 d'un certificat DER, en hexadécimal séparé par ``:``."""
     digest = hashlib.sha256(der).hexdigest().upper()
     return ":".join(digest[index:index + 2] for index in range(0, len(digest), 2))
+
+
+async def certificate_sha256(host: str, port: int = 443, timeout: float = TIMEOUT_S) -> str:
+    """Empreinte SHA-256 du certificat présenté, en hexadécimal séparé par ``:``.
+
+    La vérification de chaîne est volontairement désactivée : les firmwares
+    ASIC utilisent un certificat auto-signé (« mkcert development certificate »).
+    C'est l'empreinte, épinglée à l'ajout, qui sert d'ancre de confiance.
+    """
+    return fingerprint(await certificate_der(host, port, timeout))
+
+
+def _pinned_context(der: bytes):
+    """Contexte TLS qui **ne fait confiance qu'au certificat épinglé**.
+
+    ``cadata`` = le certificat observé et validé contre l'empreinte épinglée :
+    la poignée de main de la connexion qui porte la requête échoue si le
+    serveur présente un autre certificat, avant tout octet HTTP (donc avant
+    tout identifiant).  Pas de vérification de nom : les ASIC sont joints par
+    adresse IP et leur certificat est auto-signé.
+    """
+    import ssl
+
+    context = ssl.create_default_context(cadata=ssl.DER_cert_to_PEM_cert(der))
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_REQUIRED
+    return context
 
 
 def _normalized(value: str) -> str:
@@ -165,34 +192,69 @@ def _normalized(value: str) -> str:
 class _Session:
     """Client HTTP d'un ASIC : redirections suivies à la main, hôte unique."""
 
-    def __init__(self, timeout: float = TIMEOUT_S) -> None:
-        import httpx
-
+    def __init__(self, timeout: float = TIMEOUT_S, cert_sha256: str | None = None) -> None:
         self.timeout = timeout
-        self.client = httpx.AsyncClient(timeout=timeout, follow_redirects=False, verify=False)
+        #: Empreinte épinglée.  Elle n'est **jamais** vérifiée sur une connexion
+        #: séparée de celle qui porte la requête : elle sert à valider le
+        #: certificat qui construit le contexte TLS de la connexion elle-même.
+        self.pin = cert_sha256
         self.https_seen = False
         self.certificates: dict[str, str] = {}
+        self.clients: dict[str, Any] = {}
+        self._plain_client = None
+        self.client = None
 
     async def __aenter__(self) -> "_Session":
         return self
 
     async def __aexit__(self, *exc_info) -> None:
-        await self.client.aclose()
+        for client in list(self.clients.values()):
+            await client.aclose()
+        if self._plain_client is not None:
+            await self._plain_client.aclose()
 
-    async def _note_certificate(self, url: str) -> None:
-        """Calcule l'empreinte du certificat au premier passage en HTTPS."""
-        self.https_seen = True
+    def _plain(self):
+        import httpx
+
+        if self._plain_client is None:
+            self._plain_client = httpx.AsyncClient(
+                timeout=self.timeout, follow_redirects=False
+            )
+        return self._plain_client
+
+    async def _https(self, url: str):
+        """Client HTTPS dont le contexte ne fait confiance qu'au certificat épinglé."""
+        import httpx
+
         parts = urlsplit(url)
-        origin = f"{parts.hostname}:{parts.port or 443}"
-        if origin in self.certificates:
-            return
         hostname = parts.hostname or ""
-        self.certificates[origin] = await certificate_sha256(
-            hostname, parts.port or 443, self.timeout
+        port = parts.port or 443
+        origin = f"{parts.scheme}://{hostname}:{port}"
+        if origin in self.clients:
+            return self.clients[origin]
+        # Le certificat est lu une fois pour construire l'ancre de confiance ;
+        # l'empreinte épinglée est vérifiée **avant** toute requête, et la
+        # connexion qui enverra les identifiants n'accepte que ce certificat.
+        der = await certificate_der(hostname, port, self.timeout)
+        observed = fingerprint(der)
+        _verify_pin(observed, self.pin)
+        self.certificates[f"{hostname}:{port}"] = observed
+        self.https_seen = True
+        self.clients[origin] = httpx.AsyncClient(
+            timeout=self.timeout,
+            follow_redirects=False,
+            verify=_pinned_context(der),
         )
+        return self.clients[origin]
 
     def certificate_for(self, hostname: str, port: int | None = None) -> str | None:
         return self.certificates.get(f"{hostname}:{port or 443}")
+
+    async def client_for(self, url: str):
+        """Client de l'URL : HTTPS épinglé, HTTP simple ; cookie jar par origine."""
+        client = await self._https(url) if url.startswith("https://") else self._plain()
+        self.client = client
+        return client
 
     async def request(self, method: str, url: str, **kwargs: Any):
         """Requête + redirections (301/302/303/307/308), même hôte, 3 sauts."""
@@ -203,10 +265,9 @@ class _Session:
         current_method = method
         hops = 0
         while True:
-            if current.startswith("https://"):
-                await self._note_certificate(current)
+            client = await self.client_for(current)
             try:
-                response = await self.client.request(
+                response = await client.request(
                     current_method,
                     current,
                     data=body if current_method == method else None,
@@ -421,10 +482,9 @@ async def _single(session: _Session, method: str, url: str, **kwargs: Any):
     """Une requête, redirections **non** suivies : on veut constater l'étape."""
     import httpx
 
-    if url.startswith("https://"):
-        await session._note_certificate(url)
+    client = await session.client_for(url)
     try:
-        return await session.client.request(method, url, **kwargs)
+        return await client.request(method, url, **kwargs)
     except (httpx.HTTPError, OSError) as exc:
         raise AsicError(
             f"{_origin_text(url)} injoignable : {type(exc).__name__}: {exc}"
@@ -434,6 +494,8 @@ async def _single(session: _Session, method: str, url: str, **kwargs: Any):
 def _cookie_count(session: _Session) -> int:
     """Nombre de cookies reçus — jamais leur valeur, jamais leur nom en clair."""
     try:
+        if session.client is None:
+            return 0
         return len(list(session.client.cookies.jar))
     except Exception:
         return 0
@@ -596,7 +658,7 @@ async def iceriver_probe(
     jamais le mot de passe ni le cookie.
     """
     base = _url(host, "")
-    async with _Session(timeout) as session:
+    async with _Session(timeout, cert_sha256) as session:
         steps: list[str] = []
         if username and password:
             try:

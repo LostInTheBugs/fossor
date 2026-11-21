@@ -1464,7 +1464,9 @@ async function saveSpecHost(){
   if(r.ok){const d=await r.json();applySpecHostKind(d.spec_host_kind||'');}
 }
 async function loadSpec(){
-  loadVmList();
+  // Une seule liste : le rendu final (après lecture des réglages) remplace les
+  // lignes.  Un premier rendu ici recréait #vmConfirm après le `fill` du test
+  // e2e et laissait « Détruire » désactivé.
   const r=await fetch('/api/spec/settings',{credentials:'include'});
   if(!r.ok){vmField('vmState').textContent='lecture impossible';return;}
   const d=await r.json(); specInfo=d;

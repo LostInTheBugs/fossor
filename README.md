@@ -2,7 +2,7 @@
 
 Mining fleet management — inventory, hardware detection, and pilotage of mining machines.
 
-**Version:** [2026.11.003](https://github.com/LostInTheBugs/fossor/releases/tag/2026.11.003) ·
+**Version:** [2026.11.020-dev](https://github.com/LostInTheBugs/fossor/releases) ·
 [All releases](https://github.com/LostInTheBugs/fossor/releases) ·
 [Container image](https://github.com/LostInTheBugs/fossor/pkgs/container/fossor)
 
@@ -51,7 +51,7 @@ that keeps the fleet inventory, connects to each machine, and records every acti
 
 ```bash
 docker run -d --name fossor \
-  -p 8008:8008 \
+  -p 127.0.0.1:8008:8008 \
   -v "$PWD/data:/data" \
   -e FOSSOR_MASTER_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" \
   -e FOSSOR_ADMIN_PASSWORD='change-me' \
@@ -86,6 +86,8 @@ uvicorn app.main:app --reload --port 8008
 | `FOSSOR_ADMIN_PASSWORD` | Mot de passe admin, lu au premier démarrage seulement puis haché en base. | *(requis au 1er démarrage)* |
 | `FOSSOR_DATA_DIR` | Répertoire de la base SQLite et des sauvegardes de configuration. | `/data` |
 | `FOSSOR_PORT` | Port de l'hôte publié vers le 8008 du conteneur (Compose uniquement). | `8008` |
+| `FOSSOR_BIND` | Adresse d'écoute publiée par Compose ; `127.0.0.1` derrière un proxy TLS. | `0.0.0.0` |
+| `FOSSOR_COOKIE_SECURE` | Ajoute `Secure` au cookie de session (proxy HTTPS). | `false` |
 | `FOSSOR_UPDATE_CHECK_INTERVAL` | Secondes entre deux vérifications des releases GitHub ; `0` désactive la vérification de fond. | `3600` |
 | `DATABASE_URL` | Chaîne de connexion SQLAlchemy. | `sqlite:////data/fossor.db` |
 
@@ -177,18 +179,30 @@ bandeau « service fossor-updater absent ».
 - Les clés d'hôte sont épinglées au premier contact : n'utiliser « Réinitialiser la clé
   d'hôte » qu'après avoir vérifié que l'empreinte a réellement changé (réinstallation,
   nouveau disque).
+- **Ne pas exposer l'application sur Internet sans HTTPS.** Le cookie de session n'est
+  `Secure` que si `FOSSOR_COOKIE_SECURE=true` ; en HTTP direct, la session circule en clair.
+- Les ASIC sont joints en HTTPS avec **épinglage du certificat** : l'empreinte vérifiée
+  est celle de la connexion qui porte la requête (contexte TLS limité à ce certificat),
+  pas celle d'une connexion de diagnostic séparée.
+- L'updater peut recevoir le socket Docker brut. L'option `docker-socket-proxy`
+  (désactivée par défaut) le remplace par un proxy qui n'ouvre que les appels nécessaires ;
+  elle ne rend pas un conteneur compromis inoffensif pour autant.
 - Les adresses d'exemple utilisent la plage de documentation `192.0.2.0/24`.
 
 ## État du dépôt
 
 ```
-sources/
-├── app/                 # FastAPI : auth, secrets, SSH, détection, export/import, IA, update
-│   └── routers/         # auth, machines, devices, config, ai, update, hermes, audit, ui
-├── static/              # pages HTML/CSS/JS (aucun CDN)
-├── tests/               # pytest (unit/API, intégration SSH, e2e Playwright)
-├── Dockerfile, Dockerfile.e2e, docker-compose.yml
-└── VERSION, CHANGELOG.md, pyproject.toml, requirements.txt
+.
+├── app/                     # FastAPI : auth, secrets, SSH, détection, IA, veille, VM
+│   └── routers/             # auth, machines, devices, config, ai, update, hermes, vms…
+├── static/                  # pages HTML/CSS/JS (aucun CDN)
+├── tests/                   # pytest (unit/API, intégration SSH) et tests/e2e (Playwright)
+├── updater/                 # compagnon de mise à jour (socket Docker, pas de port)
+├── scripts/                 # vérification des tags de release
+├── Dockerfile, Dockerfile.e2e
+├── docker-compose.yml       # application + updater
+├── docker-compose.socket-proxy.yml  # option : socket Docker médiatisé
+└── VERSION, CHANGELOG.md, LICENSE, README.md, pyproject.toml, requirements.txt
 ```
 
 ## License

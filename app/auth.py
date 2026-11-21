@@ -13,6 +13,28 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60
 STAY_LOGGED_IN_DAYS = 30
 
 
+def cookie_secure() -> bool:
+    """``Secure`` sur le cookie de session quand l'app est derrière un proxy HTTPS.
+
+    Désactivé par défaut : en HTTP direct, un cookie ``Secure`` ne serait jamais
+    renvoyé par le navigateur et la connexion boucherait.  À activer dès que
+    ``FOSSOR_COOKIE_SECURE=true`` et que l'accès passe par HTTPS.
+    """
+    return str(os.environ.get("FOSSOR_COOKIE_SECURE", "false")).strip().lower() in {
+        "1", "true", "on", "yes"
+    }
+
+
+def session_cookie_options() -> dict:
+    """Options du cookie de session (testables sans passer par une requête)."""
+    return {
+        "httponly": True,
+        "samesite": "strict",
+        "secure": cookie_secure(),
+        "path": "/",
+    }
+
+
 def _get_data_dir() -> Path:
     """Return the data directory from env or default /data."""
     env_dir = os.environ.get("FOSSOR_DATA_DIR")
@@ -145,10 +167,8 @@ def login(
         response.set_cookie(
             key="fossor_session",
             value=token,
-            httponly=True,
-            samesite="strict",
-            path="/",
             max_age=days * 86400 if stay else ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            **session_cookie_options(),
         )
         return {"ok": True, "message": "Connected"}
     raise HTTPException(status_code=401, detail="Invalid credentials")

@@ -1,0 +1,51 @@
+# Option — socket Docker médiatisé pour l'updater (désactivée par défaut).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.socket-proxy.yml up -d
+#
+# Le compagnon ne monte plus /var/run/docker.sock : il parle au proxy, qui
+# n'ouvre que les familles d'appels nécessaires à une mise à jour d'image
+# (images pull/inspect, conteneurs inspect/create/start/stop, réseaux et
+# volumes du projet).  POST=1 est requis pour create/start/stop ; EXEC,
+# BUILD, SWARM, SYSTEM et AUTH restent fermés.
+#
+# Modèle de confiance : le proxy tourne en lecture seule sur le socket de
+# l'hôte et reste dans le réseau Compose ; aucun port n'est publié.  Un
+# conteneur du projet qui atteint le proxy peut néanmoins créer ou arrêter
+# des conteneurs : le proxy réduit la surface, il ne rend pas l'updater
+# inoffensif.  Sans le proxy, l'updater a les droits du socket entier.
+#
+# Limite connue : l'auto-mise à jour du compagnon (conteneur frère qui monte
+# le socket) n'est pas possible à travers le proxy ; elle est donc désactivée
+# ci-dessous.  Pour la faire, repasser par le socket brut ou recréer
+# `fossor-updater` à la main.
+#
+# Cette variante n'a pas été validée sur l'aperçu à ce jour ; elle l'est par
+# `docker compose ... config` et documentée comme optionnelle.
+services:
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    environment:
+      CONTAINERS: "1"
+      IMAGES: "1"
+      NETWORKS: "1"
+      VOLUMES: "1"
+      POST: "1"
+      EXEC: "0"
+      BUILD: "0"
+      SWARM: "0"
+      SYSTEM: "0"
+      INFO: "0"
+      AUTH: "0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+
+  fossor-updater:
+    environment:
+      - DOCKER_HOST=tcp://docker-socket-proxy:2375
+      # L'amorçage d'un conteneur frère monterait le socket brut : impossible ici.
+      - FOSSOR_UPDATER_SELF_UPDATE=0
+    volumes: !override
+      - .:/compose
+      - ./data:/data:ro
+      - ./data/update:/data/update
