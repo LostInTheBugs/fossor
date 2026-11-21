@@ -60,32 +60,26 @@ async def test_configuration_watchdog_reglages_et_defauts(e2e_server):
 
         # Effet réel : le seuil enregistré est relu par l'API.
         await page.fill("#wdHashPct", "55")
-        await page.click("#wdSave")
-        # Attendre la **valeur** et non le libellé : « enregistré » reste affiché
-        # du clic précédent, la lecture partait avant le PUT (passage instable).
-        await page.wait_for_function(
-            """async () => {
-                const res = await fetch('/api/watchdog', {credentials: 'include'});
-                const data = await res.json();
-                return data.config.rules.hashrate_low.pct === 55;
-            }""",
-            timeout=10000)
-        saved = await page.evaluate(
-            "fetch('/api/watchdog',{credentials:'include'}).then(r=>r.json())")
+        # La réponse du PUT fait foi : ni le libellé « enregistré » (déjà là)
+        # ni une relecture ultérieure ne prouvent ce qui a été écrit.
+        async with page.expect_response(
+            lambda r: "/api/watchdog/config" in r.url and r.request.method == "PUT"
+        ) as info:
+            await page.click("#wdSave")
+        response = await info.value
+        assert response.ok, await response.text()
+        saved = await response.json()
         assert saved["config"]["rules"]["hashrate_low"]["pct"] == 55.0
 
         # Remise en état pour les autres tests de la session.
         await page.fill("#wdHashPct", "50")
-        await page.click("#wdSave")
-        await page.wait_for_function(
-            """async () => {
-                const res = await fetch('/api/watchdog', {credentials: 'include'});
-                const data = await res.json();
-                return data.config.rules.hashrate_low.pct === 50;
-            }""",
-            timeout=10000)
-        restored = await page.evaluate(
-            "fetch('/api/watchdog',{credentials:'include'}).then(r=>r.json())")
+        async with page.expect_response(
+            lambda r: "/api/watchdog/config" in r.url and r.request.method == "PUT"
+        ) as info2:
+            await page.click("#wdSave")
+        response2 = await info2.value
+        assert response2.ok, await response2.text()
+        restored = await response2.json()
         assert restored["config"]["rules"]["hashrate_low"]["pct"] == 50.0
         await browser.close()
 
