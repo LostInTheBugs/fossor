@@ -158,8 +158,13 @@ WHITELISTED_COMMANDS: dict[str, str] = {
         exit 0
         """
     ).strip(),
+    # SRBMiner 3.8.3 sert son relevé sur ``/summary`` ; ``/`` répond 404.
+    # ``-f`` fait échouer curl sur un 404 pour passer au repli, sinon un corps
+    # vide passait pour une réponse et le contrôle concluait « injoignable ».
     "miner_api": (
-        "curl -s -m 5 http://127.0.0.1:{port}/ 2>/dev/null "
+        "curl -sf -m 5 http://127.0.0.1:{port}/summary 2>/dev/null "
+        "|| curl -sf -m 5 http://127.0.0.1:{port}/ 2>/dev/null "
+        "|| wget -qO- -T 5 http://127.0.0.1:{port}/summary 2>/dev/null "
         "|| wget -qO- -T 5 http://127.0.0.1:{port}/ 2>/dev/null "
         "|| exit 0"
     ),
