@@ -748,6 +748,12 @@ async def collect_machine(machine_id: int) -> dict[str, Any]:
             error = raw.get("error", "collecte impossible")
             _store_offline(db, machine, error, ts)
             logger.info("machine %s hors ligne: %s", machine.name, error)
+            try:
+                from app import watchdog
+
+                await watchdog.evaluate_machine(db, machine, offline=error)
+            except Exception:  # le watchdog ne casse jamais une collecte
+                logger.warning("watchdog : évaluation hors ligne en échec", exc_info=True)
             return {"machine_id": machine_id, "name": machine.name, "online": False, "error": error}
 
         catalogue = _coin_catalogue(db)
@@ -901,6 +907,14 @@ async def collect_machine(machine_id: int) -> dict[str, Any]:
         apply_virt(db, machine, raw.get("stdout", ""))
         _store_raw_collection(db, machine, combined)
         rows = _store_metrics(db, machine, stats, ts)
+        try:
+            from app import watchdog
+
+            await watchdog.evaluate_machine(
+                db, machine, stats=stats, raw_stdout=raw.get("stdout", "")
+            )
+        except Exception:  # le watchdog ne casse jamais une collecte
+            logger.warning("watchdog : évaluation en échec", exc_info=True)
         return {
             "machine_id": machine_id,
             "name": machine.name,

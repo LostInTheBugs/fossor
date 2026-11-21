@@ -55,6 +55,8 @@ EVENTS: dict[str, dict[str, str]] = {
     "update_available": {"label": "Mise à jour disponible", "level": "info"},
     "update_done": {"label": "Mise à jour terminée", "level": "info"},
     "update_rolled_back": {"label": "Mise à jour annulée (retour arrière)", "level": "critique"},
+    "watchdog_action": {"label": "Action du watchdog", "level": "alerte"},
+    "watchdog_blocked": {"label": "Watchdog bloqué (limite de relances)", "level": "critique"},
 }
 
 DEFAULT_QUIET = {"enabled": False, "start": "22:00", "end": "07:00", "tz": "Europe/Paris"}

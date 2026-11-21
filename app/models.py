@@ -99,6 +99,10 @@ class Machine(Base):
     simulation_disabled: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="0"
     )
+    # §10.1 : reboot et power cycle du watchdog exigent un mot « VALIDER »
+    # par machine.  Les deux restent faux tant que l'opérateur n'a pas confirmé.
+    watchdog_reboot_ok: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    watchdog_power_ok: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     # §4.15: CPU and platform power are typed in by the operator (no sensor).
     cpu_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
     platform_power_w: Mapped[float] = mapped_column(Float, default=50.0)
@@ -855,3 +859,43 @@ class VaultWallet(Base):
     sealed_password: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(String(30), default="")
     updated_at: Mapped[str] = mapped_column(String(30), default="")
+
+
+class WatchdogEvent(Base):
+    """Journal d'un déclenchement du watchdog (§10.1) — jamais réécrit."""
+
+    __tablename__ = "watchdog_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    machine_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    machine_name: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    device_id: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    device_label: Mapped[str] = mapped_column(String(160), default="", server_default="")
+    rule: Mapped[str] = mapped_column(String(30), nullable=False)
+    measure: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    action: Mapped[str] = mapped_column(String(20), nullable=False)
+    result: Mapped[str] = mapped_column(String(40), default="", server_default="")
+    simulated: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    detail: Mapped[str] = mapped_column(Text, default="", server_default="")
+
+
+class WatchdogState(Base):
+    """Mémoire d'une règle active : début, palier, dernière action.
+
+    ``device_id = 0`` désigne une règle de machine (shares, injoignable) ;
+    la contrainte d'unicité est portée par le code, pas par SQLite (NULL).
+    """
+
+    __tablename__ = "watchdog_states"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    machine_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    device_id: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    rule: Mapped[str] = mapped_column(String(30), nullable=False)
+    since: Mapped[str] = mapped_column(String(40), nullable=False)
+    stage: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_action_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    reference_hs: Mapped[float | None] = mapped_column(Float, nullable=True)
+    counter: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    counter_at: Mapped[str | None] = mapped_column(String(40), nullable=True)

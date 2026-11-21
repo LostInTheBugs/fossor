@@ -110,6 +110,12 @@ def _migrate_asic_login() -> None:
                 conn.exec_driver_sql(f"ALTER TABLE machines ADD COLUMN {name} {ddl}")
 
 
+def _migrate_machine_watchdog_columns() -> None:
+    """§10.1 : autorisation explicite du reboot et du power cycle par machine."""
+    _add_column_if_missing("machines", "watchdog_reboot_ok", "watchdog_reboot_ok BOOLEAN NOT NULL DEFAULT 0")
+    _add_column_if_missing("machines", "watchdog_power_ok", "watchdog_power_ok BOOLEAN NOT NULL DEFAULT 0")
+
+
 def _migrate_machine_hiveos_column() -> None:
     """§4.1 ter / 3e : dernière sonde HiveOS masquée, par machine."""
     with engine.begin() as conn:
@@ -198,6 +204,7 @@ def init_db():
     _migrate_machine_hiveos_column()
     _migrate_machine_fossor_host_column()
     _migrate_machine_simulation_column()
+    _migrate_machine_watchdog_columns()
     _migrate_spec_vm_pve_columns()
     _migrate_miner_binary_columns()
     _migrate_miner_tty_wrapper()

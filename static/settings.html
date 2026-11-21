@@ -81,6 +81,7 @@ header h1{font-size:26px}
     <button class="subtab" id="tabEnergy" data-panel="panel-energy">Électricité</button>
     <button class="subtab" id="tabNotifications" data-panel="panel-notifications">Notifications</button>
     <button class="subtab" id="tabUpdate" data-panel="panel-update">Mise à jour</button>
+    <button class="subtab" id="tabWatchdog" data-panel="panel-watchdog">Watchdog</button>
     <button class="subtab" id="tabVault" data-panel="panel-vault">Coffre</button>
     <button class="subtab" id="tabSecurity" data-panel="panel-security">Sécurité</button>
     <button class="subtab" id="tabLog" data-panel="panel-log">Journal</button>
@@ -444,6 +445,46 @@ header h1{font-size:26px}
       <div class="sub">Une VM n'est pilotée que si son nom porte le préfixe <code>fossor-</code> <b>et</b> si libvirt porte la métadonnée <code>fossor_vm=1</code>. Fin de campagne : la VM est éteinte et conservée ; sa destruction est une action séparée, refusée tant que la sauvegarde du wallet n'a pas été vérifiée (§10.11).</div>
       <div id="vmListWrap"><table><thead><tr><th>VM</th><th>Campagne</th><th>État</th><th>IP / nœud</th><th>vCPU / RAM</th><th>Sauvegarde</th><th>Actions</th></tr></thead><tbody id="vmRows"></tbody></table></div>
       <div class="empty" id="vmEmpty" style="display:none">Aucune VM créée par Fossor.</div>
+    </div>
+  </div>
+
+  <div id="panel-watchdog" style="display:none">
+    <div class="card">
+      <h2>Watchdog</h2>
+      <div class="sub">Surveillance par machine et par device à chaque collecte. Une action ne passe au palier suivant qu'après le délai d'escalade sans rétablissement. Livré avec « notifier » et « relancer le mineur » seulement ; redémarrage et power cycle sont désactivés et exigent, par machine, le mot VALIDER.</div>
+      <div class="field"><label><input type="checkbox" id="wdEnabled" checked> Watchdog actif</label></div>
+      <h3>Seuils</h3>
+      <div class="field"><label><input type="checkbox" id="wdHashEnabled" checked> Hashrate bas</label></div>
+      <div class="field narrow"><label>Sous (% de la médiane 24 h)</label><input type="number" id="wdHashPct" min="1" max="100" value="50"></div>
+      <div class="field narrow"><label>Pendant (min)</label><input type="number" id="wdHashMin" min="1" value="10"></div>
+      <div class="field"><label><input type="checkbox" id="wdSharesEnabled" checked> Aucune share acceptée</label></div>
+      <div class="field narrow"><label>Pendant (min)</label><input type="number" id="wdSharesMin" min="1" value="20"></div>
+      <div class="field"><label><input type="checkbox" id="wdTempEnabled" checked> Température</label></div>
+      <div class="field narrow"><label>GPU au-dessus de (°C)</label><input type="number" id="wdTempGpu" min="1" value="85"></div>
+      <div class="field narrow"><label>CPU au-dessus de (°C)</label><input type="number" id="wdTempCpu" min="1" value="90"></div>
+      <div class="field narrow"><label>Pendant (min)</label><input type="number" id="wdTempMin" min="1" value="5"></div>
+      <div class="field"><label><input type="checkbox" id="wdAbsentEnabled" checked> Mineur absent (unité fossor-miner-* inactive ou processus introuvable)</label></div>
+      <div class="field"><label><input type="checkbox" id="wdUnreachEnabled" checked> Machine injoignable</label></div>
+      <div class="field narrow"><label>Pendant (min)</label><input type="number" id="wdUnreachMin" min="1" value="10"></div>
+      <h3>Actions graduées</h3>
+      <div class="field"><label><input type="checkbox" id="wdActNotify" checked> Notifier</label></div>
+      <div class="field"><label><input type="checkbox" id="wdActMiner" checked> Relancer le mineur (systemctl restart / HiveOS miner restart)</label></div>
+      <div class="field"><label><input type="checkbox" id="wdActVm" checked> Relancer la VM (campagnes vm/hybrid)</label></div>
+      <div class="field"><label><input type="checkbox" id="wdActReboot"> Redémarrer la machine — désactivé par défaut, mot VALIDER par machine</label></div>
+      <div class="field"><label><input type="checkbox" id="wdActPower"> Power cycle (§4.17) — désactivé par défaut, contrôleur et mot VALIDER requis</label></div>
+      <div class="field narrow"><label>Délai entre paliers (min)</label><input type="number" id="wdEscalation" min="1" value="5"></div>
+      <div class="field narrow"><label>Grâce au démarrage (min)</label><input type="number" id="wdGrace" min="1" value="10"></div>
+      <div class="field narrow"><label>Relances max par heure et par cible</label><input type="number" id="wdMax" min="1" value="3"></div>
+      <div class="actions"><button class="btn" id="wdSave">Enregistrer</button><span id="wdState" class="chip off">—</span></div>
+    </div>
+    <div class="card">
+      <h2>Surcharge par machine</h2>
+      <div class="sub">Vide = valeurs globales. Une surcharge ne peut qu'affiner les seuils de cette machine ; les garde-fous (grâce, 3 par heure, mineur externe, ASIC, campagne en bascule) restent obligatoires.</div>
+      <div id="wdMachines" class="sub">Chargement…</div>
+    </div>
+    <div class="card">
+      <h2>Journal global</h2>
+      <div id="wdJournal" class="sub">Chargement…</div>
     </div>
   </div>
 
@@ -1910,6 +1951,96 @@ loadIgpu();
   $('#tabSecurity').addEventListener('click',loadSecurity);
   $('#tabLog').addEventListener('click',loadLogs);
   if(location.pathname.replace(/\/+$/,'')==='/vault'||new URLSearchParams(location.search).get('vault')==='1'){const vt=$('#tabVault');if(vt)vt.click();}
+  let WDMACHINES=[];
+  const wdNum=(id)=>Number($(id).value||0);
+  const wdSet=(id,value)=>{const el=$(id);if(!el)return;if(el.type==='checkbox')el.checked=!!value;else el.value=value;};
+  const wdEsc=(text)=>String(text==null?'':text).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const wdConfig=()=>({
+    enabled:$('#wdEnabled').checked,
+    rules:{
+      hashrate_low:{enabled:$('#wdHashEnabled').checked,pct:wdNum('#wdHashPct'),minutes:wdNum('#wdHashMin')},
+      no_shares:{enabled:$('#wdSharesEnabled').checked,minutes:wdNum('#wdSharesMin')},
+      temperature:{enabled:$('#wdTempEnabled').checked,gpu_c:wdNum('#wdTempGpu'),cpu_c:wdNum('#wdTempCpu'),minutes:wdNum('#wdTempMin')},
+      miner_absent:{enabled:$('#wdAbsentEnabled').checked},
+      unreachable:{enabled:$('#wdUnreachEnabled').checked,minutes:wdNum('#wdUnreachMin')},
+    },
+    actions:{notify:$('#wdActNotify').checked,restart_miner:$('#wdActMiner').checked,
+      restart_vm:$('#wdActVm').checked,reboot:$('#wdActReboot').checked,power_cycle:$('#wdActPower').checked},
+    escalation_minutes:wdNum('#wdEscalation'),grace_minutes:wdNum('#wdGrace'),max_per_hour:wdNum('#wdMax'),
+  });
+  const wdRenderMachines=(machines)=>{
+    WDMACHINES=machines||[];
+    const rows=WDMACHINES.map(m=>{
+      const o=m.override||{};
+      const r=(o.rules&&o.rules.hashrate_low)||{};
+      const act=(o.actions&&o.actions.restart_miner);
+      return '<tr><td>'+wdEsc(m.name)+'</td>'
+        +'<td>'+(m.simulated?'<span class="chip off">simulé</span>':'<span class="chip">réel</span>')
+        +(m.asic?' · ASIC (notification seule)':'')+'</td>'
+        +'<td><input type="number" id="wdOvPct-'+m.id+'" min="1" max="100" placeholder="—" value="'+(r.pct!=null?r.pct:'')+'" style="width:70px"></td>'
+        +'<td><input type="number" id="wdOvMin-'+m.id+'" min="1" placeholder="—" value="'+(r.minutes!=null?r.minutes:'')+'" style="width:70px"></td>'
+        +'<td><label><input type="checkbox" id="wdOvMiner-'+m.id+'"'+(act!==false?' checked':'')+'> relancer</label></td>'
+        +'<td>'+(m.reboot_ok?'<span class="chip">reboot validé</span>':'<span class="chip off">reboot refusé</span>')
+        +' '+(m.power_ok?'<span class="chip">cycle validé</span>':'<span class="chip off">cycle refusé</span>')+'</td>'
+        +'<td><button class="btn sm" onclick="wdSaveOverride('+m.id+')">Surcharge</button> '
+        +'<button class="btn sm outline" onclick="wdAuthorize('+m.id+',\'reboot\')">Reboot</button> '
+        +'<button class="btn sm outline" onclick="wdAuthorize('+m.id+',\'power_cycle\')">Cycle</button></td></tr>';
+    }).join('');
+    $('#wdMachines').innerHTML='<table><thead><tr><th>Machine</th><th>Pilotage</th><th>% hashrate</th><th>min hash</th><th>Action</th><th>Autorisations</th><th></th></tr></thead><tbody>'
+      +(rows||'<tr><td colspan="7">Aucune machine.</td></tr>')+'</tbody></table>';
+  };
+  const wdRenderJournal=(events)=>{
+    const rows=(events||[]).map(e=>'<tr><td class="mono">'+wdEsc(e.ts)+'</td><td>'+wdEsc(e.machine_name)+'</td><td>'+wdEsc(e.device_label||'—')+'</td><td>'+wdEsc(e.rule)+'</td><td>'+wdEsc(e.measure)+'</td><td>'+wdEsc(e.action)+'</td><td>'+wdEsc(e.result)+(e.simulated?' · simulé':'')+'</td></tr>').join('');
+    $('#wdJournal').innerHTML='<table><thead><tr><th>Date</th><th>Machine</th><th>Device</th><th>Règle</th><th>Mesure</th><th>Action</th><th>Résultat</th></tr></thead><tbody>'
+      +(rows||'<tr><td colspan="7">Aucun déclenchement enregistré.</td></tr>')+'</tbody></table>';
+  };
+  async function loadWatchdog(){
+    const r=await fetch('/api/watchdog',{credentials:'include'});
+    if(!r.ok)return;
+    const d=await r.json();
+    const c=d.config||{};const rules=c.rules||{};const actions=c.actions||{};
+    wdSet('#wdEnabled',c.enabled);wdSet('#wdHashEnabled',rules.hashrate_low.enabled);
+    wdSet('#wdHashPct',rules.hashrate_low.pct);wdSet('#wdHashMin',rules.hashrate_low.minutes);
+    wdSet('#wdSharesEnabled',rules.no_shares.enabled);wdSet('#wdSharesMin',rules.no_shares.minutes);
+    wdSet('#wdTempEnabled',rules.temperature.enabled);wdSet('#wdTempGpu',rules.temperature.gpu_c);
+    wdSet('#wdTempCpu',rules.temperature.cpu_c);wdSet('#wdTempMin',rules.temperature.minutes);
+    wdSet('#wdAbsentEnabled',rules.miner_absent.enabled);
+    wdSet('#wdUnreachEnabled',rules.unreachable.enabled);wdSet('#wdUnreachMin',rules.unreachable.minutes);
+    wdSet('#wdActNotify',actions.notify);wdSet('#wdActMiner',actions.restart_miner);
+    wdSet('#wdActVm',actions.restart_vm);wdSet('#wdActReboot',actions.reboot);wdSet('#wdActPower',actions.power_cycle);
+    wdSet('#wdEscalation',c.escalation_minutes);wdSet('#wdGrace',c.grace_minutes);wdSet('#wdMax',c.max_per_hour);
+    wdRenderMachines(d.machines);
+    const j=await fetch('/api/watchdog/events?limit=100',{credentials:'include'});
+    if(j.ok){const je=await j.json();wdRenderJournal(je.events);}
+  }
+  $('#wdSave').onclick=async()=>{
+    const r=await fetch('/api/watchdog/config',{method:'PUT',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify(wdConfig())});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){toast(d.detail||'Enregistrement refusé','err');return;}
+    $('#wdState').textContent='enregistré';$('#wdState').className='chip';
+    wdRenderMachines(d.machines);toast('Watchdog enregistré');
+  };
+  window.wdSaveOverride=async(id)=>{
+    const pct=$('#wdOvPct-'+id).value.trim();const min=$('#wdOvMin-'+id).value.trim();
+    const payload={};
+    if(pct||min){payload.rules={hashrate_low:{pct:pct?Number(pct):undefined,minutes:min?Number(min):undefined}};}
+    if(payload.rules&&payload.rules.hashrate_low.pct===undefined)delete payload.rules.hashrate_low.pct;
+    if(payload.rules&&payload.rules.hashrate_low.minutes===undefined)delete payload.rules.hashrate_low.minutes;
+    payload.actions={restart_miner:$('#wdOvMiner-'+id).checked};
+    const r=await fetch('/api/watchdog/machines/'+id,{method:'PUT',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({override:payload})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){toast(d.detail||'Surcharge refusée','err');return;}
+    wdRenderMachines(d.machines);toast('Surcharge enregistrée');
+  };
+  window.wdAuthorize=async(id,action)=>{
+    const word=prompt('Activer '+action+' sur cette machine ? Saisissez VALIDER');
+    if(word===null)return;
+    const r=await fetch('/api/watchdog/machines/'+id+'/authorize',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:action,confirm:word,enabled:true})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){toast(d.detail||'Activation refusée','err');return;}
+    wdRenderMachines(d.machines);toast(action+' activé avec VALIDER');
+  };
+  $('#tabWatchdog').addEventListener('click',loadWatchdog);
   loadSecurity();loadLogs();
 })();
 </script>

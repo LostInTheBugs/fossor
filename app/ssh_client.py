@@ -476,6 +476,29 @@ async def _run_whitelisted(
     }
 
 
+async def ssh_run_command(machine: Any, command: str, *, actor: str = "system",
+                         audit_kind: str = "ssh-command") -> dict[str, Any]:
+    """Exécute une commande **construite par le code**, jamais par l'opérateur.
+
+    Le contrôle d'épinglage de la clé d'hôte est celui de ``_run_whitelisted`` ;
+    les appelants (watchdog) passent un nom d'unité validé ou une commande
+    constante, jamais un champ libre.
+    """
+    return await _run_whitelisted(
+        host=machine.host,
+        port=int(getattr(machine, "ssh_port", 22) or 22),
+        username=machine.ssh_user,
+        secret=_machine_secret(machine),
+        auth_type=str(machine.auth_type),
+        pinned_fp=getattr(machine, "host_key", None),
+        pinned_public_key=getattr(machine, "host_key_public", None),
+        command=command,
+        machine_id=getattr(machine, "id", None),
+        audit_kind=audit_kind,
+        actor=actor,
+    )
+
+
 async def open_pinned_connection(
     *,
     host: str,

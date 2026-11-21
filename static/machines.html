@@ -56,6 +56,10 @@ tr.detail td{background:#151a21;padding:0 8px 10px}
 .dev-head .masked{font-size:12px}
 .usage-sel{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
 .usage-sel select{background:var(--bg);color:var(--txt);border:1px solid var(--border);border-radius:7px;padding:4px 8px;font-size:12px;font-family:inherit;cursor:pointer}
+.mtabs{display:flex;gap:6px;margin:0 0 10px}
+.mtab{background:transparent;border:1px solid var(--border);color:var(--muted);padding:4px 12px;border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
+.mtab.active{background:var(--card);color:var(--txt);border-color:var(--accent)}
+.wdbox{font-size:12.5px}
 table.devtab{font-size:12px}
 table.devtab th{background:transparent;padding:5px 6px;font-size:10.5px}
 table.devtab td{padding:5px 6px;border-bottom:1px solid #232b37}
@@ -500,6 +504,28 @@ const cpuLineHTML=(m)=>{
   });
   return `<div class="cpu-line" data-cpu-line="1" style="font-size:11px;color:var(--muted);margin:6px 0">CPU — ${bits.join(' · ')}${miners.length?'<br>'+miners.join('<br>'):''}</div>`;
 };
+const wdEsc=(text)=>String(text==null?'':text).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const machineTab=(id,which,btn)=>{
+  document.querySelectorAll('.mtab[data-machine="'+id+'"]').forEach(b=>b.classList.toggle('active',b===btn));
+  const detail=$('#mtabDetail-'+id);const box=$('#mtabWatchdog-'+id);
+  if(detail)detail.style.display=which==='detail'?'':'none';
+  if(box)box.style.display=which==='watchdog'?'':'none';
+  if(which==='watchdog')loadMachineWatchdog(id);
+};
+const loadMachineWatchdog=async(id)=>{
+  const box=$('#mtabWatchdog-'+id);
+  if(!box)return;
+  box.innerHTML='<div class="masked">Chargement…</div>';
+  const r=await fetch('/api/watchdog/events?machine_id='+id+'&limit=50',{credentials:'include'});
+  if(!r.ok){box.innerHTML='<div class="masked">Journal indisponible.</div>';return;}
+  const d=await r.json();
+  const rows=(d.events||[]).map(e=>'<tr><td class="mono">'+wdEsc(e.ts)+'</td><td>'+wdEsc(e.device_label||'—')
+    +'</td><td>'+wdEsc(e.rule)+'</td><td>'+wdEsc(e.measure)+'</td><td>'+wdEsc(e.action)
+    +'</td><td>'+wdEsc(e.result)+(e.simulated?' · simulé':'')+'</td></tr>').join('');
+  box.innerHTML='<div class="dev-head"><span><b>Journal du watchdog</b> <span class="masked">· chaque déclenchement et chaque action, simulé ou réel</span></span></div>'
+    +'<table class="devtab"><thead><tr><th>Date</th><th>Device</th><th>Règle</th><th>Mesure</th><th>Action</th><th>Résultat</th></tr></thead><tbody>'
+    +(rows||'<tr><td colspan="6" class="masked">Aucun déclenchement enregistré pour cette machine.</td></tr>')+'</tbody></table>';
+};
 const detailRow=(m)=>{
   const devs=(DEVICES[m.id]||[]).filter(d=>!(d.integrated&&HIDE_IGPU&&!d.enabled_for_mining));
   const present=devs.filter(d=>d.present).length;
@@ -515,6 +541,11 @@ const detailRow=(m)=>{
       <button class="btn sm" onclick="applyOsPresetFor(${m.id},'${m.os_kind_detected}')" style="margin-top:6px">Appliquer le préréglage ${m.os_preset_label}</button></div>`;
   }
   return `<tr class="detail"><td colspan="10"><div class="dev-panel">
+    <div class="mtabs">
+      <button class="mtab active" data-machine="${m.id}" data-tab="detail" onclick="machineTab(${m.id},'detail',this)">Fiche</button>
+      <button class="mtab" data-machine="${m.id}" data-tab="watchdog" onclick="machineTab(${m.id},'watchdog',this)">Watchdog</button>
+    </div>
+    <div id="mtabDetail-${m.id}">
     <div class="dev-head">
       <span><b>Matériel détecté</b> <span class="masked">· ${label}${m.vm_host?' · hôte de VM':''}</span></span>
       <label class="usage-sel">Usage machine
@@ -530,6 +561,8 @@ const detailRow=(m)=>{
     ${deviceRows(m)}
     ${powerPanelHTML(m)}
     ${powerControlHTML(m)}
+    </div>
+    <div id="mtabWatchdog-${m.id}" class="wdbox" style="display:none"></div>
   </div></td></tr>`;
 };
 // ── Mineur (§4.5, §4.6) : profil, GPU cochés, démarrer/arrêter, statut ──
