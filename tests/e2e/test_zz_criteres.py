@@ -176,9 +176,12 @@ async def test_criteres_tokens_grille_bandeau(e2e_server, tmp_path):
 
             await page.goto(E2E_URL + "/analysis", wait_until="domcontentloaded", timeout=15000)
             await page.wait_for_selector("#tokRows tr", timeout=15000)
+            # 2026.11.021 : le bandeau ne parle plus du pilotage réel ; il ne
+            # reste que pour les machines encore simulées.
             banner = await page.locator("#simBanner").inner_text()
-            assert "Pilotage réel : e2e-athlon" in banner, banner
-            assert "les autres machines sont simulées" in banner
+            assert "en simulation" in banner, banner
+            assert "Pilotage réel" not in banner, banner
+            assert "e2e-athlon" not in banner, banner
 
             # D'autres tests ont semé des analyses : on vérifie le regroupement,
             # pas un total global. BIGCOIN (2 libellés) et NEX (2 libellés)
