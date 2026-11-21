@@ -730,8 +730,11 @@ def _is_real_row(row: dict[str, Any]) -> bool:
     args = (row.get("args") or "").strip()
     if not args or args.startswith("["):
         return False
-    if (row.get("user") or "").lower() == "fossor":
-        return False
+    # 2026.11.021 : ne jamais écarter une ligne parce que son compte est
+    # celui du service. Les unités lancées par Fossor tournent justement sous
+    # ce compte (``User=fossor``) : filtrer sur lui faisait disparaître le
+    # cpuminer de l'athlon (hashrate CPU nul, ``hashrate_by_algo=[]``). Les
+    # commandes de la sonde sont écartées nommément ci-dessus.
     if "### HIVE_STAT" in args or "collect_stats" in args:
         return False
     if args.startswith("ps -eo") or args.startswith("awk "):
