@@ -88,7 +88,7 @@ async def test_onglet_watchdog_de_la_fiche_machine_montre_le_journal(e2e_server)
         browser = await p.chromium.launch()
         context = await browser.new_context(viewport={"width": 1440, "height": 1000})
         await _login(context)
-        created = await context.request.post(f"{E2E_URL}/api/machines", json={
+        created = await context.request.post(f"{E2E_URL}/api/machines", data={
             "name": "e2e-watchdog", "host": "192.0.2.77", "ssh_user": "fossor",
             "auth_type": "fossor_key", "sudo": "sudo without password",
         })
@@ -115,7 +115,9 @@ async def test_onglet_watchdog_de_la_fiche_machine_montre_le_journal(e2e_server)
             page = await context.new_page()
             await page.goto(f"{E2E_URL}/machines", wait_until="networkidle", timeout=15000)
             await page.wait_for_selector("#machBody tr", timeout=15000)
-            await page.click(f"#mtabWatchdog-{machine['id']}")
+            await page.locator(
+                f'.mtab[data-machine="{machine["id"]}"][data-tab="watchdog"]'
+            ).click()
             box = page.locator(f"#mtabWatchdog-{machine['id']}")
             await box.get_by_text("Journal du watchdog").wait_for(timeout=10000)
             await box.get_by_text("hashrate_low").wait_for(timeout=10000)

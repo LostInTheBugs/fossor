@@ -1268,7 +1268,7 @@ $('#enTempoFetch').addEventListener('click',async()=>{
 document.querySelectorAll('.subtab').forEach(button=>{
   button.addEventListener('click',()=>{
     document.querySelectorAll('.subtab').forEach(b=>b.classList.toggle('active',b===button));
-    ['panel-general','panel-spec','panel-ai','panel-energy','panel-notifications','panel-update','panel-vault'].forEach(id=>{
+    ['panel-general','panel-spec','panel-ai','panel-energy','panel-notifications','panel-update','panel-vault','panel-watchdog'].forEach(id=>{
       $('#'+id).style.display=(id===button.dataset.panel)?'block':'none';
     });
     if(button.dataset.panel==='panel-spec')loadSpec();
