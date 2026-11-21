@@ -160,6 +160,14 @@ def read_miner_settings(db: Session = Depends(get_db), _user=Depends(require_log
     machines = PIL.pilotable_machines(db)
     armed = [machine.name for machine in machines if PIL.machine_armed(machine)]
     simulated = [machine.name for machine in machines if not PIL.machine_armed(machine)]
+    from app.models import Machine
+
+    asics = [
+        name for (name,) in db.query(Machine.name)
+        .filter(Machine.machine_kind == "asic", Machine.enabled.is_(True))  # noqa: E712
+        .order_by(Machine.name.asc())
+        .all()
+    ]
     return {
         "simulation": simulation_enabled(db),
         "confirm_word": CONFIRM_WORD,
@@ -168,6 +176,10 @@ def read_miner_settings(db: Session = Depends(get_db), _user=Depends(require_log
         "pilotage": {
             "armed": armed,
             "simulated": simulated,
+            "asics": asics,
+            "real_count": len(armed),
+            "simulated_count": len(simulated),
+            "asic_count": len(asics),
             "all_simulated": not armed,
             "all_armed": bool(machines) and not simulated,
         },

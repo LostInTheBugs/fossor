@@ -211,7 +211,9 @@ def normalize_analysis(raw: Any, strict: bool = False) -> dict[str, Any]:
         "ts": _text(raw.get("ts"), 40) or _now(),
         "run": _text(raw.get("run"), 80),
         "action": normalize_action(raw.get("action")),
-        "detail": _text(raw.get("action_detail") or raw.get("detail"), 8000),
+        "detail": _text(
+            raw.get("action_detail") or raw.get("detail") or raw.get("reason"), 8000
+        ),
         "delivered": bool(raw.get("delivered", False)),
         "candidates": [normalize_candidate(item, strict=strict) for item in candidates],
     }
@@ -241,7 +243,16 @@ def parse_document(document: Any) -> list[dict[str, Any]]:
         raise AnalysisError("document invalide : liste d'analyses attendue")
     if not document:
         raise AnalysisError("document vide : aucune analyse")
-    return [normalize_analysis(item) for item in document]
+    entries = [normalize_analysis(item) for item in document]
+    # 2026.11.021 : une analyse sans candidat doit dire pourquoi (l'analyse 63
+    # est arrivée vide en prod). Le refus est un 422 côté route d'import.
+    for entry in entries:
+        if not entry["candidates"] and not entry["detail"]:
+            raise AnalysisError(
+                "analyse sans candidat : « detail » (ou « reason ») obligatoire "
+                f"({entry.get('ts') or entry.get('run') or 'sans date'})"
+            )
+    return entries
 
 
 def existing_fingerprints(db: Session) -> set[str]:

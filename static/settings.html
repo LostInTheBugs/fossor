@@ -275,14 +275,15 @@ header h1{font-size:26px}
 
   <div id="panel-general">
     <div class="card" id="pilotCard">
-      <h2>Pilotage — mode simulation</h2>
-      <div class="sub">Tant que la simulation est active, aucune commande n'est exécutée : chaque action renvoie et journalise la liste exacte des commandes qu'elle aurait lancées.</div>
-      <div class="field"><label><input type="checkbox" id="simToggle" checked> Mode simulation (activé par défaut)</label></div>
+      <h2>Simulation par défaut des nouvelles machines</h2>
+      <div class="sub">Ce réglage n'est <b>pas</b> l'état du parc : il ne s'applique qu'aux machines <b>non armées</b>. Une machine armée (« PILOTER ») agit en réel quel que soit ce réglage ; un ASIC n'est jamais piloté. L'état effectif est affiché sous le bouton.</div>
+      <div class="field"><label><input type="checkbox" id="simToggle" checked> Simulation par défaut (machines non armées)</label></div>
       <div class="field" id="simConfirmBox" style="display:none">
         <label>Pour désactiver, saisissez « PILOTER »</label>
         <input id="simConfirm" placeholder="PILOTER" autocomplete="off">
       </div>
       <div class="actions"><button class="btn" id="simSave">Enregistrer</button><span id="simState" class="chip warn">simulation</span></div>
+      <div class="sub" id="simEffective" style="margin-top:8px">—</div>
       <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
       <h2>GPU intégrés</h2>
       <div class="sub">Masqués par défaut : ils restent visibles et grisés dans la fiche machine, mais ne sont jamais proposés au minage (ni dans {gpus}, ni dans les campagnes, le boost ou le calcul de puissance).</div>
@@ -1321,9 +1322,15 @@ const loadPilot=async()=>{
   if(!r.ok)return;
   const d=await r.json();
   $('#simToggle').checked=!!d.simulation;
-  $('#simState').textContent=d.simulation?'simulation active':'pilotage réel';
+  $('#simState').textContent=d.simulation?'défaut : simulation':'défaut : pilotage réel';
   $('#simState').className='chip '+(d.simulation?'warn':'on');
   $('#simConfirmBox').style.display=d.simulation?'none':'block';
+  const p=d.pilotage||{};
+  if($('#simEffective')){
+    const real=p.real_count||0, sim=p.simulated_count||0, asics=p.asic_count||0;
+    $('#simEffective').textContent=real+' machine'+(real>1?'s':'')+' en pilotage réel · '+
+      sim+' en simulation · '+asics+' ASIC en suivi';
+  }
   if($('#defProfile')){
   $('#defProfile').innerHTML='<option value="">— aucun —</option>'+
     (d.profiles||[]).map(p=>`<option value="${p.id}"${p.id===d.default_profile_id?' selected':''}>${p.name} · ${p.coin} · ${p.software}</option>`).join('');
@@ -1558,7 +1565,6 @@ async function saveSpecHost(){
   if(r.ok){const d=await r.json();applySpecHostKind(d.spec_host_kind||'');}
 }
 async function loadSpec(){
-  loadVmList();
   const r=await fetch('/api/spec/settings',{credentials:'include'});
   if(!r.ok){vmField('vmState').textContent='lecture impossible';return;}
   const d=await r.json(); specInfo=d;
@@ -1612,15 +1618,22 @@ async function checkVmHost(){
   vmField('vmHostReport').textContent=r.ok?(d.message||''):(d.detail||'contrôle impossible');
 }
 function vmChip(state){return '<span class="chip '+(state==='running'?'running':(state==='destroyed'?'failed':'off'))+'">'+state+'</span>';}
+// 2026.11.021 : deux chargements concurrents (loadSpec appelait loadVmList
+// deux fois) rendaient dans le désordre ; une réponse ancienne écrasait la
+// ligne où « DETRUIRE » venait d'être saisi. Le dernier appel gagne, et la
+// saisie vit dans une carte alimentée à chaque frappe, jamais relue du DOM.
+let vmListSeq=0;
+const vmConfirmValues={};
+document.addEventListener('input',(e)=>{
+  const el=e.target;
+  if(el&&el.id&&el.id.indexOf('vmConfirm')===0){vmConfirmValues[el.id]=el.value;}
+});
 async function loadVmList(){
+  const seq=++vmListSeq;
   let rows=[];
   try{const r=await fetch('/api/vms',{credentials:'include'});if(r.ok){const d=await r.json();rows=Array.isArray(d)?d:(d.vms||[]);}}catch(e){rows=[];}
+  if(seq!==vmListSeq){return;}
   const body=vmField('vmRows');
-  // Le rendu remplace les lignes : la confirmation déjà saisie (deuxième
-  // chargement de la liste, rafraîchissement après action) est reprise, sinon
-  // #vmConfirm revient vide et « Détruire » reste désactivé.
-  const confirms={};
-  document.querySelectorAll('[id^="vmConfirm"]').forEach(el=>{confirms[el.id]=el.value;});
   body.innerHTML=rows.map(v=>{
     const camp=v.campaign?('#'+v.campaign.id+' '+v.campaign.coin):'—';
     const backup=v.backup?('<span class="chip '+(v.backup.verified?'running':'failed')+'">'+(v.backup.verified?'vérifiée':'refusée')+'</span> <span class="muted" style="font-size:10.5px">'+v.backup.reason+'</span>'):'<span class="muted">jamais contrôlée</span>';
@@ -1639,7 +1652,8 @@ async function loadVmList(){
   rows.forEach(v=>{
     const input=document.getElementById('vmConfirm'+v.id);
     if(input){
-      if(confirms[input.id]){input.value=confirms[input.id];}
+      const kept=vmConfirmValues[input.id];
+      if(kept){input.value=kept;}
       const sync=()=>{document.getElementById('vmDestroy'+v.id).disabled=input.value.trim().toUpperCase()!=='DETRUIRE';};
       input.addEventListener('input',sync);
       sync();
@@ -1654,6 +1668,7 @@ async function vmAction(id,verb){
   const body=verb==='destroy'?JSON.stringify({confirm:(document.getElementById('vmConfirm'+id)||{}).value||''}):'{}';
   const r=await fetch(path,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:body});
   const d=await r.json();
+  if(verb==='destroy'&&r.ok){delete vmConfirmValues['vmConfirm'+id];}
   await loadVmList();
   if(!r.ok){alert(d.detail||'action refusée');return;}
   if(verb==='backup'){alert(d.verified?'Sauvegarde vérifiée : '+(d.reason||''):'Sauvegarde refusée : '+(d.reason||''));}
@@ -1894,6 +1909,7 @@ loadIgpu();
   $('#tabVault').addEventListener('click',loadVault);
   $('#tabSecurity').addEventListener('click',loadSecurity);
   $('#tabLog').addEventListener('click',loadLogs);
+  if(new URLSearchParams(location.search).get('vault')==='1'){const vt=$('#tabVault');if(vt)vt.click();}
   loadSecurity();loadLogs();
 })();
 </script>

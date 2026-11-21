@@ -14,6 +14,7 @@
     ["/analysis", "🔎 Analyse des tokens"],
     ["/mined", "🪙 Tokens minés"],
     ["/followup", "📈 Suivi"],
+    ["/settings?vault=1", "🔐 Coffre"],
     ["/help", "📖 Comment ça marche"],
     ["/settings", "⚙️ Configuration"],
     ["/audit", "📋 Log"]
@@ -23,11 +24,15 @@
   var path = window.location.pathname.replace(/\/+$/, "") || "/";
   mount.className = "nav-tabs";
   mount.innerHTML = "";
+  var vaultView = '';
+  try {
+    vaultView = new URLSearchParams(window.location.search).get("vault") === "1" ? "?vault=1" : "";
+  } catch (err) { vaultView = ""; }
   LINKS.forEach(function (entry) {
     var link = document.createElement("a");
     link.setAttribute("href", entry[0]);
     link.textContent = entry[1];
-    if (path === entry[0]) {
+    if (path === entry[0] && !(entry[0] === "/settings" && vaultView)) {
       link.className = "active";
       link.setAttribute("aria-current", "page");
     }
@@ -59,16 +64,22 @@
 
   function pilotageBanner(data) {
     var pilotage = (data && data.pilotage) || {};
-    var armed = pilotage.armed || [];
-    if (pilotage.all_simulated || !armed.length) {
-      banner("Simulation sur toutes les machines — aucune commande n'est exécutée.");
+    var simulated = pilotage.simulated || [];
+    var warning = pilotage.warning || pilotage.warnings || "";
+    var existing = document.getElementById("simBanner");
+    // 2026.11.021 : le bandeau ne parle que d'un reste de simulation (ou d'un
+    // avertissement). Toutes les machines pilotables en réel = aucun bandeau ;
+    // les ASIC, suivis en lecture seule, ne comptent pas.
+    if (!warning && !simulated.length) {
+      if (existing) { existing.remove(); }
       return;
     }
-    if (pilotage.all_armed) {
-      banner("Pilotage réel : toutes les machines (" + armed.join(" · ") + ").", true);
-      return;
-    }
-    banner("Pilotage réel : " + armed.join(" · ") + " · les autres machines sont simulées.", true);
+    if (warning) { banner(String(warning)); return; }
+    banner(
+      simulated.length + (simulated.length > 1 ? " machines restent" : " machine reste") +
+      " en simulation : aucune commande n'est exécutée sur " +
+      (simulated.length > 1 ? "elles" : "elle") + " — " + simulated.join(" · ")
+    );
   }
 
   /* Préprod — bandeau discret quand l'authentification est coupée. */
