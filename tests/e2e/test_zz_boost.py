@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import uuid as uuid_lib
 from datetime import datetime, timezone
@@ -14,6 +15,13 @@ from tests.e2e.conftest import E2E_DATA_DIR, E2E_URL, defer_newest_proposed_camp
 ADMIN_PASSWORD = "adminpass"
 WALLET = "prl1testwalletfossor0000000000000000000000000000000000"
 SHA = "c" * 64
+SHOTS = os.environ.get("FOSSOR_E2E_SHOTS", "")
+
+
+async def shot(page, name: str) -> None:
+    """Capture réelle pour le rapport, uniquement si le dossier est fourni."""
+    if SHOTS:
+        await page.screenshot(path=f"{SHOTS}/{name}.png", full_page=True)
 
 
 def seed_device(machine_id: int) -> str:
@@ -129,6 +137,7 @@ async def test_boost_pool_validation_launch_and_cancel(e2e_server):
         await page.wait_for_selector("#boostPool input[data-boost-machine]", timeout=15000)
         pool_text = await page.inner_text("#boostPool")
         assert "e2e-boost" in pool_text and "GPU 0" in pool_text, pool_text
+        await shot(page, "boost-pool")
 
         await page.check(f'#boostPool input[value="{device_uuid}"]')
         await page.select_option("#boostCampaign", str(campaign_id))
@@ -138,6 +147,7 @@ async def test_boost_pool_validation_launch_and_cancel(e2e_server):
         assert "Hashrate Pearl perdu" in panel
         assert "Coût électrique estimé" in panel
         assert "Revenu estimé du coin boosté" in panel
+        await shot(page, "boost-validation")
 
         async with page.expect_response(
             lambda r: r.url.endswith("/api/boosts") and r.request.method == "POST"
@@ -152,6 +162,7 @@ async def test_boost_pool_validation_launch_and_cancel(e2e_server):
             timeout=15000,
         )
 
+        await shot(page, "boost-en-cours")
         await page.click('#boostRows button[data-boost-act="cancel"]')
         await page.wait_for_function(
             """() => Array.from(document.querySelectorAll('#boostRows tr'))
