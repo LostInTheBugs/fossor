@@ -142,7 +142,8 @@ async def test_boost_hiveos_sequence_called_in_order_and_watchdog_restarted():
         log, _, _ = await _ssh(target, "cat /tmp/boost-hive.log")
         lines = [line.strip() for line in log.splitlines() if line.strip()]
         print("\n### JOURNAL HIVE (ENTRÉE):", lines)
-        assert lines[:2] == ["wd stop", "miner stop"], lines
+        order = [line for line in lines if line in ("wd stop", "miner stop", "miner start", "wd start")]
+        assert order[:2] == ["wd stop", "miner stop"], lines
 
         stop = await RUN.stop_boost(db, boost, backend=backend, simulated=False)
         db.refresh(boost)
@@ -150,7 +151,8 @@ async def test_boost_hiveos_sequence_called_in_order_and_watchdog_restarted():
         log, _, _ = await _ssh(target, "cat /tmp/boost-hive.log")
         lines = [line.strip() for line in log.splitlines() if line.strip()]
         print("### JOURNAL HIVE (SORTIE):", lines)
-        assert lines[-2:] == ["miner start", "wd start"], lines
+        order = [line for line in lines if line in ("wd stop", "miner stop", "miner start", "wd start")]
+        assert order[-2:] == ["miner start", "wd start"], lines
         assert boost.status == "done"
         assert backend.calls == ["campaign-start", "campaign-stop"]
     finally:

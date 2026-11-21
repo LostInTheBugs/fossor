@@ -3,130 +3,162 @@
 from __future__ import annotations
 
 import sqlite3
-import uuid
+import uuid as uuid_lib
 from datetime import datetime, timezone
 
 import pytest
+from playwright.async_api import async_playwright
 
-from tests.e2e.conftest import E2E_DATA_DIR, defer_newest_proposed_campaign
+from tests.e2e.conftest import E2E_DATA_DIR, E2E_URL, defer_newest_proposed_campaign
 
-pytestmark = pytest.mark.e2e
-
+ADMIN_PASSWORD = "adminpass"
 WALLET = "prl1testwalletfossor0000000000000000000000000000000000"
+SHA = "c" * 64
 
 
-def _seed_pool() -> tuple[int, str]:
-    """Machine non HiveOS + un GPU dans le pool (jamais une machine réelle)."""
-    conn = sqlite3.connect(f"{E2E_DATA_DIR}/fossor.db", timeout=20)
+def seed_device(machine_id: int) -> str:
+    """Un GPU dans le pool de boost, en SQL direct (aucune machine réelle)."""
+    device_uuid = str(uuid_lib.uuid4())
+    conn = sqlite3.connect(f"{E2E_DATA_DIR}/fossor.db")
     try:
-        machine_id = int(uuid.uuid4().int % 10**6) + 900000
-        device_uuid = str(uuid.uuid4())
-        name = "boost-e2e-" + uuid.uuid4().hex[:6]
         conn.execute(
-            "INSERT INTO machines (uuid,name,host,ssh_port,ssh_user,auth_type,usage,enabled,"
-            "simulation_disabled,vm_host) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (str(uuid.uuid4()), name, "192.0.2.77", 22, "tester", "password", "both", 1, 0, 0),
-        )
-        machine_id = int(conn.execute("SELECT id FROM machines WHERE name=?", (name,)).fetchone()[0])
-        conn.execute(
-            "INSERT INTO devices (uuid,machine_id,kind,\"index\",model,present,enabled_for_mining,"
-            "integrated,occupied_external,role,boost_pool) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (device_uuid, machine_id, "gpu", 0, "RTX e2e", 1, 1, 0, 0, "default_and_spec", 1),
+            "INSERT INTO devices (uuid, machine_id, kind, \"index\", model, present,"
+            " enabled_for_mining, integrated, occupied_external, role, boost_pool,"
+            " created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (device_uuid, machine_id, "gpu", 0, "GPU boost e2e", 1, 1, 0, 0,
+             "default_and_spec", 1, "2026-11-21T00:00:00+00:00", "2026-11-21T00:00:00+00:00"),
         )
         conn.commit()
-        return machine_id, device_uuid
     finally:
         conn.close()
+    return device_uuid
 
 
-async def test_boost_pool_validation_launch_and_cancel(page, e2e_server):
-    machine_id, device_uuid = _seed_pool()
-    profile_id = await page.evaluate(
-        """async (payload) => {
-            const res = await fetch('/api/campaigns/options');
-            const options = await res.json();
-            const existing = (options.profiles || [])[0];
-            if (existing) { return existing.id; }
-            const created = await fetch('/api/profiles', {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(payload)
-            });
-            return (await created.json()).id;
-        }""",
-        {
-            "name": "Profil boost e2e",
-            "coin": "NEWC",
-            "wallet": WALLET,
-            "pool": "stratum+tcp://pool.exemple.tld:3333",
-            "software": "srbminer",
-            "binary_url": "http://192.0.2.1/srbminer.tar.gz",
-            "sha256": "0" * 64,
-            "binary_path": "/opt/fossor/miners/srbminer",
-            "version": "1.0.0",
-            "cmdline": "/bin/true",
-            "execution_mode": "host",
-        },
-    )
-    campaign_id = await page.evaluate(
-        """async (payload) => {
-            const created = await fetch('/api/campaigns', {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(payload)
-            });
-            const row = await created.json();
-            return row.id;
-        }""",
-        {
-            "coin": "NEWC",
-            "profile_id": profile_id,
-            "start_at": datetime.now(timezone.utc).isoformat(),
-            "devices": [{"machine_id": machine_id, "device_uuid": device_uuid}],
-        },
-    )
-    defer_newest_proposed_campaign(60)
-    await page.evaluate(
-        """async (id) => {
-            const res = await fetch('/api/campaigns/' + id + '/approve', {method: 'POST'});
-            if (!res.ok) { throw new Error('approve ' + res.status); }
-        }""",
-        campaign_id,
-    )
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_boost_pool_validation_launch_and_cancel(e2e_server):
+    console_errors: list[str] = []
+    page_errors: list[str] = []
 
-    errors: list[str] = []
-    page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
-    await page.goto(f"{e2e_server}/campaigns", wait_until="networkidle")
-    await page.wait_for_selector("#boostPool input[data-boost-machine]", timeout=15000)
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        context = await browser.new_context()
+        context.on(
+            "console",
+            lambda msg: console_errors.append(msg.text) if msg.type == "error" else None,
+        )
+        context.on("pageerror", lambda err: page_errors.append(str(err)))
+        page = await context.new_page()
 
-    label = await page.inner_text("#boostPool")
-    assert "RTX e2e" in label
-    assert "exclu" in await page.inner_text("#boostPoolNote")
+        await page.goto(E2E_URL + "/", wait_until="domcontentloaded", timeout=15000)
+        await page.fill("#username", "admin")
+        await page.fill("#password", ADMIN_PASSWORD)
+        await page.locator("button[type=submit]").click()
+        await page.wait_for_url("**/dashboard", timeout=15000)
 
-    await page.check(f'#boostPool input[value="{device_uuid}"]')
-    await page.select_option("#boostCampaign", str(campaign_id))
-    await page.click("#boostPreview")
-    await page.wait_for_selector("#boostPanel table", timeout=10000)
-    panel = await page.inner_text("#boostPanel")
-    assert "Hashrate Pearl perdu" in panel
-    assert "Coût électrique estimé" in panel
-    assert "Revenu estimé du coin boosté" in panel
+        machine_id = await page.evaluate(
+            """async () => {
+                const res = await fetch('/api/machines', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        name: 'e2e-boost', host: '127.0.0.1', ssh_port: 1,
+                        ssh_user: 'tester', auth_type: 'password',
+                        usage: 'gpu', enabled: true
+                    })
+                });
+                if (!res.ok) throw new Error('machine ' + res.status + ' ' + await res.text());
+                return (await res.json()).id;
+            }"""
+        )
+        device_uuid = seed_device(machine_id)
+        profile_id = await page.evaluate(
+            """async (body) => {
+                const res = await fetch('/api/miner/profiles', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body)
+                });
+                if (!res.ok) throw new Error('profile ' + res.status + ' ' + await res.text());
+                return (await res.json()).id;
+            }""",
+            {
+                "name": "Profil boost e2e",
+                "coin": "NEWC",
+                "wallet": WALLET,
+                "pool": "stratum+tcp://pool.exemple.tld:3333",
+                "software": "custom",
+                "binary_url": "http://127.0.0.1:9/faux-mineur.tar.gz",
+                "sha256": SHA,
+                "binary_path": "faux-mineur",
+                "version": "1.0.0",
+                "cmdline": "/opt/fossor/miners/custom/1.0.0/faux-mineur --wallet {wallet} --pool {pool} --gpus {gpus}",
+                "execution_mode": "host",
+            },
+        )
+        campaign_id = await page.evaluate(
+            """async (payload) => {
+                const res = await fetch('/api/campaigns', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                if (!res.ok) throw new Error('campaign ' + res.status + ' ' + await res.text());
+                return (await res.json()).id;
+            }""",
+            {
+                "coin": "NEWC",
+                "profile_id": profile_id,
+                "start_at": datetime.now(timezone.utc).isoformat(),
+                "devices": [{"machine_id": machine_id, "device_uuid": device_uuid}],
+            },
+        )
+        # `start_at` repoussé avant l'approbation : le planificateur ne peut pas
+        # prendre la campagne, aucun 409 n'est toléré ensuite.
+        defer_newest_proposed_campaign(60)
+        await page.evaluate(
+            """async (id) => {
+                const res = await fetch('/api/campaigns/' + id + '/approve', {method: 'POST'});
+                if (!res.ok) throw new Error('approve ' + res.status + ' ' + await res.text());
+            }""",
+            campaign_id,
+        )
 
-    await page.click("#boostLaunch")
-    await page.wait_for_function(
-        """() => {
-            const rows = Array.from(document.querySelectorAll('#boostRows tr'));
-            return rows.some((row) => row.textContent.includes('en cours'));
-        }""",
-        timeout=15000,
-    )
-    row_text = await page.inner_text("#boostRows")
-    assert "boost" in row_text.lower()
+        await page.goto(E2E_URL + "/campaigns", wait_until="networkidle")
+        await page.wait_for_selector("#boostPool input[data-boost-machine]", timeout=15000)
+        pool_text = await page.inner_text("#boostPool")
+        assert "e2e-boost" in pool_text and "GPU 0" in pool_text, pool_text
 
-    await page.click('#boostRows button[data-boost-act="cancel"]')
-    await page.wait_for_function(
-        """() => {
-            const rows = Array.from(document.querySelectorAll('#boostRows tr'));
-            return rows.some((row) => row.textContent.includes('terminé'));
-        }""",
-        timeout=15000,
-    )
-    assert errors == [], errors
+        await page.check(f'#boostPool input[value="{device_uuid}"]')
+        await page.select_option("#boostCampaign", str(campaign_id))
+        await page.click("#boostPreview")
+        await page.wait_for_selector("#boostPanel table", timeout=10000)
+        panel = await page.inner_text("#boostPanel")
+        assert "Hashrate Pearl perdu" in panel
+        assert "Coût électrique estimé" in panel
+        assert "Revenu estimé du coin boosté" in panel
+
+        async with page.expect_response(
+            lambda r: r.url.endswith("/api/boosts") and r.request.method == "POST"
+        ) as info:
+            await page.click("#boostLaunch")
+        response = await info.value
+        body = await response.text()
+        assert response.ok, (response.status, body)
+        await page.wait_for_function(
+            """() => Array.from(document.querySelectorAll('#boostRows tr'))
+                .some((row) => row.textContent.includes('en cours'))""",
+            timeout=15000,
+        )
+
+        await page.click('#boostRows button[data-boost-act="cancel"]')
+        await page.wait_for_function(
+            """() => Array.from(document.querySelectorAll('#boostRows tr'))
+                .some((row) => row.textContent.includes('terminé'))""",
+            timeout=15000,
+        )
+
+        assert console_errors == [], console_errors
+        assert page_errors == [], page_errors
+        await browser.close()

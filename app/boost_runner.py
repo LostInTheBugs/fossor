@@ -218,12 +218,15 @@ def _boost_targets(db: Any, boost: Any) -> list[Target]:
 def boost_rows(db: Any, boost: Any) -> list[dict[str, Any]]:
     rows = []
     for item in db.query(BoostDevice).filter(BoostDevice.boost_id == boost.id).order_by(BoostDevice.id).all():
+        device = db.query(Device).filter(Device.uuid == item.device_uuid).first()
         rows.append(
             {
                 "uuid": item.device_uuid,
                 "machine_id": item.machine_id,
                 "kind": item.kind,
-                "index": None,
+                # L'index vit sur le device : sans lui, `{gpus}` est vide et le
+                # gabarit refuse de démarrer (constaté par l'e2e).
+                "index": getattr(device, "index", None),
                 "label": item.label,
                 "hiveos": bool(item.hiveos),
             }
