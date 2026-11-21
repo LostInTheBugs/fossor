@@ -188,6 +188,11 @@ class Device(Base):
     integrated: Mapped[bool] = mapped_column(Boolean, default=False)
     # GPU occupied by an external miner not managed by Fossor.
     occupied_external: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # 2026.11.023-bis : qui occupe le device.  ``external`` est le seul cas qui
+    # bloque Fossor ; ``fossor_default`` / ``fossor_campaign`` / ``hiveos`` sont
+    # libérables (arrêt de l'unité, ou ``miner stop`` sur HiveOS).
+    occupied_by: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    occupied_campaign_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # §4.19 : rôle du device vis-à-vis du token par défaut et du spec mining.
     # ``default_only`` : jamais pris par une campagne ; ``default_and_spec`` : peut
     # l'être, puis revient au token par défaut.  Les devices existants passent à

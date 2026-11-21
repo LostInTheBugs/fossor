@@ -210,6 +210,7 @@ def init_db():
     _migrate_machine_status_cpu_json_column()
     _migrate_machine_status_profiles_json_column()
     _migrate_device_psu_columns()
+    _migrate_device_occupancy_columns()
     _migrate_device_psu_split_meaning()
     _migrate_machine_os_detected_column()
     _migrate_device_role_columns()
@@ -590,6 +591,34 @@ def _migrate_device_psu_columns():
     try:
         cols = [row[1] for row in conn.execute("PRAGMA table_info(devices)").fetchall()]
         for name, ddl in (("psu_id", "INTEGER"), ("psu2_id", "INTEGER"), ("split_w", "FLOAT")):
+            if name not in cols:
+                conn.execute(f"ALTER TABLE devices ADD COLUMN {name} {ddl}")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _migrate_device_occupancy_columns():
+    """2026.11.023-bis : devices.occupied_by / occupied_campaign_id.
+
+    ``occupied_external`` ne distingue plus « mineur hors Fossor » de « unité
+    Fossor » : les deux étaient confondus depuis que les unités tournent sous
+    le compte ``fossor`` (021).  Deux colonnes portent l'origine, et seule
+    ``external`` bloque.
+    """
+    import os
+    import sqlite3
+
+    db_url = _get_db_url()
+    if not db_url.startswith("sqlite"):
+        return
+    db_path = db_url.replace("sqlite:///", "").replace("sqlite://", "")
+    if not os.path.exists(db_path):
+        return
+    conn = sqlite3.connect(db_path)
+    try:
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(devices)").fetchall()]
+        for name, ddl in (("occupied_by", "VARCHAR(20)"), ("occupied_campaign_id", "INTEGER")):
             if name not in cols:
                 conn.execute(f"ALTER TABLE devices ADD COLUMN {name} {ddl}")
         conn.commit()

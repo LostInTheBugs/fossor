@@ -291,6 +291,9 @@ def campaign_options(db: Session = Depends(get_db), _user=Depends(require_login)
                 if device.kind == "cpu"
                 else f"GPU {device.index if device.index is not None else '?'} — {device.model or ''}".strip()
             )
+            from app.devices import occupancy
+
+            held = occupancy(device)
             rows.append(
                 {
                     "uuid": device.uuid,
@@ -298,10 +301,14 @@ def campaign_options(db: Session = Depends(get_db), _user=Depends(require_login)
                     "index": device.index,
                     "label": label,
                     "enabled": bool(device.enabled_for_mining),
-                    "occupied_external": bool(device.occupied_external),
+                    # 2026.11.023-bis : seule une occupation hors Fossor bloque.
+                    "occupied_external": held["occupied_external"],
+                    "occupied_by": held["occupied_by"],
+                    "occupied_label": held["occupied_label"],
+                    "releasable": held["releasable"],
                     "disabled_reason": (
                         "occupé par un mineur externe (hors Fossor)"
-                        if device.occupied_external
+                        if held["occupied_external"]
                         else ("" if device.enabled_for_mining else "désactivé pour le minage")
                     ),
                 }

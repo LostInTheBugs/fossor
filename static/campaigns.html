@@ -255,8 +255,13 @@ tr:last-child td{border-bottom:none}
       var rows = m.devices.map(function (d) {
         var disabled = (!d.enabled || d.occupied_external) ? " disabled" : "";
         var cls = d.enabled && !d.occupied_external ? "dev" : "dev off";
+        // 2026.11.023-bis : une unité Fossor (token par défaut, campagne, HiveOS)
+        // n'est pas « externe » : elle est libérable, on l'affiche sans bloquer.
+        var held = (!d.occupied_external && d.occupied_label)
+          ? ' <span class="chip" style="font-size:8px">' + d.occupied_label + "</span>"
+          : "";
         return '<label class="' + cls + '"><input type="checkbox" data-machine="' + m.id +
-          '" value="' + d.uuid + '"' + disabled + "> " + d.label +
+          '" value="' + d.uuid + '"' + disabled + "> " + d.label + held +
           (d.disabled_reason ? ' <span class="why">(' + d.disabled_reason + ")</span>" : "") + "</label>";
       }).join("");
       if (!rows) {

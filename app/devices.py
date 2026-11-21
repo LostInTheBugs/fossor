@@ -149,37 +149,12 @@ def apply_detection(db: Session, machine: Machine, detected: dict[str, Any], gpu
         db.flush()
         seen.add(device.id)
 
-    # Mark GPUs occupied by external miners
-    if gpu_compute:
-        occupied_indices: set[int] = set()
-        for miner in gpu_compute:
-            gid = miner.get("gpu_id")
-            if gid is not None:
-                occupied_indices.add(gid)
-        for device in db.query(Device).filter(
-            Device.machine_id == machine.id,
-            Device.kind == "gpu",
-            Device.present.is_(True),
-        ).all():
-            dev_idx = device.index
-            if dev_idx is not None and dev_idx in occupied_indices:
-                device.occupied_external = True
-            else:
-                device.occupied_external = False
-            device.updated_at = _now()
-
-    # CPU miners (cpuminer, wam-miner, SRBMiner --cpu-threads) occupy the CPU.
+    # §4.2 : occupation recalculée à chaque détection.  Depuis la 023-bis, une
+    # unité lancée par Fossor n'est plus « externe » : seule reste bloquante
+    # l'occupation par un processus hors unités Fossor.
     if gpu_compute is not None:
-        cpu_device = (
-            db.query(Device)
-            .filter(Device.machine_id == machine.id, Device.kind == "cpu")
-            .first()
-        )
-        if cpu_device is not None:
-            cpu_device.occupied_external = any(
-                str(entry.get("kind") or "") == "cpu" for entry in gpu_compute
-            )
-            cpu_device.updated_at = _now()
+        mark_external_devices(db, machine, gpu_compute)
+        set_external_miners(machine, gpu_compute)
 
     missing = 0
     for device in db.query(Device).filter(Device.machine_id == machine.id).all():
@@ -187,9 +162,6 @@ def apply_detection(db: Session, machine: Machine, detected: dict[str, Any], gpu
             device.present = False
             device.updated_at = _now()
             missing += 1
-
-    if gpu_compute is not None:
-        machine.external_miners = _external_miners_json(gpu_compute)
 
     virt = detected.get("virt") or {}
     machine.vm_host = bool(virt.get("vm_capable", virt.get("kvm") or virt.get("pveversion")))
@@ -252,35 +224,243 @@ def _external_miners_json(entries: list[dict[str, Any]]) -> str | None:
     return json.dumps(payload, ensure_ascii=False)
 
 
+OCCUPIED_EXTERNAL = "external"
+OCCUPIED_FOSSOR_DEFAULT = "fossor_default"
+OCCUPIED_FOSSOR_CAMPAIGN = "fossor_campaign"
+OCCUPIED_HIVEOS = "hiveos"
+
+OCCUPANCY_LABELS = {
+    OCCUPIED_EXTERNAL: "Mineur externe (hors Fossor)",
+    OCCUPIED_FOSSOR_DEFAULT: "Token par défaut (Fossor)",
+    OCCUPIED_HIVEOS: "HiveOS (flight sheet)",
+}
+
+
+def _fossor_markers() -> tuple[str, ...]:
+    """Chemins par lesquels une unité lancée par Fossor se reconnaît dans ``ps``."""
+    from app import miners as M
+
+    return (f"{M.INSTALL_ROOT}/", f"{M.LOG_DIR}/", f"{M.RUN_DIR}/", "fossor-miner-")
+
+
+def is_fossor_process(entry: dict[str, Any]) -> bool:
+    """La ligne ``ps`` appartient-elle à une unité lancée par Fossor ?
+
+    Le binaire installé (``/opt/fossor/miners``), le journal, le fichier PID et
+    le nom d'unité sont les seules signatures propres à Fossor.  Le **compte**
+    ne dit rien : depuis la 021 les unités tournent sous ``fossor``.
+    """
+    text = " ".join(
+        str(entry.get(key) or "") for key in ("cmd", "binary", "process_name", "name")
+    )
+    return any(marker in text for marker in _fossor_markers())
+
+
+def _binary_markers(profile: Any) -> tuple[str, ...]:
+    """Chemins qui désignent le binaire du profil dans une ligne ``ps``."""
+    from app import miners as M
+
+    full = M.binary_path(
+        {
+            "software": profile.software,
+            "version": profile.version,
+            "binary_path": profile.binary_path,
+        }
+    )
+    rel = str(getattr(profile, "binary_path", "") or "")
+    return tuple(dict.fromkeys(value for value in (full, rel) if value))
+
+
+def _profiles_here(db: Session, machine: Machine) -> list[Any]:
+    """Profils qui possèdent des devices **sur cette machine** (règle 023).
+
+    Rattachés par ``devices.default_token_id``, jamais par le chemin du binaire :
+    deux profils Pearl partagent le même exécutable.
+    """
+    from app.models import MinerProfile
+
+    ids: set[int] = set()
+    if getattr(machine, "default_miner_profile_id", None):
+        ids.add(int(machine.default_miner_profile_id))
+    rows = (
+        db.query(Device)
+        .filter(
+            Device.machine_id == machine.id,
+            Device.present.is_(True),  # noqa: E712
+            Device.default_token_id.isnot(None),
+        )
+        .all()
+    )
+    ids.update(int(row.default_token_id) for row in rows if row.default_token_id)
+    found: list[Any] = []
+    for profile_id in sorted(ids):
+        profile = db.get(MinerProfile, profile_id)
+        if profile is None or not profile.enabled:
+            continue
+        found.append(profile)
+    return found
+
+
+def profile_for_entry(db: Session, machine: Machine, entry: dict[str, Any]) -> Any:
+    """Profil Fossor dont l'unité a produit cette ligne ``ps``, sinon ``None``."""
+    text = str(entry.get("cmd") or "")
+    port = entry.get("api_port")
+    matches = [
+        profile
+        for profile in _profiles_here(db, machine)
+        if any(marker in text for marker in _binary_markers(profile))
+    ]
+    if not matches:
+        return None
+    if port:
+        for profile in matches:
+            if profile.api_port and int(profile.api_port) == int(port):
+                return profile
+    return matches[0]
+
+
+def running_campaign_for(db: Session, device_uuid: str) -> int | None:
+    """Campagne en cours qui tient ce device (pour l'étiquette « Campagne #N »)."""
+    from app.models import Campaign, CampaignDevice
+
+    row = (
+        db.query(CampaignDevice)
+        .join(Campaign, Campaign.id == CampaignDevice.campaign_id)
+        .filter(
+            CampaignDevice.device_uuid == device_uuid,
+            Campaign.status.in_(["running", "stopping"]),
+        )
+        .order_by(Campaign.id.desc())
+        .first()
+    )
+    if row is None:
+        return None
+    value = getattr(row, "campaign_id", None)
+    return int(value) if value is not None else None
+
+
+def occupancy(device: Device) -> dict[str, Any]:
+    """Occupation d'un device, telle que l'API et les écrans la lisent."""
+    by = getattr(device, "occupied_by", None)
+    if not by:
+        by = OCCUPIED_EXTERNAL if getattr(device, "occupied_external", False) else None
+    campaign_id = getattr(device, "occupied_campaign_id", None)
+    if by == OCCUPIED_FOSSOR_CAMPAIGN:
+        label = (
+            f"Campagne #{campaign_id} (Fossor)" if campaign_id else "Campagne (Fossor)"
+        )
+    else:
+        label = OCCUPANCY_LABELS.get(by or "", "")
+    return {
+        "occupied_by": by,
+        "occupied_label": label,
+        "occupied_external": by == OCCUPIED_EXTERNAL,
+        "releasable": by in (
+            OCCUPIED_FOSSOR_DEFAULT,
+            OCCUPIED_FOSSOR_CAMPAIGN,
+            OCCUPIED_HIVEOS,
+        ),
+    }
+
+
 def set_external_miners(machine: Machine, entries: list[dict[str, Any]]) -> None:
-    """Persist the last external miners seen on *machine*."""
-    machine.external_miners = _external_miners_json(entries)
+    """Persist the last **external** miners seen on *machine*.
+
+    Une unité Fossor n'est pas un mineur externe (023-bis) ; sur HiveOS, le
+    mineur du flight sheet est piloté par ``miner stop/start`` et ne l'est pas
+    non plus.
+    """
+    hiveos = str(getattr(machine, "os_kind", "") or "") == "hiveos"
+    kept: list[dict[str, Any]] = []
+    for entry in entries or []:
+        if is_fossor_process(entry):
+            continue
+        if hiveos and str(entry.get("kind") or "gpu") == "gpu":
+            continue  # flight sheet : piloté par miner stop/start
+        kept.append(entry)
+    machine.external_miners = _external_miners_json(kept)
 
 
 def mark_external_devices(db: Session, machine: Machine, entries: list[dict[str, Any]]) -> None:
-    """Flag devices occupied by the current external miners (every round).
+    """Étiquette l'occupation de chaque device présent (à chaque collecte).
 
-    GPU entries match by ``gpu_id`` when nvidia-smi reported one; a ps-only
-    GPU miner (older driver, AMD) marks the non-integrated GPUs.  A CPU miner
-    marks the CPU device.
+    - unité Fossor du token par défaut du device → ``fossor_default`` ;
+    - unité Fossor d'une campagne en cours → ``fossor_campaign`` (+ n°) ;
+    - mineur du flight sheet HiveOS → ``hiveos`` ;
+    - tout le reste → ``external``, seul cas qui bloque Fossor.
+
+    Une occupation externe prime : un GPU tenu à la fois par une unité Fossor et
+    par un mineur hors Fossor reste bloqué.
     """
-    gpu_ids = {e.get("gpu_id") for e in entries if e.get("gpu_id") is not None}
-    gpu_ps_only = any(
-        str(e.get("kind") or "gpu") == "gpu" and e.get("gpu_id") is None
-        for e in entries
+    rows = list(entries or [])
+    hiveos = str(getattr(machine, "os_kind", "") or "") == "hiveos"
+    devices = (
+        db.query(Device)
+        .filter(Device.machine_id == machine.id, Device.present.is_(True))  # noqa: E712
+        .all()
     )
-    cpu_busy = any(str(e.get("kind") or "") == "cpu" for e in entries)
-    for device in db.query(Device).filter(
-        Device.machine_id == machine.id, Device.present.is_(True)  # noqa: E712
-    ).all():
-        if device.kind == "cpu":
-            device.occupied_external = cpu_busy
-        elif device.index is not None and device.index in gpu_ids:
-            device.occupied_external = True
-        elif gpu_ps_only and not device.integrated:
-            device.occupied_external = True
-        else:
-            device.occupied_external = False
+    claims: dict[int, tuple[str, int | None]] = {}
+
+    def claim(device: Device, by: str, campaign_id: int | None = None) -> None:
+        current = claims.get(device.id)
+        if current is not None:
+            if current[0] == OCCUPIED_EXTERNAL:
+                return  # une occupation externe prime : elle bloque
+            if by != OCCUPIED_EXTERNAL:
+                return  # première occupation libérable retenue
+        claims[device.id] = (by, campaign_id)
+
+    def gpus(entry: dict[str, Any]) -> list[Device]:
+        gpu_id = entry.get("gpu_id")
+        return [
+            device
+            for device in devices
+            if device.kind == "gpu"
+            and not device.integrated
+            and (gpu_id is None or device.index == gpu_id)
+        ]
+
+    for entry in rows:
+        kind = str(entry.get("kind") or "gpu")
+        cpu_entry = kind in ("cpu", "solo")
+        if hiveos:
+            # Le flight sheet ne couvre que les GPU : `miner stop/start` les
+            # libère.  Un mineur CPU (wam-miner, nœud) reste hors Fossor.
+            targets = [d for d in devices if d.kind == "cpu"] if cpu_entry else gpus(entry)
+            for device in targets:
+                claim(device, OCCUPIED_EXTERNAL if cpu_entry else OCCUPIED_HIVEOS)
+            continue
+        if is_fossor_process(entry):
+            profile = profile_for_entry(db, machine, entry)
+            if profile is not None:
+                owned = [
+                    device
+                    for device in devices
+                    if getattr(device, "default_token_id", None) == profile.id
+                    and (device.kind == "cpu") == cpu_entry
+                    and (cpu_entry or not device.integrated)
+                ]
+            else:
+                # Unité Fossor sans profil rattaché : on ne bloque pas le device
+                # qu'elle utilise, on le dit « token par défaut ».
+                owned = [d for d in devices if d.kind == "cpu"] if cpu_entry else gpus(entry)
+            for device in owned:
+                campaign_id = running_campaign_for(db, device.uuid)
+                claim(
+                    device,
+                    OCCUPIED_FOSSOR_CAMPAIGN if campaign_id else OCCUPIED_FOSSOR_DEFAULT,
+                    campaign_id,
+                )
+            continue
+        targets = [d for d in devices if d.kind == "cpu"] if cpu_entry else gpus(entry)
+        for device in targets:
+            claim(device, OCCUPIED_EXTERNAL)
+
+    for device in devices:
+        by, campaign_id = claims.get(device.id, (None, None))
+        device.occupied_by = by
+        device.occupied_campaign_id = campaign_id
+        device.occupied_external = by == OCCUPIED_EXTERNAL
         device.updated_at = _now()
 
 
@@ -339,6 +519,8 @@ def device_to_dict(device: Device) -> dict[str, Any]:
         "enabled_for_mining": device.enabled_for_mining,
         "integrated": device.integrated,
         "occupied_external": device.occupied_external,
+        # 2026.11.023-bis : origine de l'occupation et libellé pour l'écran.
+        **occupancy(device),
         # §4.19 : rôle (token par défaut / spec mining), pool de boost, token propre.
         "role": getattr(device, "role", None) or "default_and_spec",
         "boost_pool": bool(getattr(device, "boost_pool", False)),
