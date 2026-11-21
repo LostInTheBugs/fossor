@@ -1464,9 +1464,7 @@ async function saveSpecHost(){
   if(r.ok){const d=await r.json();applySpecHostKind(d.spec_host_kind||'');}
 }
 async function loadSpec(){
-  // Une seule liste : le rendu final (après lecture des réglages) remplace les
-  // lignes.  Un premier rendu ici recréait #vmConfirm après le `fill` du test
-  // e2e et laissait « Détruire » désactivé.
+  loadVmList();
   const r=await fetch('/api/spec/settings',{credentials:'include'});
   if(!r.ok){vmField('vmState').textContent='lecture impossible';return;}
   const d=await r.json(); specInfo=d;
@@ -1524,6 +1522,11 @@ async function loadVmList(){
   let rows=[];
   try{const r=await fetch('/api/vms',{credentials:'include'});if(r.ok){const d=await r.json();rows=Array.isArray(d)?d:(d.vms||[]);}}catch(e){rows=[];}
   const body=vmField('vmRows');
+  // Le rendu remplace les lignes : la confirmation déjà saisie (deuxième
+  // chargement de la liste, rafraîchissement après action) est reprise, sinon
+  // #vmConfirm revient vide et « Détruire » reste désactivé.
+  const confirms={};
+  document.querySelectorAll('[id^="vmConfirm"]').forEach(el=>{confirms[el.id]=el.value;});
   body.innerHTML=rows.map(v=>{
     const camp=v.campaign?('#'+v.campaign.id+' '+v.campaign.coin):'—';
     const backup=v.backup?('<span class="chip '+(v.backup.verified?'running':'failed')+'">'+(v.backup.verified?'vérifiée':'refusée')+'</span> <span class="muted" style="font-size:10.5px">'+v.backup.reason+'</span>'):'<span class="muted">jamais contrôlée</span>';
@@ -1541,9 +1544,12 @@ async function loadVmList(){
   vmField('vmEmpty').style.display=rows.length?'none':'';
   rows.forEach(v=>{
     const input=document.getElementById('vmConfirm'+v.id);
-    if(input){input.addEventListener('input',()=>{
-      document.getElementById('vmDestroy'+v.id).disabled=input.value.trim().toUpperCase()!=='DETRUIRE';
-    });}
+    if(input){
+      if(confirms[input.id]){input.value=confirms[input.id];}
+      const sync=()=>{document.getElementById('vmDestroy'+v.id).disabled=input.value.trim().toUpperCase()!=='DETRUIRE';};
+      input.addEventListener('input',sync);
+      sync();
+    }
   });
 }
 async function vmAction(id,verb){
