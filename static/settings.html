@@ -81,6 +81,7 @@ header h1{font-size:26px}
     <button class="subtab" id="tabEnergy" data-panel="panel-energy">Électricité</button>
     <button class="subtab" id="tabNotifications" data-panel="panel-notifications">Notifications</button>
     <button class="subtab" id="tabUpdate" data-panel="panel-update">Mise à jour</button>
+    <button class="subtab" id="tabVault" data-panel="panel-vault">Coffre</button>
     <button class="subtab" id="tabSecurity" data-panel="panel-security">Sécurité</button>
     <button class="subtab" id="tabLog" data-panel="panel-log">Journal</button>
   </div>
@@ -111,6 +112,98 @@ header h1{font-size:26px}
         <option value="CRITICAL">CRITICAL</option>
       </select></div>
       <div class="actions"><button class="btn" id="logSave">Enregistrer</button><span id="logState" class="chip off">—</span></div>
+    </div>
+  </div>
+
+  <div id="panel-vault" style="display:none">
+    <div class="card">
+      <h2>🔐 Coffre des wallets</h2>
+      <div class="sub">Seeds, clés privées et mots de passe, chiffrés par la phrase maîtresse. <b>Aucune récupération n'est possible si la phrase est perdue.</b></div>
+      <div class="actions"><span id="vaultState" class="chip off">—</span><span id="vaultCountdown" style="margin-left:10px;font-size:12px;color:var(--muted)"></span><button class="btn sm outline" id="vaultLockBtn" style="display:none;margin-left:10px">Verrouiller</button></div>
+      <div id="vaultBlocked" class="testres err" style="display:none"></div>
+    </div>
+
+    <div class="card" id="vaultInitBox" style="display:none">
+      <h2>Initialisation</h2>
+      <div class="sub">Phrase maîtresse de 12 caractères minimum. Elle n'est <b>jamais stockée</b> : ni en base, ni dans un fichier, ni dans un cookie. <b>Phrase perdue = coffre perdu, sans recours.</b></div>
+      <div class="field"><label>Phrase maîtresse</label><input type="password" id="vaultInitPass" autocomplete="new-password"></div>
+      <div class="field"><label>Confirmation</label><input type="password" id="vaultInitPass2" autocomplete="new-password"></div>
+      <div class="field narrow"><label>Verrouillage automatique (minutes)</label><input type="number" id="vaultInitLock" min="1" max="120" value="10"></div>
+      <div class="actions"><button class="btn" id="vaultInitBtn">Initialiser le coffre</button></div>
+    </div>
+
+    <div class="card" id="vaultLockBox" style="display:none">
+      <h2>Coffre verrouillé</h2>
+      <div class="sub">La clé dérivée ne vit qu'en mémoire. Redémarrer l'application verrouille le coffre.</div>
+      <div class="field"><label>Phrase maîtresse</label><input type="password" id="vaultUnlockPass" autocomplete="current-password"></div>
+      <div class="actions"><button class="btn" id="vaultUnlockBtn">Déverrouiller</button></div>
+    </div>
+
+    <div id="vaultUnlockedBox" style="display:none">
+      <div class="card">
+        <h2>Wallets</h2>
+        <div class="sub">Seed, clé privée et mot de passe restent masqués. « Révéler » exige une nouvelle saisie de la phrase et n'affiche la valeur que quelques secondes.</div>
+        <div style="overflow:auto"><table id="vaultTable" style="width:100%;border-collapse:collapse;font-size:12.5px">
+          <thead><tr><th>Coin</th><th>Réseau</th><th>Adresse</th><th>Machine</th><th>Fichier</th><th>Date</th><th>Origine</th><th>Note</th><th>Secrets</th><th></th></tr></thead>
+          <tbody id="vaultTableBody"></tbody>
+        </table></div>
+      </div>
+
+      <div class="card">
+        <h2>Ajouter un wallet</h2>
+        <div class="sub">Les secrets sont scellés dès l'enregistrement. Laisser un champ secret vide ne l'efface pas lors d'une modification.</div>
+        <div class="row">
+          <div class="field"><label>Coin</label><input id="vaultAddCoin" placeholder="BTC"></div>
+          <div class="field"><label>Réseau</label><input id="vaultAddNetwork" placeholder="mainnet"></div>
+          <div class="field" style="flex:1"><label>Adresse</label><input id="vaultAddAddress" placeholder="adresse complète"></div>
+        </div>
+        <div class="row">
+          <div class="field"><label>Machine</label><input id="vaultAddMachine" placeholder="rig-1"></div>
+          <div class="field" style="flex:1"><label>Chemin du fichier wallet</label><input id="vaultAddPath" placeholder="/home/…/wallet.dat"></div>
+          <div class="field" style="flex:1"><label>Note</label><input id="vaultAddNote"></div>
+        </div>
+        <div class="row">
+          <div class="field" style="flex:1"><label>Seed</label><input type="password" id="vaultAddSeed" autocomplete="off"></div>
+          <div class="field" style="flex:1"><label>Clé privée</label><input type="password" id="vaultAddPriv" autocomplete="off"></div>
+          <div class="field" style="flex:1"><label>Mot de passe</label><input type="password" id="vaultAddPass" autocomplete="new-password"></div>
+        </div>
+        <div class="actions"><button class="btn" id="vaultAddBtn">Ajouter le wallet</button><button class="btn outline" id="vaultEditCancel" style="display:none">Annuler la modification</button></div>
+      </div>
+
+      <div class="card">
+        <h2>Révéler un secret</h2>
+        <div class="sub">Nouvelle saisie de la phrase maîtresse. La valeur s'efface automatiquement à la fin du compte à rebours ; une ligne d'audit est écrite sans la valeur.</div>
+        <div class="row">
+          <div class="field" style="flex:1"><label>Wallet</label><select id="vaultRevealWallet"></select></div>
+          <div class="field"><label>Champ</label><select id="vaultRevealField"><option value="seed">Seed</option><option value="private_key">Clé privée</option><option value="password">Mot de passe</option></select></div>
+          <div class="field" style="flex:1"><label>Phrase maîtresse</label><input type="password" id="vaultRevealPass" autocomplete="current-password"></div>
+          <div class="field"><label>&nbsp;</label><button class="btn" id="vaultRevealBtn">Révéler</button></div>
+        </div>
+        <div id="vaultRevealOut" class="testres" style="display:none"></div>
+      </div>
+
+      <div class="card">
+        <h2>Changer la phrase maîtresse</h2>
+        <div class="sub">Tout est re-chiffré : nouvelle paire X25519, nouveau sel, vérificateur et entrées scellées. L'ancienne phrase ne rouvre plus rien.</div>
+        <div class="row">
+          <div class="field" style="flex:1"><label>Phrase actuelle</label><input type="password" id="vaultOldPass" autocomplete="current-password"></div>
+          <div class="field" style="flex:1"><label>Nouvelle phrase</label><input type="password" id="vaultNewPass" autocomplete="new-password"></div>
+          <div class="field" style="flex:1"><label>Confirmation</label><input type="password" id="vaultNewPass2" autocomplete="new-password"></div>
+          <div class="field"><label>&nbsp;</label><button class="btn" id="vaultChangeBtn">Changer</button></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Export chiffré et import du registre</h2>
+        <div class="sub">L'export n'est possible que coffre déverrouillé, et le fichier est chiffré par la phrase. L'import du registre ne reprend que les métadonnées : aucun mot de passe, seed ni clé n'est importé.</div>
+        <div class="row">
+          <div class="field" style="flex:1"><label>Phrase pour l'export</label><input type="password" id="vaultExportPass" autocomplete="current-password"></div>
+          <div class="field"><label>&nbsp;</label><button class="btn" id="vaultExportBtn">Télécharger l'export chiffré</button></div>
+        </div>
+        <div class="field"><label>Contenu de REGISTRE.md (métadonnées)</label><textarea id="vaultImportText" rows="5" spellcheck="false" placeholder="| Date | Coin | Réseau | Adresse | Logiciel | Chemin | Mot de passe |"></textarea></div>
+        <div class="actions"><button class="btn outline" id="vaultImportPreview">Aperçu (dry-run)</button><button class="btn" id="vaultImportApply">Importer</button></div>
+        <div id="vaultImportOut" class="testres" style="display:none"></div>
+      </div>
     </div>
   </div>
 
@@ -1133,7 +1226,7 @@ $('#enTempoFetch').addEventListener('click',async()=>{
 document.querySelectorAll('.subtab').forEach(button=>{
   button.addEventListener('click',()=>{
     document.querySelectorAll('.subtab').forEach(b=>b.classList.toggle('active',b===button));
-    ['panel-general','panel-spec','panel-ai','panel-energy','panel-notifications','panel-update'].forEach(id=>{
+    ['panel-general','panel-spec','panel-ai','panel-energy','panel-notifications','panel-update','panel-vault'].forEach(id=>{
       $('#'+id).style.display=(id===button.dataset.panel)?'block':'none';
     });
     if(button.dataset.panel==='panel-spec')loadSpec();
@@ -1141,6 +1234,7 @@ document.querySelectorAll('.subtab').forEach(button=>{
     if(button.dataset.panel==='panel-energy')loadEnergy();
     if(button.dataset.panel==='panel-notifications')loadNotifications();
     if(button.dataset.panel==='panel-update')loadUpdate();
+    if(button.dataset.panel==='panel-vault'&&typeof loadVault==='function')loadVault();
   });
 });
 
@@ -1628,6 +1722,176 @@ loadIgpu();
     if(!r.ok){chip($('#logState'),d.detail||'refusé','off');return;}
     chip($('#logState'),d.level,'on');loadLogs();
   };
+  // ── Coffre des wallets ─────────────────────────────────────────────
+  let vaultEditId=null, vaultTick=null, vaultRevealTick=null;
+  const vaultStateChip=(text,kind)=>{const el=$('#vaultState');el.textContent=text;el.className='chip '+kind;};
+  async function vaultApi(path,opts){
+    const r=await fetch(path,Object.assign({credentials:'same-origin'},opts||{}));
+    if(r.status===401&&!path.startsWith('/api/vault/status')){location.href='/';return null;}
+    const data=await r.json().catch(()=>({}));
+    return {ok:r.ok,status:r.status,data:data};
+  }
+  function vaultShow(box,on){const el=$('#'+box);if(el)el.style.display=on?'block':'none';}
+  function vaultCountdown(seconds){
+    clearInterval(vaultTick);
+    let left=seconds;
+    const paint=()=>{ $('#vaultCountdown').textContent=left>0?('verrouillage dans '+left+' s'):'verrouillé'; };
+    paint();
+    if(left<=0)return;
+    vaultTick=setInterval(()=>{left-=1;paint();if(left<=0){clearInterval(vaultTick);loadVault();}},1000);
+  }
+  function vaultFillWallets(wallets){
+    $('#vaultTableBody').innerHTML=(wallets||[]).map(w=>{
+      const secrets=[];if(w.has_seed)secrets.push('seed');if(w.has_private_key)secrets.push('clé');
+      if(w.has_password)secrets.push('mdp');
+      const warn=w.address_status==='invalid'?' <span class="chip err">adresse refusée</span>':'';
+      const unver=w.address_status==='unverified'?' <span class="chip off">non vérifiée</span>':'';
+      return '<tr data-wallet="'+w.id+'"><td>'+esc(w.coin)+'</td><td>'+esc(w.network)+'</td>'+
+        '<td title="'+esc(w.address)+'"><code>'+esc(w.address_short)+'</code>'+warn+unver+'</td>'+
+        '<td>'+esc(w.machine)+'</td><td>'+esc(w.wallet_path)+'</td><td>'+fmtDate(w.created_at)+'</td>'+
+        '<td>'+esc(w.origin)+'</td><td>'+esc(w.note)+'</td><td>'+esc(secrets.join(', ')||'—')+'</td>'+
+        '<td><button class="btn sm outline" data-vault-edit="'+w.id+'">Modifier</button></td></tr>';
+    }).join('')||'<tr><td colspan="10" class="sub">Aucun wallet.</td></tr>';
+    $('#vaultRevealWallet').innerHTML=(wallets||[]).map(w=>'<option value="'+w.id+'">#'+w.id+' '+esc(w.coin)+' '+esc(w.address_short)+'</option>').join('');
+    document.querySelectorAll('[data-vault-edit]').forEach(b=>{b.onclick=()=>vaultEdit(wallets.find(x=>String(x.id)===b.dataset.vaultEdit));});
+  }
+  function vaultEdit(w){
+    if(!w)return;
+    vaultEditId=w.id;
+    $('#vaultAddCoin').value=w.coin;$('#vaultAddNetwork').value=w.network;
+    $('#vaultAddAddress').value=w.address;$('#vaultAddMachine').value=w.machine;
+    $('#vaultAddPath').value=w.wallet_path;$('#vaultAddNote').value=w.note;
+    $('#vaultAddSeed').value='';$('#vaultAddPriv').value='';$('#vaultAddPass').value='';
+    $('#vaultAddBtn').textContent='Enregistrer les modifications';
+    $('#vaultEditCancel').style.display='inline-block';
+  }
+  function vaultClearEdit(){
+    vaultEditId=null;
+    ['vaultAddCoin','vaultAddNetwork','vaultAddAddress','vaultAddMachine','vaultAddPath','vaultAddNote','vaultAddSeed','vaultAddPriv','vaultAddPass'].forEach(id=>$('#'+id).value='');
+    $('#vaultAddBtn').textContent='Ajouter le wallet';
+    $('#vaultEditCancel').style.display='none';
+  }
+  const vaultSecrets=()=>{
+    const out={};
+    const seed=$('#vaultAddSeed').value, priv=$('#vaultAddPriv').value, pwd=$('#vaultAddPass').value;
+    if(seed)out.seed=seed; if(priv)out.private_key=priv; if(pwd)out.password=pwd;
+    return out;
+  };
+  async function loadVault(){
+    const res=await vaultApi('/api/vault/status');
+    if(!res)return;
+    if(!res.ok){vaultStateChip('connexion requise','err');
+      vaultShow('vaultInitBox',false);vaultShow('vaultLockBox',false);vaultShow('vaultUnlockedBox',false);
+      $('#vaultBlocked').style.display='block';$('#vaultBlocked').textContent=res.data.detail||'Coffre inaccessible.';
+      return;}
+    const d=res.data;
+    $('#vaultBlocked').style.display='none';
+    vaultShow('vaultInitBox',!d.initialized);
+    vaultShow('vaultLockBox',d.initialized&&d.locked);
+    vaultShow('vaultUnlockedBox',d.initialized&&!d.locked);
+    $('#vaultLockBtn').style.display=d.initialized&&!d.locked?'inline-block':'none';
+    if(!d.initialized){vaultStateChip('non initialisé','off');$('#vaultCountdown').textContent='';clearInterval(vaultTick);return;}
+    if(d.locked){
+      vaultStateChip('verrouillé','off');$('#vaultCountdown').textContent='';clearInterval(vaultTick);
+      if(d.blocked_until){
+        const secs=Math.max(0,Math.round((new Date(d.blocked_until)-new Date())/1000));
+        $('#vaultBlocked').style.display='block';
+        $('#vaultBlocked').textContent='Coffre bloqué après 5 échecs — encore '+secs+' s.';
+      }
+      return;
+    }
+    vaultStateChip('déverrouillé','on');
+    vaultCountdown(d.unlock_remaining);
+    const list=await vaultApi('/api/vault/wallets');
+    if(list&&list.ok)vaultFillWallets(list.data.wallets);
+  }
+  $('#vaultInitBtn').onclick=async()=>{
+    const body={passphrase:$('#vaultInitPass').value,confirm:$('#vaultInitPass2').value,
+      lock_minutes:parseInt($('#vaultInitLock').value,10)||10};
+    const res=await vaultApi('/api/vault/init',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!res)return;
+    if(!res.ok){toast(res.data.detail||'initialisation refusée','err');return;}
+    $('#vaultInitPass').value='';$('#vaultInitPass2').value='';
+    toast('Coffre initialisé');loadVault();
+  };
+  $('#vaultUnlockBtn').onclick=async()=>{
+    const res=await vaultApi('/api/vault/unlock',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({passphrase:$('#vaultUnlockPass').value})});
+    if(!res)return;
+    if(!res.ok){toast(res.data.detail||'déverrouillage refusé','err');loadVault();return;}
+    $('#vaultUnlockPass').value='';
+    toast('Coffre déverrouillé');loadVault();
+  };
+  $('#vaultLockBtn').onclick=async()=>{
+    const res=await vaultApi('/api/vault/lock',{method:'POST'});
+    if(res&&res.ok){toast('Coffre verrouillé');loadVault();}
+  };
+  $('#vaultAddBtn').onclick=async()=>{
+    const body={coin:$('#vaultAddCoin').value,network:$('#vaultAddNetwork').value,
+      address:$('#vaultAddAddress').value,machine:$('#vaultAddMachine').value,
+      wallet_path:$('#vaultAddPath').value,note:$('#vaultAddNote').value,secrets:vaultSecrets()};
+    const path=vaultEditId?('/api/vault/wallets/'+vaultEditId):'/api/vault/wallets';
+    const res=await vaultApi(path,{method:vaultEditId?'PUT':'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!res)return;
+    if(!res.ok){toast(res.data.detail||'enregistrement refusé','err');return;}
+    toast(vaultEditId?'Wallet modifié':'Wallet ajouté');
+    vaultClearEdit();loadVault();
+  };
+  $('#vaultEditCancel').onclick=vaultClearEdit;
+  $('#vaultRevealBtn').onclick=async()=>{
+    const wallet=$('#vaultRevealWallet').value;
+    if(!wallet){toast('Aucun wallet','err');return;}
+    const res=await vaultApi('/api/vault/wallets/'+wallet+'/reveal',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({field:$('#vaultRevealField').value,passphrase:$('#vaultRevealPass').value})});
+    if(!res)return;
+    const out=$('#vaultRevealOut');
+    if(!res.ok){out.style.display='block';out.className='testres err';out.textContent=res.data.detail||'révélation refusée';return;}
+    $('#vaultRevealPass').value='';
+    let left=res.data.expires_in;
+    out.style.display='block';out.className='testres ok';
+    clearInterval(vaultRevealTick);
+    const paint=()=>{out.textContent='Valeur (effacement dans '+left+' s) :\n'+res.data.value;};
+    paint();
+    vaultRevealTick=setInterval(()=>{left-=1;
+      if(left<=0){clearInterval(vaultRevealTick);out.textContent='';out.style.display='none';return;}
+      paint();},1000);
+  };
+  $('#vaultChangeBtn').onclick=async()=>{
+    const res=await vaultApi('/api/vault/passphrase',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({current:$('#vaultOldPass').value,new:$('#vaultNewPass').value,confirm:$('#vaultNewPass2').value})});
+    if(!res)return;
+    if(!res.ok){toast(res.data.detail||'changement refusé','err');return;}
+    $('#vaultOldPass').value='';$('#vaultNewPass').value='';$('#vaultNewPass2').value='';
+    toast('Phrase maîtresse changée');loadVault();
+  };
+  $('#vaultExportBtn').onclick=async()=>{
+    const r=await fetch('/api/vault/export',{method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({passphrase:$('#vaultExportPass').value})});
+    if(!r.ok){const d=await r.json().catch(()=>({}));toast(d.detail||'export refusé','err');return;}
+    const blob=await r.blob();
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+    a.download='fossor-vault-export.json';document.body.appendChild(a);a.click();
+    URL.revokeObjectURL(a.href);a.remove();
+    $('#vaultExportPass').value='';toast('Export chiffré téléchargé');
+  };
+  const vaultImport=async(dry)=>{
+    const res=await vaultApi('/api/vault/import/registre',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({text:$('#vaultImportText').value,dry_run:dry})});
+    if(!res)return;
+    const out=$('#vaultImportOut');out.style.display='block';
+    if(!res.ok){out.className='testres err';out.textContent=res.data.detail||'import refusé';return;}
+    out.className='testres ok';
+    const lines=[res.data.dry_run?('Aperçu : '+res.data.count+' entrée(s)'):(res.data.count+' entrée(s) importée(s)'),
+      'champs secrets ignorés : '+res.data.ignored_secret_fields];
+    (res.data.entries||[]).forEach(e=>lines.push('# '+e.coin+' '+e.address_short+' '+e.wallet_path));
+    out.textContent=lines.join('\n');
+    if(!dry)loadVault();
+  };
+  $('#vaultImportPreview').onclick=()=>vaultImport(true);
+  $('#vaultImportApply').onclick=()=>vaultImport(false);
+  $('#tabVault').addEventListener('click',loadVault);
   $('#tabSecurity').addEventListener('click',loadSecurity);
   $('#tabLog').addEventListener('click',loadLogs);
   loadSecurity();loadLogs();

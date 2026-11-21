@@ -55,6 +55,8 @@ def e2e_server():
         "FOSSOR_VEILLE_SCHEDULER": "0",
         # Driver factice : une machine armée démarre en réel sans SSH.
         "FOSSOR_E2E_FAKE_DRIVER": "1",
+        # Coffre : la valeur révélée doit s'effacer seule en 2 s dans la suite.
+        "FOSSOR_VAULT_REVEAL_SECONDS": "2",
     }
     # Clean slate
     import shutil

@@ -799,3 +799,59 @@ class Analysis(Base):
     created_at: Mapped[str] = mapped_column(
         String(30), default=lambda: datetime.now(timezone.utc).isoformat()
     )
+
+
+class VaultMeta(Base):
+    """Paramètres du coffre des wallets — ni phrase ni secret en clair.
+
+    Le sel Argon2id, le vérificateur AES-GCM et la clé privée X25519 scellée
+    par la phrase maîtresse vivent ici.  La phrase elle-même n'est **jamais**
+    stockée, et la clé dérivée ne quitte pas la mémoire du processus.
+    """
+
+    __tablename__ = "vault_meta"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kdf_algorithm: Mapped[str] = mapped_column(String(20), default="argon2id")
+    kdf_time_cost: Mapped[int] = mapped_column(Integer, default=3)
+    kdf_memory_kib: Mapped[int] = mapped_column(Integer, default=65536)
+    kdf_parallelism: Mapped[int] = mapped_column(Integer, default=4)
+    kdf_salt: Mapped[str] = mapped_column(String(64), nullable=False)
+    verifier_nonce: Mapped[str] = mapped_column(String(32), nullable=False)
+    verifier_ct: Mapped[str] = mapped_column(String(128), nullable=False)
+    wrapped_nonce: Mapped[str] = mapped_column(String(32), nullable=False)
+    wrapped_ct: Mapped[str] = mapped_column(String(128), nullable=False)
+    public_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    lock_minutes: Mapped[int] = mapped_column(Integer, default=10, server_default="10")
+    failed_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    blocked_until: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(30), default="")
+    updated_at: Mapped[str] = mapped_column(String(30), default="")
+
+
+class VaultWallet(Base):
+    """Wallet du coffre : métadonnées lisibles, secrets en sealed boxes.
+
+    ``sealed_*`` contient une sealed box X25519 (base64).  Aucune colonne ne
+    porte de seed, de clé privée ni de mot de passe en clair : même une copie
+    complète de la base ne permet pas de les lire sans la phrase maîtresse.
+    """
+
+    __tablename__ = "vault_wallets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    uuid: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    coin: Mapped[str] = mapped_column(String(20), default="")
+    network: Mapped[str] = mapped_column(String(40), default="", server_default="")
+    address: Mapped[str] = mapped_column(String(160), default="", server_default="")
+    machine: Mapped[str] = mapped_column(String(80), default="", server_default="")
+    wallet_path: Mapped[str] = mapped_column(String(255), default="", server_default="")
+    note: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    origin: Mapped[str] = mapped_column(String(10), default="fred", server_default="fred")
+    address_status: Mapped[str] = mapped_column(String(12), default="unverified", server_default="unverified")
+    address_note: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    sealed_seed: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sealed_private_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sealed_password: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(String(30), default="")
+    updated_at: Mapped[str] = mapped_column(String(30), default="")

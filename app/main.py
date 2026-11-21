@@ -29,6 +29,7 @@ from app.routers.asic import router as asic_router
 from app.routers.rentability import router as rentability_router
 from app.routers.vms import router as vms_router
 from app.routers.pve import router as pve_router
+from app.routers.vault import admin_router as vault_router, hermes_router as vault_hermes_router
 from pathlib import Path
 
 app = FastAPI(title="Fossor")
@@ -82,6 +83,8 @@ app.include_router(pve_router)
 app.include_router(asic_router)
 app.include_router(rentability_router)
 app.include_router(vms_router)
+app.include_router(vault_router)
+app.include_router(vault_hermes_router)
 
 from app.routers.parite import router as parite_router
 

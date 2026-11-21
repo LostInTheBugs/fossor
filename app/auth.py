@@ -78,6 +78,35 @@ def create_access_token(data: dict) -> str:
     return s.dumps(payload)
 
 
+def cookie_user(request: Request) -> str | None:
+    """Utilisateur du **cookie de session** uniquement (jamais le contournement).
+
+    Le coffre des wallets s'appuie dessus : l'authentification désactivée pour
+    un réseau de confiance n'y donne aucun droit, la phrase maîtresse reste
+    exigée quelle que soit l'IP.
+    """
+    token = request.cookies.get("fossor_session")
+    if not token:
+        return None
+    s = _load_or_create_serializer()
+    payload = None
+    try:
+        payload = s.loads(token, max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60)
+    except SignatureExpired:
+        # Seul un cookie « rester connecté » dépasse l'heure de session.
+        try:
+            long_payload = s.loads(token, max_age=STAY_LOGGED_IN_DAYS * 86400)
+            if long_payload.get("remember"):
+                payload = long_payload
+        except (SignatureExpired, BadSignature, ValueError):
+            payload = None
+    except (BadSignature, ValueError):
+        payload = None
+    if payload is None:
+        return None
+    return payload.get("sub")
+
+
 def get_current_user(request: Request) -> str | None:
     """Session cookie, ou admin implicite sur un réseau de confiance.
 
@@ -86,24 +115,9 @@ def get_current_user(request: Request) -> str | None:
     cookie.  ``X-Forwarded-For`` n'est lu que si un proxy est déclaré : la
     décision vit dans :mod:`app.auth_settings`.
     """
-    token = request.cookies.get("fossor_session")
-    if token:
-        s = _load_or_create_serializer()
-        payload = None
-        try:
-            payload = s.loads(token, max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60)
-        except SignatureExpired:
-            # Seul un cookie « rester connecté » dépasse l'heure de session.
-            try:
-                long_payload = s.loads(token, max_age=STAY_LOGGED_IN_DAYS * 86400)
-                if long_payload.get("remember"):
-                    payload = long_payload
-            except (SignatureExpired, BadSignature, ValueError):
-                payload = None
-        except (BadSignature, ValueError):
-            payload = None
-        if payload is not None:
-            return payload.get("sub")
+    user = cookie_user(request)
+    if user:
+        return user
     from app import auth_settings
 
     if auth_settings.bypass_for_request(request):
