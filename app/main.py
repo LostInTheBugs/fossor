@@ -41,6 +41,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def hermes_tick_journal(request: Request, call_next):
+    """Journal du tick : méthode, chemin et code des appels reçus de Hermes."""
+    response = await call_next(request)
+    if request.url.path.startswith("/api/hermes/"):
+        from app import veille
+
+        veille.note_request(request.method, request.url.path, response.status_code)
+    return response
+
+
 # Include routers
 app.include_router(auth_router)
 app.include_router(security_router)
@@ -121,6 +133,18 @@ def nav_script():
 @app.on_event("startup")
 async def startup():
     init_db()
+    # §4.8 : un tick resté « running » quand l'app s'est arrêtée n'a plus de
+    # thread pour le terminer — il est clos en « interrupted » et le verrou
+    # est rendu, sinon tout lancement suivant répondrait 409 pour toujours.
+    try:
+        from app import veille as _veille
+
+        _veille.close_interrupted()
+    except Exception:  # pragma: no cover - startup guard
+        import logging
+        logging.getLogger("fossor.veille").warning(
+            "tick interrompu non clos au démarrage", exc_info=True
+        )
     # §2026.11.003-c6 : un catalogue vide reçoit les coins de base.  Sans cela
     # la correspondance pool → coin ne trouvait jamais rien (prod : 0 ligne).
     try:

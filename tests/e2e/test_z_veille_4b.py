@@ -154,6 +154,10 @@ async def test_veille_tick_from_analysis_screen(e2e_server):
         state_text = await page.inner_text("#veilleState")
         assert "1 candidat(s)" in state_text
         assert "1 analyse(s)" in state_text
+        # Journal du tick : la requête de dépôt réellement reçue par Fossor.
+        assert "Journal du tick" in state_text
+        assert "POST /api/hermes/analyses" in state_text
+        assert await page.locator("#veilleState").get_by_text("→ 200").count() >= 1
         await page.wait_for_function(
             "document.querySelector('#analyses').textContent.includes('ZZZ4B')",
             timeout=10000,

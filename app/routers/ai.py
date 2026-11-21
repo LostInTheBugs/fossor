@@ -28,7 +28,7 @@ def _audit(db: Session, action: str, result: str, output: str | None = None) -> 
 @router.get("")
 def get_ai_config(db: Session = Depends(get_db), _user=Depends(require_login)):
     """Current AI configuration — the API key is replaced by ``has_api_key``."""
-    return ai_config.snapshot(db)
+    return {**ai_config.snapshot(db), "veille_max_minutes": veille.max_minutes(db)}
 
 
 @router.patch("")
@@ -96,6 +96,31 @@ def run_veille(
     if state.get("already_running"):
         raise HTTPException(status_code=409, detail="Une veille est déjà en cours")
     _audit(db, "veille-hermes", "lancée", "tick déclenché depuis l'écran Analyse des tokens")
+    return veille.snapshot(db)
+
+
+@router.post("/veille/max-minutes")
+def set_veille_max_minutes(
+    payload: dict,
+    db: Session = Depends(get_db),
+    _user=Depends(require_login),
+):
+    """Durée maximale d'un tick (1 à 240 minutes, 30 par défaut)."""
+    raw = payload.get("minutes")
+    if isinstance(raw, bool) or raw is None:
+        raise HTTPException(status_code=400, detail="minutes doit être un entier")
+    try:
+        minutes = int(raw)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="minutes doit être un entier")
+    if not 1 <= minutes <= veille.MAX_MINUTES_CEILING:
+        raise HTTPException(
+            status_code=400,
+            detail=f"minutes doit être entre 1 et {veille.MAX_MINUTES_CEILING}",
+        )
+    ai_config.set_setting(db, veille.MAX_MINUTES_KEY, minutes)
+    db.commit()
+    _audit(db, "veille-max", "ok", f"durée maximale d'un tick : {minutes} min")
     return veille.snapshot(db)
 
 

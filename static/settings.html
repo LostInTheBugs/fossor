@@ -493,6 +493,7 @@ header h1{font-size:26px}
       <div class="sub">Fréquence de la veille et bascule automatique vers le fournisseur de secours quand le principal échoue.</div>
       <div class="row">
         <div class="field narrow"><label>Cadence (heures)</label><input type="number" id="cadence" min="1" max="168" value="6"></div>
+        <div class="field narrow"><label>Durée max. d'un tick (minutes)</label><input type="number" id="veilleMax" min="1" max="240" value="30"></div>
         <div class="field" style="flex:1"><label><input type="checkbox" id="fbEnabled" checked> Utiliser le fournisseur de secours si le principal échoue</label></div>
       </div>
       <div class="actions"><button class="btn" id="saveGlobals">Enregistrer</button></div>
@@ -912,6 +913,7 @@ const loadAI=async()=>{
   if(r.status===401){location.href='/';return;}
   const d=await r.json();
   $('#cadence').value=d.analysis_cadence_hours;
+  $('#veilleMax').value=d.veille_max_minutes||30;
   $('#fbEnabled').checked=!!d.fallback_enabled;
   fillProvider('primary',d.primary);
   fillProvider('fallback',d.fallback);
@@ -956,6 +958,10 @@ $('#saveGlobals').addEventListener('click',async()=>{
     body:JSON.stringify({analysis_cadence_hours:Number($('#cadence').value),fallback_enabled:$('#fbEnabled').checked})});
   const data=await r.json().catch(()=>({}));
   if(!r.ok){toast(data.detail||'Enregistrement refusé','err');return;}
+  const maxRes=await fetch('/api/config/ai/veille/max-minutes',{method:'POST',credentials:'include',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({minutes:Number($('#veilleMax').value)})});
+  if(!maxRes.ok){const err=await maxRes.json().catch(()=>({}));toast(err.detail||'Durée maximale refusée','err');return;}
   toast('Réglages enregistrés');
 });
 

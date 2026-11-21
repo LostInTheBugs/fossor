@@ -597,16 +597,31 @@ label{display:block;color:var(--muted);font-size:11px;font-weight:600;margin-bot
           $("#veilleState").innerHTML = '<div class="sub">Aucun tick enregistré.' +
             (data.provider_ready ? "" : " " + esc(data.provider_reason)) + "</div>";
         } else {
-          var status = t.status === "ok" ? "Terminé" : (t.status === "running" ? "En cours" : "Échec");
-          var when = t.finished_at || t.started_at;
-          var duration = t.duration_s == null ? "—" : (t.duration_s + " s");
-          $("#veilleState").innerHTML =
-            '<div class="row" style="justify-content:space-between">' +
-            "<div><b>" + esc(status) + "</b> — " + esc(fmtDate(when)) + "</div>" +
-            '<div class="mono">déclencheur ' + esc(t.trigger || "—") + " · durée " + esc(duration) + "</div></div>" +
-            '<div class="mono" style="margin-top:6px">' + esc(t.result || "") + "</div>" +
-            '<div class="mono" style="margin-top:6px">' + (t.analyses || 0) + " analyse(s) · " +
-            (t.candidates || 0) + " candidat(s) · " + (t.proposals || 0) + " proposition(s)</div>";
+        var labels = { ok: "Terminé", ok_sans_analyse: "Terminé sans analyse", running: "En cours",
+          timeout: "Interrompu (durée maximale)", interrupted: "Interrompu (redémarrage)", error: "Échec" };
+        var status = labels[t.status] || t.status;
+        var when = t.finished_at || t.started_at;
+        var duration = t.duration_s == null ? "—" : (t.duration_s + " s");
+        var warn = t.status === "ok_sans_analyse"
+          ? '<div style="margin-top:6px;color:#b45309"><b>Avertissement</b> — ' + esc(t.result || "") + "</div>"
+          : "";
+        var entries = t.journal || [];
+        var journal = entries.length
+          ? '<div class="mono" style="margin-top:8px"><b>Journal du tick</b> (requêtes reçues de Hermes)<br>' +
+            entries.map(function (e) {
+              return esc((e.method || "") + " " + (e.path || "") + " → " + (e.status == null ? "?" : e.status));
+            }).join("<br>") + "</div>"
+          : '<div class="mono" style="margin-top:8px">Journal du tick : aucune requête Hermes reçue.</div>';
+        $("#veilleState").innerHTML =
+          '<div class="row" style="justify-content:space-between">' +
+          "<div><b>" + esc(status) + "</b> — " + esc(fmtDate(when)) + "</div>" +
+          '<div class="mono">déclencheur ' + esc(t.trigger || "—") + " · durée " + esc(duration) + "</div></div>" +
+          warn +
+          '<div class="mono" style="margin-top:6px">' + esc(t.result || "") + "</div>" +
+          '<div class="mono" style="margin-top:6px">' + (t.analyses || 0) + " analyse(s) · " +
+          (t.candidates || 0) + " candidat(s) · " + (t.proposals || 0) + " proposition(s) · id " +
+          esc(t.id || "—") + "</div>" +
+          journal;
         }
         if (data.running && !veilleTimer) {
           veilleTimer = setInterval(loadVeille, 4000);

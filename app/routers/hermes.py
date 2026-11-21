@@ -20,6 +20,7 @@ from app import analyses as A
 from app import campaign_runner as RUN
 from app import criteria as CRIT
 from app import rules as R
+from app import veille
 from app.database import get_db
 from app.dependencies import require_hermes_token
 from app.models import (
@@ -188,6 +189,8 @@ def post_analysis(
     if row is None:  # course improbable entre deux appels identiques
         raise HTTPException(status_code=409, detail="Analyse concurrente : réessayer")
     _audit(db, "analyse Hermes", f"analyse #{row.id}", "ok", f"{created} création(s)")
+    # Compteur du tick : seule une analyse réellement reçue (2xx) compte.
+    veille.note_analysis(len(entry.get("candidates") or []))
     return {"created": bool(created), "duplicate": not created, "analysis": A.analysis_to_dict(row)}
 
 
@@ -245,6 +248,7 @@ async def post_proposal(
         )
     db.commit()
     db.refresh(campaign)
+    veille.note_proposal()
     RUN.log_event(
         db,
         campaign,
