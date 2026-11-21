@@ -18,8 +18,8 @@ from app.external_miners import detect_running_miners
 from app.ssh_client import WHITELISTED_COMMANDS
 
 PS = """USER PID %CPU ELAPSED COMMAND
-fossor 1486349 198 66651 /opt/fossor/miners/custom/1.0/cpuminer-korsh --algo yespower --param-n 256 --param-r 8 --url stratum+tcp://pool.korsh.org:3333 --user REDACTED-WALLET.athlon-korsh --threads 2
-fossor 1487634 6.2 66628 /opt/fossor/miners/srbminer/3.8.3/srbminer_compute --algorithm pearlhash --wallet REDACTED-WALLET --worker athlon-3000g --pool stratum+tcp://pearl-eu2.luckypool.io:3360 --api-enable --api-port 21550
+fossor 1486349 198 66651 /opt/fossor/miners/custom/1.0/cpuminer-korsh --algo yespower --param-n 256 --param-r 8 --url stratum+tcp://pool.korsh.org:3333 --user kshtestaddressfossor000000000000000000000.athlon-korsh --threads 2
+fossor 1487634 6.2 66628 /opt/fossor/miners/srbminer/3.8.3/srbminer_compute --algorithm pearlhash --wallet prl1ptestaddressfossor00000000000000000000000000000000000000000 --worker athlon-3000g --pool stratum+tcp://pearl-eu2.luckypool.io:3360 --api-enable --api-port 21550
 """
 
 HOSTS = {"pool.korsh.org": "KSH", "pearl-eu2.luckypool.io": "PRL"}
