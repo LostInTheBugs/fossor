@@ -174,6 +174,8 @@ async def test_hiveos_screen_and_campaign(e2e_server):
             ).fetchall()]
         finally:
             conn.close()
+        from tests.e2e.conftest import defer_newest_proposed_campaign
+
         campaign_id = await page.evaluate(
             """async (payload) => {
                 const post = async (url, body) => {
@@ -184,26 +186,15 @@ async def test_hiveos_screen_and_campaign(e2e_server):
                     if (!res.ok) throw new Error(url + ' ' + res.status + ' ' + await res.text());
                     return await res.json();
                 };
+                // `defer_newest_proposed_campaign` a repoussé `start_at` avant
+                // l'approbation : le planificateur ne peut pas prendre la
+                // campagne, le POST /start est donc le seul à la démarrer.
                 const created = await post('/api/campaigns', payload);
-                await post('/api/campaigns/' + created.id + '/approve', {});
-                // Le planificateur peut démarrer la campagne approuvée avant
-                // ce POST : on attend l'état, et un 409 « déjà running » est
-                // un succès, pas un échec.
-                for (let i = 0; i < 30; i += 1) {
-                    const res = await fetch('/api/campaigns/' + created.id);
-                    const current = await res.json();
-                    if (current.status === 'running') { return created.id; }
-                    if (current.status === 'done' || current.status === 'failed') { break; }
-                    await new Promise((resolve) => setTimeout(resolve, 200));
-                }
                 const started = await fetch('/api/campaigns/' + created.id + '/start', {
                     method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'
                 });
                 if (!started.ok) {
-                    const text = await started.text();
-                    if (!text.includes('Campagne running')) {
-                        throw new Error('start ' + started.status + ' ' + text);
-                    }
+                    throw new Error('start ' + started.status + ' ' + await started.text());
                 }
                 return created.id;
             }""",
@@ -213,6 +204,15 @@ async def test_hiveos_screen_and_campaign(e2e_server):
                 "start_at": datetime.now(timezone.utc).isoformat(),
                 "devices": [{"machine_id": full_id, "device_uuid": u} for u in uuids],
             },
+        )
+        # Course planificateur : `start_at` repoussé avant l'approbation.
+        defer_newest_proposed_campaign(60)
+        await page.evaluate(
+            """async (id) => {
+                const res = await fetch('/api/campaigns/' + id + '/approve', {method: 'POST'});
+                if (!res.ok) { throw new Error('approve ' + res.status); }
+            }""",
+            campaign_id,
         )
         assert campaign_id
         stopped = await page.evaluate(

@@ -72,6 +72,17 @@ class AutoLaunchParams(BaseModel):
     cpu: bool = Field(True, description="Lancer une campagne CPU dès qu'un token est retenu")
 
 
+class BoostLaunchParams(BaseModel):
+    """Règle « Boost au lancement » (§10.3) — désactivée par défaut."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_chain_age_hours: int = Field(24, ge=1, le=720, description="Âge maximum de la chaîne (heures)")
+    max_network_hashrate: float = Field(0.0, ge=0, description="Hashrate réseau maximum (H/s, 0 = sans limite)")
+    require_verdict: Literal["retenu"] = Field("retenu", description="Verdict exigé avant de proposer")
+    default_hours: float = Field(6.0, ge=1, le=72, description="Durée par défaut du boost (heures)")
+
+
 class CriterionParams(BaseModel):
     """Un critère d'évaluation : libellé, texte de Fred, lien éventuel."""
 
@@ -263,6 +274,16 @@ RULE_SPECS: tuple[dict[str, Any], ...] = (
         "model": ElectricityCostParams,
     },
     {
+        "id": "boost_launch",
+        "name": "Boost au lancement",
+        "description": "Désactivée par défaut. Active : un token retenu peut déclencher une "
+        "proposition de boost (pool mobilisé, durée bornée), exécutée d'elle-même seulement "
+        "si « Lancement auto » GPU est actif aussi. Sinon Fred valide.",
+        "scope": "launch",
+        "enabled": False,
+        "model": BoostLaunchParams,
+    },
+    {
         "id": "notifications",
         "name": "Notifications",
         "description": "Bascule, prolongation, fin de campagne.",
@@ -376,6 +397,50 @@ def plan_auto_launch(db: Session, kind: str, simulated: bool) -> dict[str, Any]:
     return {"allowed": True, "launch": True, "simulated": False, "reason": ""}
 
 
+def plan_boost(db: Session, candidate: dict[str, Any] | None, simulated: bool = False) -> dict[str, Any]:
+    """Décide si un boost peut être **proposé** puis exécuté tout seul (§10.3).
+
+    * règle « Boost au lancement » désactivée → aucune proposition ;
+    * seuils non tenus (âge, hashrate réseau, verdict) → aucune proposition ;
+    * règle active mais ``auto_launch`` GPU inactive → proposition seule ;
+    * les deux actives → exécution automatique (sauf simulation).
+    """
+    rule = db.get(Rule, "boost_launch")
+    if rule is None or not rule.enabled:
+        return {"allowed": False, "launch": False, "reason": "règle « Boost au lancement » désactivée"}
+    params = rule.params or {}
+    facts = candidate or {}
+    age = facts.get("age_hours")
+    if age is not None and float(age) > float(params.get("max_chain_age_hours", 24)):
+        return {
+            "allowed": False,
+            "launch": False,
+            "reason": f"chaîne trop vieille ({round(float(age), 1)} h > {params.get('max_chain_age_hours', 24)} h)",
+        }
+    max_hash = float(params.get("max_network_hashrate", 0) or 0)
+    network = facts.get("network_hashrate")
+    if max_hash > 0 and network is not None and float(network) > max_hash:
+        return {
+            "allowed": False,
+            "launch": False,
+            "reason": f"hashrate réseau {float(network):.0f} H/s au-delà du maximum {max_hash:.0f} H/s",
+        }
+    verdict = str(facts.get("verdict") or "").strip().lower()
+    if verdict != str(params.get("require_verdict", "retenu")):
+        return {"allowed": False, "launch": False, "reason": "verdict différent de « retenu »"}
+    launch = db.get(Rule, "auto_launch")
+    auto_gpu = bool(launch is not None and launch.enabled and (launch.params or {}).get("gpu"))
+    if not auto_gpu:
+        return {
+            "allowed": True,
+            "launch": False,
+            "reason": "règle boost active, lancement auto GPU inactif : Fred valide",
+        }
+    if simulated:
+        return {"allowed": True, "launch": False, "reason": "simulation : boost proposé, non exécuté"}
+    return {"allowed": True, "launch": True, "reason": ""}
+
+
 def enabled_rules(db: Session) -> dict[str, Rule]:
     return {rule.id: rule for rule in db.query(Rule).filter(Rule.enabled.is_(True)).all()}
 
@@ -414,6 +479,8 @@ class ProposalIn(BaseModel):
     execution_mode: Literal["host", "vm", "hybrid"] = "host"
     note: str = Field("", max_length=2000)
     candidate: ProposalCandidate = Field(default_factory=lambda: ProposalCandidate())
+    # §10.3 : Hermes ne fait que **proposer** un boost ; Fossor applique la règle.
+    boost: dict[str, Any] | None = None
 
 
 def _device_label(device: Device) -> str:

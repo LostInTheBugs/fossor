@@ -198,6 +198,12 @@ def reference_hashrate(db: Any, device_uuid: str | None, now: datetime, *, minim
 
     if not device_uuid:
         return None
+    # §10.3 : pendant un boost, la référence est celle du coin boosté.
+    from app import boost_runner as BR
+
+    boost_ref = BR.reference_hashrate(db, device_uuid, now, minimum=minimum)
+    if boost_ref is not None:
+        return boost_ref
     since = (now - timedelta(hours=24)).isoformat()
     rows = (
         db.query(Metric.hashrate_hs)
@@ -344,6 +350,12 @@ def campaign_switching(db: Any, machine: Any) -> str:
     """Campagne en cours de bascule sur cette machine (verrou), sinon ``""``."""
     from app.models import Campaign, CampaignDevice
 
+    # §10.3 : entrée ou sortie de boost = bascule, le watchdog se tait.
+    from app import boost_runner as BR
+
+    boost_reason = BR.switching(db, machine)
+    if boost_reason:
+        return boost_reason
     row = (
         db.query(Campaign)
         .join(CampaignDevice, CampaignDevice.campaign_id == Campaign.id)

@@ -899,3 +899,67 @@ class WatchdogState(Base):
     reference_hs: Mapped[float | None] = mapped_column(Float, nullable=True)
     counter: Mapped[int | None] = mapped_column(Integer, nullable=True)
     counter_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+class Boost(Base):
+    """Mode boost (§10.3) : mobilisation temporaire du pool sur un coin.
+
+    Le statut suit la machine à états de :mod:`app.boost` ; ``ends_at`` borne
+    la durée, ``stop_requested`` porte l'annulation en un clic.  Les colonnes
+    ``restore_*`` et ``attempts`` sont la mémoire du planificateur : après un
+    redémarrage, l'étape en cours reprend au lieu d'être rejouée.
+    """
+
+    __tablename__ = "boosts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    uuid: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    campaign_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    coin: Mapped[str] = mapped_column(String(20), nullable=False)
+    profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="proposed", server_default="proposed", index=True)
+    origin: Mapped[str] = mapped_column(String(10), default="manual", server_default="manual")
+    scope: Mapped[str] = mapped_column(String(12), default="pool", server_default="pool")
+    proportion: Mapped[int] = mapped_column(Integer, default=100, server_default="100")
+    machine_ids: Mapped[str] = mapped_column(String(1000), default="", server_default="")
+    duration_h: Mapped[float] = mapped_column(Float, default=6.0, server_default="6")
+    stop_requested: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    confirm_overload: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    started_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    ends_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    ended_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    restore_deadline: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    note: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), default="", server_default="")
+    updated_at: Mapped[str] = mapped_column(String(40), default="", server_default="")
+
+
+class BoostDevice(Base):
+    """Device mobilisé par un boost, et l'état de son retour au token par défaut."""
+
+    __tablename__ = "boost_devices"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    boost_id: Mapped[int] = mapped_column(Integer, ForeignKey("boosts.id"), nullable=False, index=True)
+    machine_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    device_uuid: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    kind: Mapped[str] = mapped_column(String(10), default="gpu", server_default="gpu")
+    label: Mapped[str] = mapped_column(String(120), default="", server_default="")
+    hiveos: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    restore_deadline: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    restored_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+class BoostEvent(Base):
+    """Journal du boost — il **est** l'idempotence des étapes (comme campaign_events)."""
+
+    __tablename__ = "boost_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    boost_id: Mapped[int] = mapped_column(Integer, ForeignKey("boosts.id"), nullable=False, index=True)
+    ts: Mapped[str] = mapped_column(String(40), default="", server_default="")
+    kind: Mapped[str] = mapped_column(String(40), default="", server_default="")
+    message: Mapped[str] = mapped_column(String(1000), default="", server_default="")
+    result: Mapped[str] = mapped_column(String(10), default="ok", server_default="ok")
+    simulated: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    detail: Mapped[str] = mapped_column(String(2000), default="", server_default="")

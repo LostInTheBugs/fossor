@@ -311,6 +311,35 @@ async def post_proposal(
             simulated=True,
         )
         db.commit()
+    # §10.3 : Hermes ne fait que **proposer** un boost ; la règle décide.
+    boost_brief = None
+    if payload.boost:
+        from app import boost as B
+        from app import boost_runner as BR
+
+        boost_payload = dict(payload.boost)
+        boost_payload.setdefault("campaign_id", campaign.id)
+        boost_payload.setdefault("coin", campaign.coin)
+        facts = dict(payload.candidate.model_dump() if payload.candidate else {})
+        facts.update(payload.boost.get("facts") or {})
+        plan_boost = R.plan_boost(db, facts, simulated)
+        try:
+            boost_row = BR.create(db, boost_payload, origin="hermes")
+        except B.BoostError as exc:
+            boost_brief = {"created": False, "reason": f"boost non proposé : {exc}"}
+        else:
+            BR.log_event(db, boost_row, "proposal", f"proposition Hermes : boost {boost_row.coin}")
+            db.commit()
+            if plan_boost["launch"] and not simulated:
+                await BR.start_boost(db, boost_row, simulated=False)
+            db.refresh(boost_row)
+            boost_brief = {
+                "created": True,
+                "id": boost_row.id,
+                "status": boost_row.status,
+                "coin": boost_row.coin,
+                "rule": plan_boost,
+            }
     message = "Proposition déposée : elle attend l'approbation de Fred."
     if started:
         message = "Campagne lancée automatiquement (règle auto_launch)."
@@ -321,6 +350,7 @@ async def post_proposal(
         "status": campaign.status,
         "auto_launch": bool(started),
         "auto_launch_detail": {**plan, "started": started, "kind": kind, "simulated": bool(simulated), "reason": reason},
+        "boost": boost_brief,
         "stage": "4b",
         "message": message,
     }

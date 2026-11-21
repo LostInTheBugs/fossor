@@ -105,6 +105,42 @@ tr:last-child td{border-bottom:none}
     <div class="empty" id="emptyMsg" style="display:none">Aucune campagne.</div>
     <div class="journal" id="journal"></div>
   </section>
+  <section class="card" id="boostCard">
+    <h2>Boost (§10.3) — pool de boost</h2>
+    <div class="row" style="grid-template-columns:1.4fr 1fr 1fr 1fr">
+      <div><label for="boostCampaign">Campagne (running ou approved)</label><select id="boostCampaign"></select></div>
+      <div><label for="boostScope">Portée</label><select id="boostScope">
+        <option value="pool">Tout le pool</option>
+        <option value="proportion">Une proportion</option>
+        <option value="machines">Une sélection de machines</option>
+      </select></div>
+      <div><label for="boostProportion">Proportion (%)</label><input id="boostProportion" type="number" min="1" max="100" value="50"></div>
+      <div><label for="boostHours">Durée (1–72 h)</label><input id="boostHours" type="number" min="1" max="72" value="6"></div>
+    </div>
+    <div style="display:flex;gap:18px;align-items:center;margin-bottom:10px">
+      <label style="display:flex;gap:7px;align-items:center;text-transform:none;font-size:12.5px;margin:0">
+        <input id="boostOverload" type="checkbox" style="width:auto"> confirmer une charge PSU &gt; 80 %
+      </label>
+      <span class="muted" id="boostPoolNote" style="font-size:12px"></span>
+    </div>
+    <div class="machines" id="boostPool"></div>
+    <div style="margin-top:14px">
+      <button class="btn ghost" id="boostPreview">Calculer l'écran de validation</button>
+      <button class="btn" id="boostLaunch" disabled>Lancer le boost</button>
+      <span class="muted" id="boostNote" style="font-size:12px;margin-left:10px"></span>
+    </div>
+    <div id="boostPanel" style="margin-top:12px"></div>
+  </section>
+
+  <section class="card">
+    <h2>Boosts</h2>
+    <div id="boostTableWrap"><table><thead><tr>
+      <th>#</th><th>Coin</th><th>Statut</th><th>Portée</th><th>Devices</th>
+      <th>Début</th><th>Fin</th><th>Actions</th>
+    </tr></thead><tbody id="boostRows"></tbody></table></div>
+    <div class="empty" id="boostEmpty" style="display:none">Aucun boost.</div>
+    <div class="journal" id="boostJournal"></div>
+  </section>
   <div class="foot" id="stamp"></div>
 </div>
 <div class="toast" id="toast"></div>
@@ -241,6 +277,7 @@ tr:last-child td{border-bottom:none}
         state.campaigns = data.campaigns || [];
         state.simulation = data.simulation === true;
         render();
+        renderBoostCampaigns();
       });
   }
 
@@ -345,6 +382,152 @@ tr:last-child td{border-bottom:none}
     if (verb === "journal") { loadJournal(id); return; }
     act(verb, id);
   });
+
+  // ── Mode boost (§10.3) ─────────────────────────────────────────────
+  var boostState = { pool: null, preview: null, options: null, boosts: [] };
+
+  function renderBoostPool() {
+    var data = boostState.pool;
+    if (!data) { return; }
+    var machines = {};
+    (data.devices || []).forEach(function (d) {
+      if (!machines[d.machine]) { machines[d.machine] = []; }
+      machines[d.machine].push(d);
+    });
+    var blocks = Object.keys(machines).map(function (name) {
+      var rows = machines[name].map(function (d) {
+        if (!d.in_pool) {
+          return '<div class="dev off">' + d.label + ' <span class="why">(' + d.excluded_reason + ')</span></div>';
+        }
+        return '<label class="dev"><input type="checkbox" data-boost-machine="' + d.machine_id +
+          '" value="' + d.uuid + '"> ' + d.label +
+          (d.hiveos ? ' <span class="sim">HiveOS</span>' : "") + '</label>';
+      }).join("");
+      return '<div class="machine"><div class="name">' + name + '</div>' + rows + '</div>';
+    });
+    $("#boostPool").innerHTML = blocks.join("");
+    $("#boostPoolNote").textContent = data.in_pool + " device(s) dans le pool, " + data.excluded + " exclu(s).";
+  }
+
+  function loadBoostPool() {
+    return fetch("/api/boosts/pool", { credentials: "same-origin" })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        boostState.pool = data;
+        if (data.settings) { $("#boostHours").value = data.settings.default_hours || 6; }
+        renderBoostPool();
+      });
+  }
+
+  function loadBoosts() {
+    return fetch("/api/boosts", { credentials: "same-origin" })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        boostState.boosts = data.boosts || [];
+        var rows = boostState.boosts.map(function (b) {
+          var acts = [];
+          if (b.status === "running" || b.status === "stopping") {
+            acts.push('<button class="btn sm danger" data-boost-act="cancel" data-boost-id="' + b.id + '">Annuler</button>');
+          }
+          if (b.status === "approved") {
+            acts.push('<button class="btn sm danger" data-boost-act="cancel" data-boost-id="' + b.id + '">Annuler</button>');
+          }
+          return "<tr data-boost-row=\"" + b.id + "\"><td>" + b.id + "</td>" +
+            '<td class="mono">' + b.coin + "</td>" +
+            '<td><span class="chip ' + b.status + '">' + b.status_label + "</span>" +
+            (b.origin === "hermes" ? ' <span class="sim">Hermes</span>' : "") + "</td>" +
+            "<td>" + b.scope + (b.proportion ? " " + b.proportion + " %" : "") + "</td>" +
+            "<td>" + b.device_count + "</td>" +
+            "<td>" + fmtDate(b.started_at) + "</td>" +
+            "<td>" + fmtDate(b.ends_at) + "</td>" +
+            "<td>" + acts.join("") + "</td></tr>";
+        }).join("");
+        $("#boostRows").innerHTML = rows;
+        $("#boostTableWrap").style.display = boostState.boosts.length ? "" : "none";
+        $("#boostEmpty").style.display = boostState.boosts.length ? "none" : "";
+      });
+  }
+
+  function boostPayload() {
+    var campaignId = Number($("#boostCampaign").value || 0);
+    var scope = $("#boostScope").value;
+    var machineIds = Array.prototype.slice.call(document.querySelectorAll("#boostPool input:checked"))
+      .map(function (input) { return Number(input.getAttribute("data-boost-machine")); });
+    var unique = machineIds.filter(function (v, i, a) { return a.indexOf(v) === i; });
+    return {
+      campaign_id: campaignId || null,
+      scope: scope,
+      proportion: Number($("#boostProportion").value || 100),
+      machine_ids: scope === "machines" ? unique : [],
+      duration_h: Number($("#boostHours").value || 6),
+      confirm_overload: $("#boostOverload").checked
+    };
+  }
+
+  function boostPreview() {
+    fetch("/api/boosts/preview", {
+      method: "POST", credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(boostPayload())
+    }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+      .then(function (res) {
+        if (!res.ok) { toast(res.data.detail || "Aperçu refusé"); return; }
+        boostState.preview = res.data;
+        var panel = $("#boostPanel");
+        var devices = (res.data.devices || []).map(function (d) { return d.label; }).join("<br>");
+        panel.innerHTML = "<h2>Écran de validation</h2><table><tbody>" +
+          "<tr><td>Devices retirés du token par défaut</td><td>" + res.data.device_count + "<br><span class=\"muted\">" + devices + "</span></td></tr>" +
+          "<tr><td>Hashrate Pearl perdu</td><td>" + fmtHs(res.data.hashrate_lost_hs) + "</td></tr>" +
+          "<tr><td>Coût électrique estimé (" + res.data.duration_h + " h)</td><td>" + fmtEur(res.data.cost_eur) + "</td></tr>" +
+          "<tr><td>Revenu estimé du coin boosté</td><td>" + (res.data.revenue_known ? fmtEur(res.data.revenue_eur) : "inconnu") + "</td></tr>" +
+          "<tr><td>Fin prévue</td><td>" + fmtDate(res.data.ends_at) + "</td></tr>" +
+          "</tbody></table>";
+        (res.data.warnings || []).forEach(function (w) { toast(w.message); });
+        $("#boostLaunch").disabled = res.data.ok === false;
+        $("#boostNote").textContent = res.data.ok === false
+          ? (res.data.blocking || []).map(function (b) { return b.message; }).join(" ; ")
+          : "Validation affichée : vérifiez les coûts avant de lancer.";
+      });
+  }
+
+  function boostLaunch() {
+    fetch("/api/boosts", {
+      method: "POST", credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(boostPayload())
+    }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+      .then(function (res) {
+        if (!res.ok) { toast(res.data.detail || "Boost refusé"); return; }
+        toast("Boost #" + res.data.boost.id + " : " + res.data.boost.status_label);
+        $("#boostLaunch").disabled = true;
+        loadBoosts(); load();
+      });
+  }
+
+  function renderBoostCampaigns() {
+    var choices = state.campaigns.filter(function (c) {
+      return c.status === "running" || c.status === "approved";
+    });
+    $("#boostCampaign").innerHTML = choices.map(function (c) {
+      return '<option value="' + c.id + '">#' + c.id + " " + c.coin + " — " + c.status_label + "</option>";
+    }).join("");
+  }
+
+  $("#boostPreview").addEventListener("click", boostPreview);
+  $("#boostLaunch").addEventListener("click", boostLaunch);
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest("button[data-boost-act]");
+    if (!button) { return; }
+    var id = button.getAttribute("data-boost-id");
+    fetch("/api/boosts/" + id + "/cancel", { method: "POST", credentials: "same-origin" })
+      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+      .then(function (res) {
+        toast(res.ok ? "Boost #" + id + " annulé" : (res.data.detail || "Annulation refusée"));
+        loadBoosts(); load();
+      });
+  });
+
+  loadBoostPool().then(loadBoosts);
 
   loadOptions().then(load);
   setInterval(load, 15000);

@@ -13,10 +13,23 @@ def _get_db_url() -> str:
 
 
 def _make_engine():
-    return create_engine(
+    eng = create_engine(
         _get_db_url(),
-        connect_args={"check_same_thread": False},
+        connect_args={"check_same_thread": False, "timeout": 30},
     )
+
+    @event.listens_for(eng, "connect")
+    def _sqlite_pragmas(dbapi_connection, _record):  # noqa: ANN001
+        # « database is locked » : un lecteur (transaction de requête) bloquait
+        # l'épinglage de la clé d'hôte écrit par une session distincte.  WAL
+        # laisse le lecteur et l'écrivain coexister ; busy_timeout couvre le
+        # reste au lieu d'échouer au bout de 5 s.
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.close()
+
+    return eng
 
 
 def _make_session():
@@ -188,6 +201,7 @@ def init_db():
     _migrate_device_integrated_column()
     _migrate_wallet_pool_host_column()
     _migrate_machine_power_columns()
+    _migrate_boost_pool_defaults()
     _migrate_machine_default_miner_column()
     _migrate_device_occupied_external_column()
     _migrate_machine_external_miners_column()
@@ -421,6 +435,36 @@ def _migrate_device_role_columns():
         "devices", "boost_pool", "boost_pool BOOLEAN NOT NULL DEFAULT 0"
     )
     _add_column_if_missing("devices", "default_token_id", "default_token_id INTEGER")
+
+
+def _migrate_boost_pool_defaults():
+    """§10.3 : par défaut, **tous** les GPU des rigs HiveOS sont dans le pool.
+
+    Les autres machines (athlon, Ryzen) restent hors pool tant que Fred ne
+    coche pas leurs GPU : la migration ne les touche jamais.
+    """
+    from app.models import Device, Machine
+
+    db = SessionLocal()
+    try:
+        hive_ids = [
+            row.id
+            for row in db.query(Machine).all()
+            if str(getattr(row, "os_kind", "")) == "hiveos"
+        ]
+        if not hive_ids:
+            return
+        changed = 0
+        for device in db.query(Device).filter(Device.machine_id.in_(hive_ids), Device.kind == "gpu").all():
+            if device.integrated or not device.present or not device.enabled_for_mining:
+                continue
+            if not device.boost_pool:
+                device.boost_pool = True
+                changed += 1
+        if changed:
+            db.commit()
+    finally:
+        db.close()
 
 
 def _migrate_device_occupied_external_column():

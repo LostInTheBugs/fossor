@@ -23,6 +23,7 @@ from app.routers.ssh import router as ssh_router
 from app.routers.notifications import router as notifications_router
 from app.routers.miners import router as miners_router
 from app.routers.psu import router as psu_router
+from app.routers.boost import router as boost_router
 from app.routers.campaigns import router as campaigns_router
 from app.routers.ui import router as ui_router
 from app.routers.health import router as health_router
@@ -79,6 +80,7 @@ app.include_router(notifications_router)
 app.include_router(miners_router)
 app.include_router(psu_router)
 app.include_router(campaigns_router)
+app.include_router(boost_router)
 app.include_router(ui_router)
 app.include_router(health_router)
 app.include_router(pve_router)
@@ -193,6 +195,9 @@ async def startup():
     # §4.7 : planificateur des campagnes (même processus, une seule boucle).
     from app import campaign_runner
     campaign_runner.start()
+    # §10.3 : planificateur du mode boost (même processus).
+    from app import boost_runner
+    boost_runner.start()
     # Préprod : niveau de journalisation choisi en Configuration → Journal,
     # puis une sauvegarde au démarrage et toutes les six heures.
     from app import observability
