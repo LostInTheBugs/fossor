@@ -224,6 +224,9 @@ def profile_unit_seen(profile: Any, stdout: str = "") -> bool:
     })
     marker = f"fossor-miner-{M.slug(profile.name)}"
     text = stdout or ""
+    # Le chemin du binaire reste un signal (watchdog : unité vue) ; c'est
+    # ``active_profiles`` qui écarte un profil dont les devices vivent ailleurs
+    # (2026.11.023).
     return bool(
         (binary and binary in text)
         or M.unit_name({"name": profile.name}) in text
@@ -258,7 +261,21 @@ def active_profiles(db, machine: Any, stdout: str = "") -> list[Any]:
         if token and device.enabled_for_mining:
             take(db.get(MinerProfile, int(token)))
     for profile in db.query(MinerProfile).filter(MinerProfile.enabled == True).all():  # noqa: E712
-        if profile.id not in seen and profile_unit_seen(profile, stdout):
+        if profile.id in seen or not profile_unit_seen(profile, stdout):
+            continue
+        # 2026.11.023 : une unité vue ne suffit pas — un profil dont les devices
+        # vivent sur une autre machine (Athlon Pearl vu dans le ``ps`` du Ryzen,
+        # même binaire SRBMiner) n'a rien à faire ici.
+        elsewhere = (
+            db.query(Device)
+            .filter(
+                Device.default_token_id == profile.id,
+                Device.machine_id != machine.id,
+                Device.present == True,  # noqa: E712
+            )
+            .count()
+        )
+        if not elsewhere:
             take(profile)
     return found
 
@@ -798,13 +815,12 @@ async def collect_machine(machine_id: int) -> dict[str, Any]:
             for profile in profiles:
                 api = None
                 api_error = None
-                if profile.api_port:
+                owned = profile_devices(db, machine, profile)
+                if owned and profile.api_port:
                     api, api_error = await _fetch_miner_api(
                         machine, int(profile.api_port), profile.api_kind or ""
                     )
-                entry = _merge_profile_stats(
-                    stats, profile, api, profile_devices(db, machine, profile)
-                )
+                entry = _merge_profile_stats(stats, profile, api, owned)
                 entry["api_error"] = api_error if api is None else None
                 profile_rows.append(entry)
                 if entry.get("accepted") is not None:
@@ -897,6 +913,12 @@ async def collect_machine(machine_id: int) -> dict[str, Any]:
                 "rejected": stats.get("rejected"),
                 "api_error": stats.get("api_error"),
             })
+        # 2026.11.023 — un seul verdict pour la santé, comme pour un profil
+        # unique : l'API d'un mineur ne compte que si la collecte n'a **aucun**
+        # hashrate.  Un GPU qui remonte par ses logs n'est pas « mineur
+        # injoignable » parce qu'un profil étranger a un port fermé.
+        if stats.get("total_hashrate_hs") is not None:
+            stats["api_error"] = None
         stats["profiles"] = profile_rows
         set_external_miners(machine, stats.get("miners") or [])
         # Diagnostic 2026.11.003-c8 : la collecte brute porte aussi la sonde CPU
