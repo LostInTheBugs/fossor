@@ -61,8 +61,14 @@ async def test_configuration_watchdog_reglages_et_defauts(e2e_server):
         # Effet réel : le seuil enregistré est relu par l'API.
         await page.fill("#wdHashPct", "55")
         await page.click("#wdSave")
+        # Attendre la **valeur** et non le libellé : « enregistré » reste affiché
+        # du clic précédent, la lecture partait avant le PUT (passage instable).
         await page.wait_for_function(
-            "document.querySelector('#wdState').textContent === 'enregistré'",
+            """async () => {
+                const res = await fetch('/api/watchdog', {credentials: 'include'});
+                const data = await res.json();
+                return data.config.rules.hashrate_low.pct === 55;
+            }""",
             timeout=10000)
         saved = await page.evaluate(
             "fetch('/api/watchdog',{credentials:'include'}).then(r=>r.json())")
@@ -72,7 +78,11 @@ async def test_configuration_watchdog_reglages_et_defauts(e2e_server):
         await page.fill("#wdHashPct", "50")
         await page.click("#wdSave")
         await page.wait_for_function(
-            "document.querySelector('#wdState').textContent === 'enregistré'",
+            """async () => {
+                const res = await fetch('/api/watchdog', {credentials: 'include'});
+                const data = await res.json();
+                return data.config.rules.hashrate_low.pct === 50;
+            }""",
             timeout=10000)
         restored = await page.evaluate(
             "fetch('/api/watchdog',{credentials:'include'}).then(r=>r.json())")
