@@ -1,6 +1,22 @@
 # Changelog
 
-## 2026.11.020 (en cours)
+## 2026.11.020 — 2026-11-21
+
+### Analyse des tokens
+
+- **Sous-onglets** : la page d'analyse est découpée en sous-onglets (import, tokens, historique) ; l'import ne partage plus l'écran avec la lecture des verdicts.
+- **Fiche du token** : chaque token a sa fiche — verdict retenu, grille critère par critère, avertissements de cohérence et historique complet.
+- **`reason` obligatoire** : un verdict sans justification est refusé à l'enregistrement ; la grille seule ne suffit plus.
+- **Avertissements de cohérence** : les contradictions entre verdict, grille, contre-arguments et historique sont affichées sur la fiche, jamais bloquantes.
+
+### Veille
+
+- **Tick borné** : 15 minutes de recherche au plus, puis dépôt de l'analyse avec ce qui a été trouvé.
+- **Identifiant stable** : un seul UUID du POST à l'état final, plus de nouvel identifiant à chaque écriture.
+- **Compteurs réels** : analyses, candidats et propositions du tick sont comptés depuis le dépôt, plus depuis une valeur par défaut.
+- **Journal des appels Hermes** : méthode, chemin et code de chaque requête reçue, dans l'écran de veille.
+- **`interrupted` au démarrage** : un tick resté « en cours » est marqué interrompu au démarrage du service, au lieu de laisser la veille bloquée.
+- **Verrou libéré** en fin de tick, y compris en cas d'erreur.
 
 ### Durcissement TLS des ASIC
 
@@ -22,14 +38,6 @@
 - `README.md` à jour (version, arborescence réelle, installation, sécurité), `LICENSE` MIT (LostInTheBugs, 2026).
 - **e2e `#vmDestroy`** : la liste des VM était rendue deux fois par `loadSpec()` ; le second rendu remplaçait `#vmConfirm` après le `fill` du test. Un seul rendu désormais.
 - **Registre des wallets** : règle de consignation immédiate dans `~/mining-wallets/REGISTRE.md` (mode 600) ; inventaire créé sur le Ryzen.
-
-## 2026.11.019 — 2026-11-21
-
-- **Tick de veille borné** : 15 minutes de recherche au plus, puis dépôt de l'analyse avec ce qui a été trouvé.
-- **Identifiant stable** : un seul UUID du POST à l'état final, plus de nouvel identifiant à chaque écriture.
-- **Compteurs réels** : analyses, candidats et propositions du tick sont comptés depuis le dépôt, plus depuis une valeur par défaut.
-- **Journal des appels Hermes** : méthode, chemin et code de chaque requête reçue, dans l'écran de veille.
-- **Verrou libéré** en fin de tick, y compris en cas d'erreur.
 
 ## 2026.11.018 — 2026-11-21
 
