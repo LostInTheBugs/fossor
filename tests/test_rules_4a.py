@@ -107,13 +107,14 @@ def proposal_body(device, profile, **overrides):
 
 # ── Schémas et règles par défaut ──────────────────────────────────────
 def test_default_rules_match_spec_table():
-    assert len(R.RULE_SPECS) == 13
+    assert len(R.RULE_SPECS) == 14
     assert {spec["id"] for spec in R.RULE_SPECS} == {
         "freshness",
         "exclude_asic_only",
         "cpu_only_vm",
         "criteria",
         "auto_launch",
+        "boost_launch",
         "gpu_duration",
         "cpu_duration",
         "parallel_cpu_gpu",
@@ -124,6 +125,9 @@ def test_default_rules_match_spec_table():
         "watch_cadence",
     }
     assert R.RULE_BY_ID["auto_launch"]["enabled"] is False
+    # §10.3 : la règle « Boost au lancement » est livrée désactivée.
+    assert R.RULE_BY_ID["boost_launch"]["enabled"] is False
+    assert R.default_params("boost_launch")["default_hours"] == 6.0
     assert R.default_params("freshness") == {
         "min_hours": 0,
         "max_hours": 72,
@@ -155,9 +159,9 @@ def test_invalid_params_rejected_with_field_name():
 def test_seed_rules_is_idempotent():
     db = SessionLocal()
     try:
-        assert db.query(Rule).count() == 13
+        assert db.query(Rule).count() == 14
         assert R.seed_rules(db) == 0
-        assert db.query(Rule).count() == 13
+        assert db.query(Rule).count() == 14
     finally:
         db.close()
 
