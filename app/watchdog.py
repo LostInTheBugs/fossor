@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -32,6 +33,10 @@ logger = logging.getLogger(__name__)
 
 SETTING_KEY = "watchdog_config"
 CONFIRM_WORD = "VALIDER"
+
+#: Un nom de VM est un identifiant, jamais du texte libre : ``virsh``
+#: reçoit ce nom tel quel dans une ligne de commande SSH.
+_SAFE_VM_NAME = re.compile(r"^fossor-[A-Za-z0-9._-]+$")
 
 RULE_NAMES = ("hashrate_low", "no_shares", "temperature", "miner_absent", "unreachable")
 ACTION_NAMES = ("notify", "restart_miner", "restart_vm", "reboot", "power_cycle")
@@ -85,7 +90,11 @@ def _merge(base: dict[str, Any], override: Any) -> dict[str, Any]:
     for key, value in override.items():
         if key not in result:
             continue
-        if isinstance(result[key], dict) and isinstance(value, dict):
+        if key == "machines" and isinstance(value, dict):
+            # Surcharges indexées par identifiant de machine : la fusion
+            # récursive les écarterait (clés absentes des défauts).
+            result[key] = _copy(value)
+        elif isinstance(result[key], dict) and isinstance(value, dict):
             result[key] = _merge(result[key], value)
         elif isinstance(result[key], bool):
             result[key] = bool(value)
@@ -475,6 +484,8 @@ async def _restart_vm(db: Any, machine: Any, *, simulated: bool, runner: Any = N
         return {"ok": False, "detail": "hôte de la VM introuvable"}
     if not str(spec.name).startswith("fossor-"):
         return {"ok": False, "detail": "VM non possédée par Fossor : refus"}
+    if not _SAFE_VM_NAME.fullmatch(str(spec.name)):
+        return {"ok": False, "detail": "nom de VM non conforme : refus"}
     if spec.hypervisor == "pve" and spec.vmid:
         command = f"qm reboot {int(spec.vmid)}"
     else:
@@ -696,6 +707,9 @@ async def _apply_rule(db: Any, machine: Any, device: Any, rule: str, *, active: 
             str(outcome.get("detail", "")))
     if action in COUNTED_ACTIONS:
         state.stage = int(state.stage or 0) + 1
+    if action in COUNTED_ACTIONS or action == "notify":
+        # Une notification aussi est espacée du délai d'escalade : sans
+        # cela, un mineur externe en défaut notifie à chaque collecte.
         state.last_action_at = _iso(moment)
     db.commit()
     events.append({"rule": rule, "action": action, "result": result, "machine_id": machine.id})
@@ -722,11 +736,15 @@ async def evaluate_machine(db: Any, machine: Any, *, now: datetime | None = None
         online, error = _online_from_db(db, machine, moment)
 
     if not online:
-        await _apply_rule(db, machine, None, "unreachable", active=True, measure=error,
-                          minutes=int(config["rules"]["unreachable"]["minutes"]),
-                          config=config, moment=moment, stdout=stdout, runner=runner, events=events)
+        if config["rules"]["unreachable"]["enabled"]:
+            await _apply_rule(db, machine, None, "unreachable", active=True, measure=error,
+                              minutes=int(config["rules"]["unreachable"]["minutes"]),
+                              config=config, moment=moment, stdout=stdout, runner=runner,
+                              events=events)
         db.commit()
         return events
+    # Machine de nouveau joignable : le délai « injoignable » repart de zéro.
+    _drop(db, _state(db, machine.id, 0, "unreachable"))
 
     # Shares : compteur cumulé de la machine, lu dans machine_status.
     status = (
@@ -735,6 +753,8 @@ async def evaluate_machine(db: Any, machine: Any, *, now: datetime | None = None
         .first()
     ) if machine.uuid else None
     accepted = getattr(status, "accepted", None) if status is not None else None
+    if not config["rules"]["no_shares"]["enabled"]:
+        accepted = None
     state = _state(db, machine.id, 0, "no_shares")
     if accepted is None:
         _drop(db, state)
