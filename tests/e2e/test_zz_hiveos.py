@@ -178,25 +178,12 @@ async def test_hiveos_screen_and_campaign(e2e_server):
 
         campaign_id = await page.evaluate(
             """async (payload) => {
-                const post = async (url, body) => {
-                    const res = await fetch(url, {
-                        method: 'POST', headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify(body || {})
-                    });
-                    if (!res.ok) throw new Error(url + ' ' + res.status + ' ' + await res.text());
-                    return await res.json();
-                };
-                // `defer_newest_proposed_campaign` a repoussé `start_at` avant
-                // l'approbation : le planificateur ne peut pas prendre la
-                // campagne, le POST /start est donc le seul à la démarrer.
-                const created = await post('/api/campaigns', payload);
-                const started = await fetch('/api/campaigns/' + created.id + '/start', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'
+                const res = await fetch('/api/campaigns', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
                 });
-                if (!started.ok) {
-                    throw new Error('start ' + started.status + ' ' + await started.text());
-                }
-                return created.id;
+                if (!res.ok) throw new Error('campaign ' + res.status + ' ' + await res.text());
+                return (await res.json()).id;
             }""",
             {
                 "coin": "FAKE",
@@ -205,12 +192,22 @@ async def test_hiveos_screen_and_campaign(e2e_server):
                 "devices": [{"machine_id": full_id, "device_uuid": u} for u in uuids],
             },
         )
-        # Course planificateur : `start_at` repoussé avant l'approbation.
+        # `start_at` repoussé **avant** l'approbation : le planificateur ne peut
+        # pas prendre la campagne, le POST /start est donc le seul à démarrer.
         defer_newest_proposed_campaign(60)
         await page.evaluate(
             """async (id) => {
                 const res = await fetch('/api/campaigns/' + id + '/approve', {method: 'POST'});
-                if (!res.ok) { throw new Error('approve ' + res.status); }
+                if (!res.ok) { throw new Error('approve ' + res.status + ' ' + await res.text()); }
+            }""",
+            campaign_id,
+        )
+        await page.evaluate(
+            """async (id) => {
+                const res = await fetch('/api/campaigns/' + id + '/start', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'
+                });
+                if (!res.ok) { throw new Error('start ' + res.status + ' ' + await res.text()); }
             }""",
             campaign_id,
         )
