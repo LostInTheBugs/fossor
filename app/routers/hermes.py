@@ -323,23 +323,28 @@ async def post_proposal(
         facts = dict(payload.candidate.model_dump() if payload.candidate else {})
         facts.update(payload.boost.get("facts") or {})
         plan_boost = R.plan_boost(db, facts, simulated)
-        try:
-            boost_row = BR.create(db, boost_payload, origin="hermes")
-        except B.BoostError as exc:
-            boost_brief = {"created": False, "reason": f"boost non proposé : {exc}"}
+        if not plan_boost["allowed"]:
+            boost_brief = {"created": False, "reason": plan_boost["reason"]}
         else:
-            BR.log_event(db, boost_row, "proposal", f"proposition Hermes : boost {boost_row.coin}")
-            db.commit()
-            if plan_boost["launch"] and not simulated:
-                await BR.start_boost(db, boost_row, simulated=False)
-            db.refresh(boost_row)
-            boost_brief = {
-                "created": True,
-                "id": boost_row.id,
-                "status": boost_row.status,
-                "coin": boost_row.coin,
-                "rule": plan_boost,
-            }
+            try:
+                boost_row = BR.create(
+                    db, boost_payload, origin="hermes", proposed=not plan_boost["launch"]
+                )
+            except B.BoostError as exc:
+                boost_brief = {"created": False, "reason": f"boost non proposé : {exc}"}
+            else:
+                BR.log_event(db, boost_row, "proposal", f"proposition Hermes : boost {boost_row.coin}")
+                db.commit()
+                if plan_boost["launch"] and not simulated:
+                    await BR.start_boost(db, boost_row, simulated=False)
+                db.refresh(boost_row)
+                boost_brief = {
+                    "created": True,
+                    "id": boost_row.id,
+                    "status": boost_row.status,
+                    "coin": boost_row.coin,
+                    "rule": plan_boost,
+                }
     message = "Proposition déposée : elle attend l'approbation de Fred."
     if started:
         message = "Campagne lancée automatiquement (règle auto_launch)."

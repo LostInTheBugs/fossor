@@ -189,6 +189,17 @@ class BoostSelectionError(B.BoostError):
     """Sélection partielle d'un rig HiveOS — refus 409."""
 
 
+def cpu_thread_pct(db: Any) -> int:
+    """Part des threads CPU mobilisée par un boost (réglage, 100 % par défaut)."""
+    from app.ai_config import get_setting
+
+    try:
+        pct = int(float(get_setting(db, "boost_cpu_thread_pct", 100)))
+    except (TypeError, ValueError):
+        pct = 100
+    return max(1, min(100, pct))
+
+
 def targets_from_rows(db: Any, rows: list[dict[str, Any]]) -> list[Target]:
     machines = _machine_rows(db)
     by_machine: dict[int, Target] = {}
@@ -206,7 +217,8 @@ def targets_from_rows(db: Any, rows: list[dict[str, Any]]) -> list[Target]:
             target.gpus.append(int(row["index"]))
         elif row["kind"] == "cpu":
             device = db.query(Device).filter(Device.uuid == row["uuid"]).first()
-            target.threads = max(1, int(getattr(device, "threads", None) or 1))
+            total = max(1, int(getattr(device, "threads", None) or 1))
+            target.threads = max(1, round(total * cpu_thread_pct(db) / 100))
     return list(by_machine.values())
 
 
@@ -314,7 +326,7 @@ def preview(db: Any, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 # ── Création ──────────────────────────────────────────────────────────
-def create(db: Any, payload: dict[str, Any], *, origin: str = "manual") -> Any:
+def create(db: Any, payload: dict[str, Any], *, origin: str = "manual", proposed: bool = False) -> Any:
     selection = resolve_selection(db, payload)
     campaign = None
     campaign_id = payload.get("campaign_id")
@@ -322,7 +334,8 @@ def create(db: Any, payload: dict[str, Any], *, origin: str = "manual") -> Any:
         campaign = db.get(Campaign, int(campaign_id))
         if campaign is None:
             raise B.BoostError(f"campagne #{campaign_id} introuvable")
-        if campaign.status not in ("running", "approved"):
+        allowed = ("running", "approved") + (("proposed",) if proposed else ())
+        if campaign.status not in allowed:
             raise B.BoostError(
                 f"campagne {campaign.status} : un boost ne part que d'une campagne running ou approved"
             )
@@ -346,7 +359,7 @@ def create(db: Any, payload: dict[str, Any], *, origin: str = "manual") -> Any:
         campaign_id=campaign.id if campaign else None,
         coin=coin,
         profile_id=campaign.profile_id if campaign else payload.get("profile_id"),
-        status="approved",
+        status="proposed" if proposed else "approved",
         origin=origin,
         scope=selection["scope"],
         proportion=int(selection["proportion"] or 100),
