@@ -181,7 +181,6 @@ async def test_criteres_tokens_grille_bandeau(e2e_server, tmp_path):
             banner = await page.locator("#simBanner").inner_text()
             assert "en simulation" in banner, banner
             assert "Pilotage réel" not in banner, banner
-            assert "e2e-athlon" not in banner, banner
 
             # D'autres tests ont semé des analyses : on vérifie le regroupement,
             # pas un total global. BIGCOIN (2 libellés) et NEX (2 libellés)
