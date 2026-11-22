@@ -341,6 +341,14 @@ const machineUsage=id=>{
   if(gpu)return 'gpu';
   return 'none';
 };
+// 025 : une seule source d'occupation, le même `occupied_by` que Campagnes.
+const occChip=(d)=>{
+  if(d.occupied_by==='fossor_default')return ' · <span class="chip on" style="font-size:8px">🛠️ Mineur Fossor (token par défaut)</span>';
+  if(d.occupied_by==='fossor_campaign')return ' · <span class="chip on" style="font-size:8px">Campagne #'+(d.occupied_campaign_id||'?')+' (Fossor)</span>';
+  if(d.occupied_by==='hiveos')return ' · <span class="chip" style="font-size:8px">HiveOS (flight sheet)</span>';
+  if(d.occupied_external)return ' · <span class="chip miner" style="font-size:8px">occupé (externe)</span>';
+  return '';
+};
 const deviceRows=(m)=>{
   const devs=(DEVICES[m.id]||[]).filter(d=>!(d.integrated&&HIDE_IGPU&&!d.enabled_for_mining));
   if(!devs.length)return '<div class="empty" style="padding:8px">Aucun device détecté — cliquez « Détecter le matériel ».</div>';
@@ -348,12 +356,12 @@ const deviceRows=(m)=>{
     const isCpu=d.kind==='cpu';
     const masked=!!d.integrated&&HIDE_IGPU;
     const details=isCpu
-      ?`${d.cores||'?'} cœurs / ${d.threads||'?'} threads · ${d.ram_mb||'?'} Mo RAM${d.flags?' · '+d.flags:''}${d.occupied_external?' · <span class="chip miner" style="font-size:8px">occupé (externe)</span>':''}`
-      :`${d.vram_mb?d.vram_mb+' Mo VRAM':'VRAM inconnue'}${d.driver?' · pilote '+d.driver:''}${d.occupied_external?' · <span class="chip miner" style="font-size:8px">occupé (externe)</span>':''}`;
+      ?`${d.cores||'?'} cœurs / ${d.threads||'?'} threads · ${d.ram_mb||'?'} Mo RAM${d.flags?' · '+d.flags:''}${occChip(d)}`
+      :`${d.vram_mb?d.vram_mb+' Mo VRAM':'VRAM inconnue'}${d.driver?' · pilote '+d.driver:''}${occChip(d)}`;
     return `<tr class="${d.present?'':'absent'}${masked?' igpu-masked':''}">
       <td><span class="chip ${isCpu?'cpu':'gpu'}">${isCpu?'CPU':'GPU'}</span></td>
       <td><b>${d.model||'inconnu'}</b>${d.integrated?` <span class="chip off" title="GPU intégré au CPU / à la carte mère — jamais miné par défaut">${masked?'intégré, masqué':'intégré'}</span>`:''}${d.present?'':' <span class="chip off">absent</span>'}</td>
-      <td class="mono">${details}${d.hashrate_hs!=null?' · hashrate '+devHs(d.hashrate_hs):''}</td>
+      <td class="mono">${details}${d.hashrate_hs!=null?' · hashrate '+devHs(d.hashrate_hs):(isCpu?' · hashrate inconnu':'')}</td>
       <td class="mono">${d.pci_bus||'—'}</td>
       <td>${masked?'<span class="mono">—</span>':`<input type="checkbox" class="dev-check" ${d.enabled_for_mining?'checked':''} ${d.present?'':'disabled'} onchange="toggleDevice(${d.id},${m.id},this.checked)" title="Miner avec ce device">`}</td>
       <td>${masked?'<span class="mono">—</span>':`<select onchange="setDeviceRole(${d.id},this.value)" title="Rôle vis-à-vis du token par défaut et du spec mining">
@@ -555,6 +563,7 @@ const detailRow=(m)=>{
       </label>
       <button class="btn sm outline" onclick="showRawCollect(${m.id})" title="Sortie brute de la dernière collecte, masquée (administrateur)">📄 Dernière collecte brute</button>
     </div>
+    ${m.api_error?`<div class="miner-alert" data-api-error="1">⚠️ API du mineur : ${m.api_error}</div>`:''}
     ${minerAlertHTML(m)}
     ${cpuLineHTML(m)}
     ${extraHtml}

@@ -535,6 +535,11 @@ async def _enrich_cpu_state(db, machine, raw_stdout: str, stats: dict[str, Any])
 
     miners = stats.get("miners") or []
     attach_cpu_hashrates(miners, probes, report)
+    # 025 : un hashrate sans source CPU (nœud BigCoin, total du GPU) n'est pas
+    # un hashrate CPU.  Il reste inconnu plutôt que d'être attribué au CPU.
+    for miner in miners:
+        if str(miner.get("hashrate_note") or "").startswith("hashrate CPU inconnu"):
+            miner["hashrate_hs"] = None
     cpu_miners = [m for m in miners if str(m.get("kind") or "") in ("cpu", "solo")]
 
     cputemp = _hive_cputemp(sections["HIVE_STAT"])
@@ -801,7 +806,7 @@ async def collect_machine(machine_id: int) -> dict[str, Any]:
         from app.devices import mark_external_devices, set_external_miners
 
         miners = stats.get("miners") or []
-        set_external_miners(machine, miners)
+        set_external_miners(machine, miners, db=db)
         db.commit()
         # §4.2: first collection of a machine without devices → detect once,
         # so this round's GPU metrics attach by PCI bus instead of NULL.
@@ -920,7 +925,7 @@ async def collect_machine(machine_id: int) -> dict[str, Any]:
         if stats.get("total_hashrate_hs") is not None:
             stats["api_error"] = None
         stats["profiles"] = profile_rows
-        set_external_miners(machine, stats.get("miners") or [])
+        set_external_miners(machine, stats.get("miners") or [], db=db)
         # Diagnostic 2026.11.003-c8 : la collecte brute porte aussi la sonde CPU
         # (masquée), en tête pour survivre à la troncature de mask_raw_collect.
         combined = raw.get("stdout", "")

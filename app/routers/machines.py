@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db, SessionLocal
 from app.dependencies import require_login
-from app.models import Machine, Device, AuditLog
+from app.models import Machine, Device, AuditLog, MachineStatus
 from app.os_presets import apply_preset, compare_os, os_label, preset_fields, public_presets
 from app.validation import validate_machine_payload
 
@@ -80,8 +80,21 @@ def list_machines(db: Session = Depends(get_db), _user=Depends(require_login)):
 
     machines = db.query(Machine).filter(Machine.enabled != False).all()
     out = []
+    from app.devices import filter_external_miners
+
     for machine in machines:
         data = _mask_secret(machine)
+        # 025 : même source que /api/metrics/live et /api/health — la valeur
+        # stockée du dernier relevé, jamais une copie faite par l'écran.
+        status = (
+            db.query(MachineStatus)
+            .filter(MachineStatus.machine_uuid == machine.uuid)
+            .first()
+        )
+        data["api_error"] = status.api_error if status else None
+        data["external_miners"] = filter_external_miners(
+            db, machine, data["external_miners"]
+        )
         data["simulation_disabled"] = pilotage.machine_armed(machine)
         data["pilotage"] = pilotage.label(db, machine)
         data["pilotable"] = not pilotage.is_asic(machine)
@@ -373,9 +386,12 @@ def list_machine_devices(
     from app.models import Metric
 
     for item in out:
+        # 025 : le dernier relevé fait foi, même s'il ne porte pas de hashrate.
+        # Filtrer `isnot(None)` faisait réapparaître à vie l'ancien 216 TH/s du
+        # CPU, écrit par une collecte qui l'avait pris sur le GPU.
         row = (
             db.query(Metric.hashrate_hs)
-            .filter(Metric.device_uuid == item["uuid"], Metric.hashrate_hs.isnot(None))
+            .filter(Metric.device_uuid == item["uuid"])
             .order_by(Metric.id.desc())
             .first()
         )

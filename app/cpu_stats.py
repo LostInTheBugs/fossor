@@ -1335,6 +1335,10 @@ def cpu_state_with(
         value = miner.get("hashrate_hs")
         if not isinstance(value, (int, float)) or value <= 0:
             continue
+        # 025 : la note dit que la mesure CPU est inconnue — ne jamais sommer
+        # un total de GPU (le Ryzen portait 216 TH/s sur son CPU).
+        if str(miner.get("hashrate_note") or "").startswith("hashrate CPU inconnu"):
+            continue
         label = str(miner.get("coin") or miner.get("name") or "CPU").upper()
         if label not in groups:
             groups[label] = 0.0
@@ -1352,7 +1356,11 @@ def cpu_state_with(
         {
             "name": miner.get("name") or "",
             "coin": miner.get("coin") or "",
-            "hashrate_hs": miner.get("hashrate_hs"),
+            "hashrate_hs": (
+                None
+                if str(miner.get("hashrate_note") or "").startswith("hashrate CPU inconnu")
+                else miner.get("hashrate_hs")
+            ),
             "threads": miner.get("threads") or "",
             "source": miner.get("hashrate_source") or "",
             "note": miner.get("hashrate_note") or "",

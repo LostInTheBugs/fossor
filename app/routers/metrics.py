@@ -14,14 +14,17 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_login
 from app.models import Device, Machine, MachineStatus, Metric
+from app.devices import occupancy
 from app.stats_parser import format_hashrate
 
 router = APIRouter(prefix="/api/metrics", tags=["metrics"])
 
 
-def _external_miners(machine) -> list[dict]:
+def _external_miners(db, machine) -> list[dict]:
     """Last external miners seen on *machine* (JSON column, masked)."""
     import json
+
+    from app.devices import filter_external_miners
 
     raw = getattr(machine, "external_miners", None)
     if not raw:
@@ -30,7 +33,7 @@ def _external_miners(machine) -> list[dict]:
         value = json.loads(raw)
     except (TypeError, ValueError):
         return []
-    return value if isinstance(value, list) else []
+    return filter_external_miners(db, machine, value if isinstance(value, list) else [])
 
 
 def _coin_groups(miners: list[dict], coin: str, algo: str,
@@ -170,6 +173,8 @@ def metrics_live(
                 "integrated": device.integrated,
                 "enabled_for_mining": device.enabled_for_mining,
                 "occupied_external": bool(getattr(device, "occupied_external", False)),
+                # 025 : même occupation que Campagnes (`occupied_by`).
+                **occupancy(device),
                 **(cpu_extra if device.kind == "cpu" else {}),
                 **metric,
             })
@@ -183,7 +188,7 @@ def metrics_live(
             values = [d["power_w"] for d in device_rows if d["power_w"]]
             total_w = sum(values) if values else None
 
-        miners = _external_miners(machine)
+        miners = _external_miners(db, machine)
         # §4.20 : un ASIC n'a pas de device ; son état vit dans asic_json et
         # alimente directement les totaux par coin (BTC, KAS).
         asic_state = None

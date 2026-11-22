@@ -354,6 +354,7 @@ def occupancy(device: Device) -> dict[str, Any]:
     return {
         "occupied_by": by,
         "occupied_label": label,
+        "occupied_campaign_id": campaign_id,
         "occupied_external": by == OCCUPIED_EXTERNAL,
         "releasable": by in (
             OCCUPIED_FOSSOR_DEFAULT,
@@ -363,13 +364,47 @@ def occupancy(device: Device) -> dict[str, Any]:
     }
 
 
-def set_external_miners(machine: Machine, entries: list[dict[str, Any]]) -> None:
+def filter_external_miners(
+    db: Session, machine: Machine, entries: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Mineurs réellement externes : jamais une unité Fossor.
+
+    Le filtre s'applique aussi à la **lecture** : une valeur stockée par une
+    collecte antérieure, ou un ``ps`` qui mélange le nœud BigCoin et l'unité
+    Pearl, ne peut pas faire réapparaître un mineur Fossor comme « externe ».
+    """
+    ports: set[int] = set()
+    for profile in _profiles_here(db, machine):
+        try:
+            if profile.api_port:
+                ports.add(int(profile.api_port))
+        except (TypeError, ValueError):
+            continue
+    kept: list[dict[str, Any]] = []
+    for entry in entries or []:
+        if is_fossor_process(entry):
+            continue
+        try:
+            port = int(entry.get("api_port")) if entry.get("api_port") else None
+        except (TypeError, ValueError):
+            port = None
+        if port is not None and port in ports:
+            continue  # port de l'API d'un profil Fossor de cette machine
+        kept.append(entry)
+    return kept
+
+
+def set_external_miners(
+    machine: Machine, entries: list[dict[str, Any]], db: Session | None = None
+) -> None:
     """Persist the last **external** miners seen on *machine*.
 
     Une unité Fossor n'est pas un mineur externe (023-bis) ; sur HiveOS, le
     mineur du flight sheet est piloté par ``miner stop/start`` et ne l'est pas
     non plus.
     """
+    if db is not None:
+        entries = filter_external_miners(db, machine, entries)
     hiveos = str(getattr(machine, "os_kind", "") or "") == "hiveos"
     kept: list[dict[str, Any]] = []
     for entry in entries or []:
