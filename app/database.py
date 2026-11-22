@@ -190,9 +190,70 @@ def _seed_rules():
         db.close()
 
 
+def _ensure_model_columns():
+    """Ajoute à la base SQLite toute colonne du modèle qui lui manque.
+
+    Filet de sécurité placé avant les migrations de données de ``init_db`` :
+    celles-ci interrogent le modèle complet (colonnes de la version courante
+    comprises) et la moindre colonne ajoutée plus loin dans la liste faisait
+    échouer le démarrage sur une base de la version précédente —
+    ``no such column: devices.occupied_by`` en 2026.11.023 — alors que les
+    tests partent d'une base créée par ``create_all``, donc toujours à jour.
+
+    Les colonnes ``NOT NULL`` sans valeur par défaut restent du ressort des
+    migrations explicites : SQLite ne sait pas les ajouter à une table peuplée.
+    """
+    import sqlite3
+
+    db_url = _get_db_url()
+    if not db_url.startswith("sqlite"):
+        return
+    db_path = db_url.replace("sqlite:///", "").replace("sqlite://", "")
+    if not os.path.exists(db_path):
+        return
+    conn = sqlite3.connect(db_path)
+    try:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        for table in Base.metadata.sorted_tables:
+            if table.name not in tables:
+                continue
+            have = {
+                row[1]
+                for row in conn.execute(f'PRAGMA table_info("{table.name}")').fetchall()
+            }
+            for column in table.columns:
+                if column.name in have:
+                    continue
+                suffix = ""
+                default = getattr(column.server_default, "arg", None)
+                if default is not None:
+                    suffix = f" NOT NULL DEFAULT {default}"
+                elif not column.nullable:
+                    continue
+                type_sql = column.type.compile(dialect=engine.dialect)
+                conn.execute(
+                    f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {type_sql}{suffix}'
+                )
+        conn.commit()
+    except sqlite3.OperationalError as exc:
+        # Bases en lecture seule (ou verrouillées) : message explicite plutôt
+        # qu'une erreur SQL perdue dans une requête ORM plus loin.
+        raise RuntimeError(f"schéma SQLite non migrable ({db_path}) : {exc}") from exc
+    finally:
+        conn.close()
+
+
 def init_db():
     _migrate_asic_login()
     Base.metadata.create_all(bind=engine)
+    # Avant la première requête ORM : les migrations de données qui suivent
+    # interrogent le modèle complet, colonnes de la version courante comprises.
+    _ensure_model_columns()
     _ensure_admin()
     _seed_rules()
     _migrate_auto_launch_defaults()
