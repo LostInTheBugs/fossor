@@ -364,6 +364,17 @@ def occupancy(device: Device) -> dict[str, Any]:
     }
 
 
+def _profile_algo(coin: str) -> str:
+    """Algorithme du coin selon le catalogue intégré (``PRL`` → ``pearlhash``)."""
+    from app.coins import BASE_COINS
+
+    ticker = (coin or "").strip().upper()
+    for entry in BASE_COINS:
+        if str(entry.get("ticker") or "").upper() == ticker:
+            return str(entry.get("algo") or "").strip().lower()
+    return ""
+
+
 def filter_external_miners(
     db: Session, machine: Machine, entries: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -373,9 +384,19 @@ def filter_external_miners(
     collecte antérieure, ou un ``ps`` qui mélange le nœud BigCoin et l'unité
     Pearl, ne peut pas faire réapparaître un mineur Fossor comme « externe ».
     """
+    from app.coins import pool_host
+
+    profiles = _profiles_here(db, machine)
+    if not profiles:
+        # 2026.11.026 : sans profil Fossor sur cette machine, aucune entrée
+        # n'est l'unité d'un profil ; rien n'est écarté (le marqueur du
+        # binaire /opt/fossor reste la seule signature réelle, traité plus haut).
+        return [entry for entry in (entries or []) if not is_fossor_process(entry)]
     ports: set[int] = set()
     softwares: set[str] = set()
-    for profile in _profiles_here(db, machine):
+    pools: set[str] = set()
+    algos: set[str] = set()
+    for profile in profiles:
         try:
             if profile.api_port:
                 ports.add(int(profile.api_port))
@@ -384,6 +405,13 @@ def filter_external_miners(
         software = str(getattr(profile, "software", "") or "").strip().lower()
         if software:
             softwares.add(software)
+        pool = str(getattr(profile, "pool", "") or "").strip().lower()
+        if pool:
+            host = pool_host(pool)
+            pools.update(value for value in (pool, host) if value)
+        algo = _profile_algo(str(getattr(profile, "coin", "") or ""))
+        if algo:
+            algos.add(algo)
     kept: list[dict[str, Any]] = []
     for entry in entries or []:
         if is_fossor_process(entry):
@@ -402,11 +430,17 @@ def filter_external_miners(
         is_profile_unit = (
             any(software in text for software in softwares) if softwares else True
         )
-        # 2026.11.026 : une entrée solo contaminée (nom du logiciel Fossor,
-        # pool ou algorithme d'un autre processus, port du profil) est le
-        # résidu de l'ancienne fusion ; elle n'est pas un vrai nœud BigCoin.
         if str(entry.get("kind") or "") == "solo":
-            contaminated = bool(entry.get("pool") or entry.get("algorithm"))
+            # 2026.11.026 : un solo n'est écarté que sur une trace **réelle**
+            # d'une unité Fossor de cette machine — port du profil, pool du
+            # profil, ou algorithme d'un *autre* coin. L'algorithme propre du
+            # nœud (yespower pour BigCoin) n'est jamais une contamination.
+            pool_text = str(entry.get("pool") or "").strip().lower()
+            algo_text = str(entry.get("algorithm") or "").strip().lower()
+            own_algo = _profile_algo(str(entry.get("coin") or ""))
+            contaminated = bool(pool_text and any(value in pool_text for value in pools))
+            if algo_text and algo_text != own_algo:
+                contaminated = contaminated or any(value in algo_text for value in algos)
             if is_profile_unit and (contaminated or (port is not None and port in ports)):
                 continue
             kept.append(entry)

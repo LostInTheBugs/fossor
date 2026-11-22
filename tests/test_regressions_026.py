@@ -63,6 +63,47 @@ def test_ps_ryzen_bigcoin_reste_un_noeud_solo(monkeypatch):
     ]
 
 
+def test_solo_bigcoin_yespower_garde_avec_un_profil_pearl(monkeypatch):
+    """Le nœud BigCoin yespower n'est jamais « contaminé » par un profil Pearl."""
+    monkeypatch.setattr(
+        devices_mod,
+        "_profiles_here",
+        lambda db, machine: [
+            SimpleNamespace(
+                software="srbminer",
+                api_port=21373,
+                coin="PRL",
+                pool="pearl-eu2.luckypool.io:3360",
+            )
+        ],
+    )
+    entry = {
+        "name": "Minage solo (nœud)",
+        "binary": "bitcoind",
+        "kind": "solo",
+        "coin": "BIG",
+        "algorithm": "yespower",
+        "pool": "",
+        "api_port": None,
+    }
+    kept = filter_external_miners(None, SimpleNamespace(id=1), [entry])
+    assert kept == [entry]
+
+
+def test_sans_profil_sur_la_machine_rien_nest_ecarte(monkeypatch):
+    """Sans profil Fossor ici, un solo porteur d'algo reste un mineur externe."""
+    monkeypatch.setattr(devices_mod, "_profiles_here", lambda db, machine: [])
+    entry = {
+        "name": "Minage solo (nœud)",
+        "binary": "bitcoind",
+        "kind": "solo",
+        "coin": "BIG",
+        "algorithm": "yespower",
+        "api_port": None,
+    }
+    assert filter_external_miners(None, SimpleNamespace(id=1), [entry]) == [entry]
+
+
 def _machine(**overrides):
     machine = {
         "collected": True,
