@@ -93,8 +93,11 @@ def test_aggregate_hours_then_days_and_idempotent():
         machine = _machine(db)
         gpu1 = _device(db, machine, "gpu", 0)
         gpu2 = _device(db, machine, "gpu", 1)
-        moment = datetime.now(timezone.utc) - timedelta(hours=72)
-        base = moment.replace(minute=0, second=0, microsecond=0)
+        # Ancre fixe : 3 jours avant maintenant, ramené à 10:00 UTC. Le point
+        # « base + 1 h » reste dans la même journée quelle que soit l'heure du
+        # passage ; à 23 h UTC il franchissait minuit et créait 2 jours.
+        moment = datetime.now(timezone.utc) - timedelta(days=3)
+        base = moment.replace(hour=10, minute=0, second=0, microsecond=0)
         for offset in (timedelta(minutes=0), timedelta(minutes=10)):
             ts = _iso(base + offset)
             db.add(Metric(machine_uuid=machine.uuid, device_uuid=gpu1.uuid, ts=ts,
@@ -143,6 +146,40 @@ def test_aggregate_hours_then_days_and_idempotent():
         before = db.query(MetricAgg).count()
         history.aggregate(db, now=datetime.now(timezone.utc))
         assert db.query(MetricAgg).count() == before
+    finally:
+        db.close()
+
+
+def test_aggregate_two_days_across_midnight_at_2330_utc():
+    """now simulé à 23:30 UTC, points de part et d'autre de minuit.
+
+    Deux buckets journaliers, pas trois : c'est le cas qui échouait quand le
+    passage tournait vers 23:25 UTC (base à 23 h, base + 1 h le lendemain).
+    """
+    db = SessionLocal()
+    try:
+        machine = _machine(db, name="rig-minuit", uuid="66666666-6666-6666-6666-666666666666")
+        now = datetime(2026, 11, 20, 23, 30, tzinfo=timezone.utc)
+        base = (now - timedelta(days=3)).replace(minute=0, second=0, microsecond=0)
+        db.add(Metric(machine_uuid=machine.uuid, ts=_iso(base), power_w=100.0))
+        db.add(Metric(machine_uuid=machine.uuid,
+                      ts=_iso(base + timedelta(hours=1, minutes=10)), power_w=200.0))
+        db.commit()
+
+        result = history.aggregate(db, now=now)
+        assert result["hour_buckets"] == 2, "une heure avant minuit, une après"
+        assert result["day_buckets"] == 2, "deux jours, pas trois"
+
+        days = (
+            db.query(MetricAgg)
+            .filter(MetricAgg.bucket == "day", MetricAgg.scope == "machine")
+            .order_by(MetricAgg.ts.asc())
+            .all()
+        )
+        midnight = base.replace(hour=0, minute=0)
+        assert [day.ts for day in days] == [_iso(midnight), _iso(midnight + timedelta(days=1))]
+        assert [day.samples for day in days] == [1, 1]
+        assert [day.power_avg_w for day in days] == [100.0, 200.0]
     finally:
         db.close()
 
