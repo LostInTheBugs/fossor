@@ -39,6 +39,13 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 .chip{display:inline-block;font-size:10px;font-weight:700;padding:2px 9px;border-radius:999px;text-transform:uppercase;letter-spacing:.3px}
 .chip.on{background:#1a3a2a;color:var(--green);border:1px solid var(--green)}
 .chip.off{background:#3a1a1a;color:var(--red);border:1px solid var(--red)}
+.st{display:inline-block;font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;text-transform:uppercase;letter-spacing:.3px;border:1px solid}
+.st.ok{background:#12271a;color:var(--green);border-color:var(--green)}
+.st.orange{background:#2b2312;color:var(--yellow);border-color:var(--yellow)}
+.st.red{background:#2b1414;color:var(--red);border-color:var(--red)}
+.psu-machine{border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:10px;background:var(--bg)}
+.psu-machine .head{display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap;margin-bottom:6px}
+.spark{width:100%;height:60px;display:block;background:var(--bg);border-radius:8px;margin-top:4px}
 </style>
   <script src="/static/nav.js" defer></script>
 </head>
@@ -181,23 +188,94 @@ function render(m) {
     ["Dernière collecte", fmtAge(m.age_s)], ["Devices remontés", (m.devices || []).length],
     ["Collecte brute", "onglet Machines → « Dernière collecte brute »"],
   ].map(([k, v]) => '<div><span class="k">' + k + '</span><span class="v">' + esc(v) + "</span></div>").join("") + "</div>";
-  $("#psu").innerHTML = '<div class="empty">Charge des alimentations : voir la fiche machine (onglet Machines).</div>';
+  // #psu est rempli par loadPower() : le suivi couvre tout le parc (025-b).
 }
 
-async function loadPower(m) {
-  if (!m || !m.id) return;
+let PSU_DATA = null;
+const fmtEur = (v) => (v == null || isNaN(v)) ? "—" : Number(v).toFixed(2) + " €";
+const fmtP1 = (v) => (v == null || isNaN(v)) ? "—" : Number(v).toFixed(1) + " %";
+const stLabel = { ok: "ok", orange: "proche limite", red: "surchargé" };
+const stChip = (s) => '<span class="st ' + esc(s || "ok") + '">' + esc(stLabel[s] || s || "") + "</span>";
+
+function spark(series, label) {
+  const points = (series || []).filter((p) => p.w !== null && p.w !== undefined);
+  if (!points.length) return '<div class="mono">Pas d\'historique DC sur ' + esc(label) + ".</div>";
+  const max = Math.max(...points.map((p) => Number(p.w)), 1);
+  const step = points.length > 1 ? 1000 / (points.length - 1) : 1000;
+  const path = points.map((p, i) => (i ? "L" : "M") + (i * step).toFixed(1) + "," +
+    (60 - (Number(p.w) / max) * 54).toFixed(1)).join(" ");
+  return '<svg class="spark" viewBox="0 0 1000 60" preserveAspectRatio="none" role="img" aria-label="Conso DC ' +
+    esc(label) + '"><path d="' + path + '" fill="none" stroke="#4f8cff" stroke-width="2"></path></svg>' +
+    '<div class="mono">' + esc(label) + " · pic " + fmtW(max) + " · " + points.length + " points</div>";
+}
+
+async function loadPower() {
+  let data;
   try {
-    const res = await fetch("/api/machines/" + m.id + "/power", { credentials: "include" });
-    if (!res.ok) return;
-    const data = await res.json();
-    const psus = data.psus || [];
-    if (!psus.length) return;
-    $("#psu").innerHTML = '<table><thead><tr><th>Alimentation</th><th style="text-align:right">Nominale</th>' +
-      '<th style="text-align:right">Charge</th><th style="text-align:right">Utilisation</th></tr></thead><tbody>' +
-      psus.map((p) => "<tr><td>" + esc(p.name || "PSU") + '</td><td class="num">' + fmtW(p.rated_w) +
-        '</td><td class="num">' + fmtW(p.load_w) + '</td><td class="num">' + fmtP(p.load_pct) + "</td></tr>").join("") +
-      "</tbody></table>";
-  } catch (err) { /* pas de panneau PSU : on garde le texte */ }
+    const res = await fetch("/api/health/power", { credentials: "include" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    data = await res.json();
+  } catch (err) {
+    $("#psu").innerHTML = '<div class="err">Suivi des alimentations indisponible : ' + esc(err.message || err) + "</div>";
+    return;
+  }
+  PSU_DATA = data;
+  const t = data.total || {};
+  const tar = data.tariff || {};
+  const peak = tar.peak;
+  const cards = [
+    ["À la prise (parc)", fmtW(t.wall_power_w)],
+    ["DC (parc)", fmtW(t.dc_power_w)],
+    ["Mesuré", fmtW(t.measured_w)],
+    ["Estimé", fmtW(t.estimated_w)],
+    ["Pire charge", fmtP1(t.worst_load_pct)],
+    ["Coût horaire", fmtEur(tar.hourly_eur)],
+    ["Coût 24 h", fmtEur(tar.daily_eur)],
+    ["Heures chères", peak ? fmtEur(peak.hourly_eur) + " / h" : "non définies"],
+  ];
+  const summary = '<div class="grid" id="psuTotal">' +
+    cards.map(([k, v]) => '<div><span class="k">' + esc(k) + '</span><span class="v">' + esc(v) + "</span></div>").join("") +
+    "</div>" +
+    '<div class="mono" id="psuTariff">' + esc(tar.label || "") + " · " +
+    esc(fmtEur(tar.price_eur_kwh) + " €/kWh" + (tar.period ? " (" + tar.period + ")" : "")) +
+    (peak ? " · heures chères " + esc(fmtEur(peak.price_eur_kwh) + " €/kWh, " + peak.count_hours + " h sur 24") : "") +
+    " · seuils " + esc(fmtP1((data.thresholds || {}).psu_warn_pct) + " / " + fmtP1((data.thresholds || {}).psu_crit_pct)) + "</div>" +
+    (t.worst_machine ? '<div class="mono">pire charge : ' + esc(t.worst_machine) + "</div>" : "");
+
+  const rows = (data.machines || []).map((m) => {
+    const psus = (m.psus || []).map((p) =>
+      '<tr data-psu-alim="' + esc(p.id) + '" data-psu-status="' + esc(p.status) + '">' +
+      "<td>" + esc(p.name) + "</td>" +
+      '<td class="num">' + fmtW(p.rated_w) + "</td>" +
+      '<td class="num">' + fmtW(p.load_dc_w) + "</td>" +
+      '<td class="num">' + fmtP1(p.load_pct) + "</td>" +
+      '<td class="num">' + fmtP1(p.efficiency_pct) + "</td>" +
+      '<td class="num">' + fmtW(p.wall_w) + "</td>" +
+      "<td>" + stChip(p.status) + "</td></tr>").join("");
+    const kind = m.kind === "asic" ? "ASIC" : "hôte";
+    const head = '<div class="head"><div><b>' + esc(m.name) + '</b> <span class="mono">' + esc(kind) +
+      (m.power_source ? " · " + esc(m.power_source) : "") + "</span></div>" +
+      '<div class="mono">' + fmtW(m.dc_power_w) + " DC · " + fmtW(m.wall_power_w) + " à la prise · mesuré " +
+      fmtW(m.measured_w) + ", estimé " + fmtW(m.estimated_w) +
+      (m.psus.length ? " · pire " + fmtP1(m.worst_load_pct) : "") + "</div><div>" + stChip(m.status) + "</div></div>";
+    const table = psus
+      ? '<table><thead><tr><th>Alimentation</th><th style="text-align:right">Nominale</th>' +
+        '<th style="text-align:right">Charge DC</th><th style="text-align:right">Charge</th>' +
+        '<th style="text-align:right">Rendement</th><th style="text-align:right">À la prise</th><th>État</th></tr></thead><tbody>' +
+        psus + "</tbody></table>"
+      : '<div class="mono">' + (m.kind === "asic"
+          ? "ASIC : puissance à la prise mesurée ou saisie, sans alimentation configurée."
+          : "Aucune alimentation configurée : la prise vaut la charge DC.") + "</div>";
+    return '<div class="psu-machine" data-psu-machine="' + esc(m.uuid) + '">' + head + table + "</div>";
+  }).join("");
+
+  const charts = '<div style="margin-top:10px"><div class="mono">Conso DC du parc — 24 h</div>' +
+    spark((data.history || {}).h24, "24 h") +
+    '<div class="mono" style="margin-top:8px">Conso DC du parc — 7 jours</div>' +
+    spark((data.history || {}).d7, "7 j") +
+    '<div class="mono">La prise n\'est pas historisée : la courbe somme les puissances device collectées (DC).</div></div>';
+
+  $("#psu").innerHTML = summary + (rows || '<div class="empty">Aucune machine suivie.</div>') + charts;
 }
 
 function tokenGroups(machines) {
@@ -258,10 +336,10 @@ async function load() {
   }
   select.value = chosen.uuid;
   render(chosen);
-  loadPower(chosen);
+  loadPower();
   select.onchange = () => {
     const m = MACHINES.find((x) => x.uuid === select.value);
-    if (m) { render(m); loadPower(m); }
+    if (m) { render(m); loadPower(); }
   };
 }
 load();

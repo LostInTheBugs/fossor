@@ -379,10 +379,10 @@ const psuOpts=(m,sel)=>['<option value="">— défaut —</option>'].concat(
 const powerPanelHTML=(m)=>{
   const p=POWER[m.id];
   if(!p)return '';
-  const bars=(p.psus||[]).map(x=>`<div class="psu-row" data-psu-row="${x.id}" data-psu-status="${x.status}">
-    <div class="psu-head"><b>${x.name}</b><span>${x.load_dc_w} / ${x.available_dc_w} W · ${x.load_pct} % · rendement ${x.efficiency_pct} % · ${x.wall_w} W à la prise</span></div>
-    <div class="bar"><span class="${x.status}" style="width:${Math.min(100,x.load_pct)}%"></span></div>
-    <div class="mono">${(x.items||[]).map(i=>i.label+' '+i.watts+' W').join(' · ')||'aucun device affecté'}</div>
+  // 025-b : le suivi de consommation vit dans Suivi → Alimentations.  Ici on
+  // ne garde que la configuration (nom, puissance, certification).
+  const bars=(p.psus||[]).map(x=>`<div class="psu-row" data-psu-row="${x.id}" data-psu-config="1">
+    <div class="psu-head"><b>${x.name}</b><span>${x.rated_w} W · ${x.certification_label||x.certification||''}</span></div>
   </div>`).join('');
   const gpus=(DEVICES[m.id]||[]).filter(d=>d.kind==='gpu'&&d.present&&!d.integrated);
   const assign=gpus.map(d=>`<div class="assign-row" data-gpu="${d.id}">
@@ -392,10 +392,10 @@ const powerPanelHTML=(m)=>{
     <input type="number" data-assign-split="${d.id}" value="${d.split_w!=null?d.split_w:75}" min="0" max="600" style="width:72px" title="Part prise sur le slot/riser (PSU 1) ; le reste sur PSU 2"> W slot/riser
     <button class="btn sm outline" onclick="assignPsu(${d.id},${m.id})">Affecter</button>
   </div>`).join('');
-  const total=`<div style="font-size:12px;margin-bottom:6px">Conso totale : <b>${p.total_dc_w} W DC</b> · <b>${p.total_wall_w} W à la prise</b> — mesuré ${p.measured_w} W, estimé ${p.estimated_w} W${p.psus.length?' · pire charge '+p.worst_load_pct+' % ('+p.worst_psu+')':''}</div>`;
-  const alerts=(p.alerts||[]).filter(a=>a.level!=='info').map(a=>`<div class="miner-alert" data-psu-alert="${a.level}">${a.message}</div>`).join('');
+  const summary=`<div id="psuSummary-${m.id}" style="font-size:12px;margin-bottom:6px">⚡ <b>${p.total_wall_w==null?'—':Math.round(p.total_wall_w)+' W à la prise'}</b>${p.psus.length?' · '+p.worst_load_pct+' %':''} · <a href="/followup#psu" style="color:#4f8cff">Suivi → Alimentations</a></div>`;
+  const alerts='';
   return `<div style="margin-top:10px"><div class="dev-head"><b>⚡ Alimentations</b><button class="btn sm outline" onclick="detectInventory(${m.id})">🔎 Détecter l'inventaire</button></div>
-    ${total}${alerts}${bars||'<div class="empty" style="padding:6px">Aucune alimentation — la puissance à la prise vaut alors la charge DC.</div>'}
+    ${summary}${bars||'<div class="empty" style="padding:6px">Aucune alimentation — la puissance à la prise vaut alors la charge DC.</div>'}
     <div class="psu-form">
       <input id="psuName-${m.id}" placeholder="PSU 1" style="width:90px">
       <input id="psuW-${m.id}" type="number" placeholder="750" style="width:80px">
