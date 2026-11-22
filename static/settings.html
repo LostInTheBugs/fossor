@@ -369,9 +369,22 @@ header h1{font-size:26px}
 
     <div class="card">
       <h2>Mode par défaut du spec mining</h2>
-      <div class="sub">Ce que mine un device hors campagne : <b>vm</b> (nœud, wallet et mineur dans une VM jetable), <b>hybrid</b> (nœud et wallet dans la VM, mineur sur l'hôte) ou <b>host</b> (mineur directement sur la machine).</div>
+      <div class="sub">Ce que mine un device hors campagne. <b>auto</b> suit le catalogue : algorithme standard → <b>hybrid</b> (mineur officiel sur l'hôte, nœud et wallet en VM) ; variante ou propriétaire → <b>vm</b> (tout dans la VM jetable). <b>vm</b>, <b>hybrid</b> et <b>host</b> restent des choix manuels qui forcent le mode.</div>
       <div class="field narrow"><label for="specMode">Mode par défaut</label><select id="specMode"></select></div>
       <div class="actions"><button class="btn" id="specModeSave">Enregistrer</button><span id="specModeState" class="chip">—</span></div>
+    </div>
+
+    <div class="card">
+      <h2>Catalogue des mineurs standard</h2>
+      <div class="sub">Versionné dans le code, avec la source officielle et la date de relevé de chaque logiciel. Le JSON ci-dessous peut être édité (validé : sources, doublons, types) ; « Réinitialiser » revient à la version intégrée.</div>
+      <div class="field"><label for="catJson">Catalogue (JSON)</label><textarea id="catJson" rows="10" class="mono"></textarea></div>
+      <div class="actions">
+        <button class="btn" id="catSave">Enregistrer le catalogue</button>
+        <button class="btn outline" id="catLoad">Recharger</button>
+        <button class="btn outline" id="catReset">Réinitialiser</button>
+        <span id="catState" class="chip">—</span>
+      </div>
+      <div class="sub" id="catSummary"></div>
     </div>
 
     <div class="card" id="vmModelCard">
@@ -1635,13 +1648,40 @@ async function saveSpecHost(){
   const r=await fetch('/api/spec/settings',{method:'PUT',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({host_id:id})});
   if(r.ok){const d=await r.json();applySpecHostKind(d.spec_host_kind||'');}
 }
+async function loadCatalogue(){
+  const r=await fetch('/api/spec/catalogue',{credentials:'include'});
+  if(!r.ok){vmField('catState').textContent='lecture impossible';return;}
+  const d=await r.json();
+  vmField('catJson').value=JSON.stringify(d.effective,null,2);
+  const sw=(d.effective.softwares||[]);
+  const n=sw.reduce((a,s)=>a+((s.algos||[]).length),0);
+  vmField('catSummary').textContent=sw.length+' logiciel(s), '+n+' algorithme(s) — version '+d.effective.version;
+  vmField('catState').textContent='chargé';
+}
+async function saveCatalogue(){
+  let payload;
+  try{payload=JSON.parse(vmField('catJson').value);}
+  catch(e){vmField('catState').textContent='JSON invalide';return;}
+  const r=await fetch('/api/spec/catalogue',{method:'PUT',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const d=await r.json().catch(()=>({}));
+  vmField('catState').textContent=r.ok?('enregistré · '+d.softwares+' logiciel(s)'):(d.detail||'refusé');
+  if(r.ok){loadCatalogue();}
+}
+async function resetCatalogue(){
+  if(!confirm('Revenir au catalogue intégré ?')){return;}
+  const r=await fetch('/api/spec/catalogue',{method:'DELETE',credentials:'include'});
+  const d=await r.json().catch(()=>({}));
+  vmField('catState').textContent=r.ok?'réinitialisé':(d.detail||'refusé');
+  if(r.ok){loadCatalogue();}
+}
 async function loadSpec(){
   const r=await fetch('/api/spec/settings',{credentials:'include'});
   if(!r.ok){vmField('vmState').textContent='lecture impossible';return;}
   const d=await r.json(); specInfo=d;
   vmField('specMode').innerHTML=(d.modes||[]).map(m=>'<option value="'+m.value+'">'+m.label+'</option>').join('');
-  vmField('specMode').value=d.default_mode||'vm';
-  vmField('specModeState').textContent='défaut : '+(d.default_mode||'vm');
+  vmField('specMode').value=d.default_mode||'auto';
+  vmField('specModeState').textContent='défaut : '+(d.default_mode||'auto');
+  loadCatalogue();
   vmField('vmHost').innerHTML=(d.hosts||[]).length
     ? d.hosts.map(h=>'<option value="'+h.id+'">'+h.name+' — '+h.host+'</option>').join('')
     : '<option value="0">aucune machine marquée vm_host</option>';
@@ -1748,6 +1788,9 @@ document.addEventListener('click',(e)=>{
   const b=e.target.closest('button[data-vmact]');
   if(b){vmAction(Number(b.getAttribute('data-vm')),b.getAttribute('data-vmact'));return;}
   if(e.target.id==='specModeSave'){saveSpecMode();return;}
+  if(e.target.id==='catSave'){saveCatalogue();return;}
+  if(e.target.id==='catLoad'){loadCatalogue();return;}
+  if(e.target.id==='catReset'){resetCatalogue();return;}
   if(e.target.id==='specHostPick'){saveSpecHost();return;}
   if(e.target.id==='vmSave'){saveVmModel();return;}
   if(e.target.id==='vmHostCheck'){checkVmHost();return;}

@@ -129,7 +129,7 @@ def _vm_of(db: Session, campaign: Campaign) -> dict | None:
 
 def campaign_to_dict(db: Session, campaign: Campaign) -> dict:
     devices = _devices(db, campaign.id)
-    mode = V.normalize_mode(getattr(campaign, "execution_mode", "") or "", "host")
+    mode = V.normalize_mode(getattr(campaign, "execution_mode", "") or "", V.DEFAULT_SPEC_MODE)
     profile = db.query(MinerProfile).filter(MinerProfile.id == campaign.profile_id).first()
     hashrate = None
     hashrate_source = ""
@@ -189,6 +189,8 @@ def campaign_to_dict(db: Session, campaign: Campaign) -> dict:
         "analysis_id": campaign.analysis_id,
         "execution_mode": mode,
         "execution_mode_label": V.MODE_LABELS.get(mode, mode),
+        "execution_mode_effective": RUN.campaign_mode(db, campaign, None),
+        "execution_mode_reason": RUN.campaign_catalogue_mode(db, campaign, None)["reason"],
         "vm": _vm_of(db, campaign),
         "devices": devices,
         "started_at": campaign.started_at,
@@ -469,7 +471,7 @@ def create_campaign(data: dict, db: Session = Depends(get_db), _user=Depends(req
         raise HTTPException(status_code=400, detail=str(exc))
     devices = _clean_devices(db, data.get("devices") or [])
     try:
-        mode = V.normalize_mode(data.get("execution_mode") or profile.execution_mode, "host")
+        mode = V.normalize_mode(data.get("execution_mode") or profile.execution_mode, V.DEFAULT_SPEC_MODE)
     except V.VmError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     campaign = Campaign(

@@ -476,7 +476,7 @@ class ProposalIn(BaseModel):
     device_uuids: list[str] = Field(min_length=1, max_length=64)
     start_at: str
     end_at: str | None = None
-    execution_mode: Literal["host", "vm", "hybrid"] = "host"
+    execution_mode: Literal["auto", "host", "vm", "hybrid"] = "auto"
     note: str = Field("", max_length=2000)
     candidate: ProposalCandidate = Field(default_factory=lambda: ProposalCandidate())
     # §10.3 : Hermes ne fait que **proposer** un boost ; Fossor applique la règle.
@@ -503,7 +503,15 @@ def _busy_uuids(db: Session) -> set[str]:
 
 
 def free_capacity(db: Session) -> dict[str, Any]:
-    """Devices autorisés au spec mining **et** libres, CPU/GPU (§4.19)."""
+    """Devices autorisés au spec mining, libres ou **libérables** (§4.19, 6.4).
+
+    Depuis la 023-bis, un device qui mine le token par défaut de Fossor
+    (``occupied_by=fossor_default``) ou un flight sheet HiveOS que
+    ``miner stop/start`` libère n'est pas bloqué : il est ``releasable``.
+    Seuls un device exclu du minage et un mineur externe restent bloqués.
+    """
+    from app.devices import OCCUPIED_EXTERNAL, OCCUPIED_FOSSOR_DEFAULT, OCCUPIED_HIVEOS
+
     busy = _busy_uuids(db)
     devices = (
         db.query(Device)
@@ -521,13 +529,18 @@ def free_capacity(db: Session) -> dict[str, Any]:
         if not is_asic(machine)
     }
     out: dict[str, list[dict[str, Any]]] = {"cpu": [], "gpu": []}
+    blocked = {"cpu": 0, "gpu": 0}
     for device in devices:
-        if device.uuid in busy:
-            continue
+        kind = device.kind if device.kind in ("cpu", "gpu") else "gpu"
+        by = getattr(device, "occupied_by", None) or (
+            OCCUPIED_EXTERNAL if getattr(device, "occupied_external", False) else ""
+        )
         machine = machines.get(device.machine_id)
-        if machine is None:
+        if device.uuid in busy or by == OCCUPIED_EXTERNAL or machine is None:
+            blocked[kind] = blocked.get(kind, 0) + 1
             continue
-        out.setdefault(device.kind, []).append(
+        releasable = by in (OCCUPIED_FOSSOR_DEFAULT, OCCUPIED_HIVEOS)
+        out.setdefault(kind, []).append(
             {
                 "uuid": device.uuid,
                 "kind": device.kind,
@@ -535,14 +548,24 @@ def free_capacity(db: Session) -> dict[str, Any]:
                 "machine": machine.name if machine else "",
                 "threads": device.threads,
                 "vram_mb": device.vram_mb,
+                "occupied_by": by,
+                "releasable": releasable,
+                "state": "releasable" if releasable else "free",
             }
         )
+    counts = {kind: len(out.get(kind, [])) for kind in ("cpu", "gpu")}
+    releasable_counts = {
+        kind: sum(1 for row in out.get(kind, []) if row["releasable"]) for kind in ("cpu", "gpu")
+    }
+    free_now = {kind: counts[kind] - releasable_counts[kind] for kind in ("cpu", "gpu")}
     return {
         "cpu": out.get("cpu", []),
         "gpu": out.get("gpu", []),
-        "counts": {"cpu": len(out.get("cpu", [])), "gpu": len(out.get("gpu", []))},
+        "counts": counts,
+        "counts_free": free_now,
+        "counts_releasable": releasable_counts,
+        "counts_blocked": blocked,
     }
-
 
 def validate_proposal(db: Session, data: ProposalIn) -> dict[str, Any]:
     """Confronte une proposition aux règles actives ; renvoie ``{ok, reasons}``."""

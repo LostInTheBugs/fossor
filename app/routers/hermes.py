@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app import analyses as A
 from app import campaign_runner as RUN
 from app import criteria as CRIT
+from app import miner_catalogue as MC
 from app import rules as R
 from app import veille
 from app.database import get_db
@@ -160,6 +161,10 @@ def context(db: Session = Depends(get_db), _actor: str = Depends(require_hermes_
             for profile in db.query(MinerProfile).order_by(MinerProfile.name).limit(200).all()
         ],
         "capacity": R.free_capacity(db),
+        # 6.4 : catalogue et profils types, pour ne plus jamais dire
+        # « aucun profil » quand un mineur standard existe.
+        "miner_catalogue": MC.summary(),
+        "profile_templates": MC.profile_templates(),
         # Critères qualitatifs de Fred : la veille lit CE bloc, pas un skill.
         "criteria": criteria,
         "last_analysis": A.analysis_to_dict(last) if last is not None else None,

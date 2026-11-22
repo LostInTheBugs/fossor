@@ -33,9 +33,10 @@ KEY_PATH = "/root/.ssh/fossor-vm"
 KNOWN_HOSTS = "/root/.ssh/known_hosts.fossor-vm"
 HYPERVISOR = "qemu:///system"
 
-SPEC_MODES = ("vm", "hybrid", "host")
-DEFAULT_SPEC_MODE = "vm"
+SPEC_MODES = ("auto", "vm", "hybrid", "host")
+DEFAULT_SPEC_MODE = "auto"
 MODE_LABELS = {
+    "auto": "Automatique (selon le catalogue : standard → hybride, variante → VM)",
     "vm": "VM jetable (nœud, wallet et mineur dans la VM)",
     "hybrid": "Hybride (nœud et wallet dans la VM, mineur sur l'hôte)",
     "host": "Hôte (mineur directement sur la machine)",
@@ -232,7 +233,7 @@ def normalize_mode(value: Any, default: str = DEFAULT_SPEC_MODE) -> str:
     mode = str(value or "").strip().lower()
     if not mode:
         return spec_mode(default)
-    _require(mode in SPEC_MODES, "mode : vm, hybrid ou host")
+    _require(mode in SPEC_MODES, "mode : auto, vm, hybrid ou host")
     return mode
 
 

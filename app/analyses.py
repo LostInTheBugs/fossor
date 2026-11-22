@@ -12,6 +12,8 @@ ordre.
 
 from __future__ import annotations
 
+from app import miner_catalogue as MC
+
 import hashlib
 import json
 import re
@@ -198,6 +200,9 @@ def normalize_candidate(raw: Any, strict: bool = False) -> dict[str, Any]:
     age = raw.get("age")
     if age not in (None, ""):
         candidate["age"] = _text(age, 80)
+    # 6.4 : identification catalogue + contradiction « standard » / « aucun profil ».
+    if candidate.get("algo"):
+        candidate["catalogue"] = MC.review_candidate(candidate)
     return candidate
 
 
@@ -602,6 +607,7 @@ def token_rows(
                     "reason": "",
                     "detail": "",
                     "warnings": [],
+                    "catalogue": None,
                     "aliases": [],
                     "pour": [],
                     "contre": [],
@@ -616,6 +622,12 @@ def token_rows(
                 reason = "raison non renseignée (import)"
             detail = _text(analysis.get("detail"), 1000)
             previous = row["history"][-1] if row["history"] else None
+            review = candidate.get("catalogue")
+            if not review and candidate.get("algo"):
+                review = MC.review_candidate(candidate)
+            warnings = coherence_warnings(verdict, contre, reason, criteria, previous, detail)
+            if review:
+                warnings += [w for w in review.get("warnings") or [] if w not in warnings]
             entry = {
                 "ts": ts,
                 "run": _text(analysis.get("run"), 80),
@@ -628,7 +640,8 @@ def token_rows(
                 "pour": _string_list(candidate.get("pour")),
                 "contre": contre,
                 "criteria": criteria,
-                "warnings": coherence_warnings(verdict, contre, reason, criteria, previous, detail),
+                "warnings": warnings,
+                "catalogue": review,
             }
             for link in _string_list(candidate.get("links")):
                 if link not in row["links"]:
@@ -649,6 +662,7 @@ def token_rows(
                 row["warnings"] = entry["warnings"]
                 row["pour"] = entry["pour"]
                 row["contre"] = entry["contre"]
+                row["catalogue"] = entry.get("catalogue")
                 row["ticker"] = ticker or row["ticker"]
                 row["name"] = name or row["name"]
                 row["algo"] = _text(candidate.get("algo"), 200) or row["algo"]

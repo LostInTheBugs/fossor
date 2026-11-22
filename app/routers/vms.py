@@ -23,6 +23,7 @@ from app.ai_config import get_setting, set_setting
 from app.database import get_db
 from app.dependencies import require_login
 from app.models import AuditLog, Campaign, CampaignEvent, Machine, MinerProfile, SpecVm
+from app import miner_catalogue as MC
 from app import pilotage
 
 router = APIRouter(prefix="/api", tags=["vms"])
@@ -493,3 +494,33 @@ def record_vm(
     db.commit()
     db.refresh(row)
     return row
+
+
+@router.get("/spec/catalogue")
+def read_miner_catalogue(db: Session = Depends(get_db), _user=Depends(require_login)):
+    """Catalogue effectif : version intégrée ou version éditée en Configuration."""
+    return {
+        "built_in": MC.catalogue(),
+        "effective": MC.effective_catalogue(db),
+        "algorithm_count": MC.algorithm_count(),
+    }
+
+
+@router.put("/spec/catalogue")
+def write_miner_catalogue(data: dict, db: Session = Depends(get_db), user=Depends(require_login)):
+    """Enregistre un catalogue édité (validé : sources, doublons, types)."""
+    try:
+        cleaned = MC.validate_catalogue(data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    set_setting(db, "miner_catalogue", json.dumps(cleaned, ensure_ascii=False))
+    _audit(db, user, "catalogue mineurs", "spec", "ok", f"{len(cleaned['softwares'])} logiciel(s)")
+    return {"saved": True, "version": cleaned["version"], "softwares": len(cleaned["softwares"])}
+
+
+@router.delete("/spec/catalogue")
+def reset_miner_catalogue(db: Session = Depends(get_db), user=Depends(require_login)):
+    """Revient au catalogue intégré (versionné dans le code)."""
+    set_setting(db, "miner_catalogue", None)
+    _audit(db, user, "catalogue mineurs", "spec", "ok", "retour au catalogue intégré")
+    return {"saved": True, "version": MC.CATALOGUE_VERSION, "softwares": len(MC.software_ids())}

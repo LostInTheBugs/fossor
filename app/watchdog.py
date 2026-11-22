@@ -388,7 +388,7 @@ def campaign_mode(db: Any, machine: Any) -> str:
         .filter(
             CampaignDevice.machine_id == machine.id,
             Campaign.status == "running",
-            Campaign.execution_mode.in_(("vm", "hybrid")),
+            Campaign.execution_mode.in_(("auto", "vm", "hybrid")),
         )
         .first()
     )
@@ -477,7 +477,7 @@ async def _restart_vm(db: Any, machine: Any, *, simulated: bool, runner: Any = N
         .filter(
             CampaignDevice.machine_id == machine.id,
             Campaign.status == "running",
-            Campaign.execution_mode.in_(("vm", "hybrid")),
+            Campaign.execution_mode.in_(("auto", "vm", "hybrid")),
         )
         .first()
     )

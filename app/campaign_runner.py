@@ -109,16 +109,36 @@ LIVENESS_DELAYS = (15.0, 60.0)
 LIVENESS_INTERVAL_S = 60
 
 
-def campaign_mode(db: Any, campaign: Any, profile: dict[str, Any] | None) -> str:
-    """Mode effectif de la campagne : colonne, sinon mode du profil, sinon host."""
+def campaign_catalogue_mode(db: Any, campaign: Any, profile: dict[str, Any] | None) -> dict[str, Any]:
+    """Mode retenu et sa raison : ``auto`` suit le catalogue, sinon forcé."""
+    from app import miner_catalogue as MC
     from app import spec_vm as V
+    from app.models import Coin, MinerProfile
 
-    raw = getattr(campaign, "execution_mode", "") or (profile or {}).get("execution_mode") or ""
+    raw = getattr(campaign, "execution_mode", "") or (profile or {}).get("execution_mode") or "auto"
     try:
-        return V.normalize_mode(raw, "host")
+        mode = V.normalize_mode(raw, V.DEFAULT_SPEC_MODE)
     except V.VmError:
-        return "host"
+        mode = V.DEFAULT_SPEC_MODE
+    software = str((profile or {}).get("software") or "")
+    if not software and getattr(campaign, "profile_id", None):
+        row = db.get(MinerProfile, campaign.profile_id)
+        software = str(getattr(row, "software", "") or "")
+    coin = db.query(Coin).filter(Coin.ticker == str(getattr(campaign, "coin", "")).upper()).first()
+    algo = str(getattr(coin, "algo", "") or "") if coin is not None else ""
+    info = MC.mode_for(algo, software)
+    info["algo"] = algo
+    if mode != "auto":
+        info["mode"] = mode
+        info["reason"] = f"mode {V.MODE_LABELS.get(mode, mode)} forcé manuellement."
+    elif not algo:
+        info["reason"] = "algorithme du token inconnu : VM complète par précaution."
+    return info
 
+
+def campaign_mode(db: Any, campaign: Any, profile: dict[str, Any] | None) -> str:
+    """Mode effectif de la campagne : colonne (dont ``auto``), sinon profil."""
+    return campaign_catalogue_mode(db, campaign, profile)["mode"]
 
 def _spec_host(db: Any, model: dict[str, Any]):
     from app.models import Machine

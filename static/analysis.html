@@ -818,6 +818,16 @@ label{display:block;color:var(--muted);font-size:11px;font-weight:600;margin-bot
       "<div><b>Âge</b><div class=\"mono\">" + esc(row.age || "—") + "</div></div>" +
       "<div><b>Première éval.</b><div class=\"mono\">" + esc(fmtDate(row.first_ts)) + "</div></div>" +
       "<div><b>Évaluations</b><div class=\"mono\">" + row.evaluations + "</div></div></div>" +
+      (function () {
+        var cat = row.catalogue;
+        if (!cat) { return '<div style="margin:8px 0"><b>Mineurs compatibles</b><div class="mono">non identifié</div></div>'; }
+        var names = (cat.miners || []).map(function (m) { return m.software_name + " " + m.algo; });
+        var text = names.length ? names.slice(0, 10).join(" · ") : "aucun mineur standard";
+        return '<div style="margin:8px 0"><b>Mineurs compatibles</b>' +
+          '<div class="mono">' + esc(cat.classification || "non identifié") + " · " + esc(text) + "</div>" +
+          (cat.template ? '<div class="sub">profil type : ' + esc(cat.template.software_name + " " + cat.template.algo + " (port " + cat.template.api_port + ")") + "</div>" : "") +
+          "</div>";
+      })() +
       (links ? '<div style="margin:8px 0"><b>Liens</b><div class="mono">' + links + "</div></div>" : "") +
       (aliases ? '<div style="margin:8px 0"><b>Alias</b><div class="mono">' + aliases + "</div></div>" : "") +
       "<h3 style=\"margin-top:12px\">Grille de la dernière évaluation</h3>" + criteriaGrid(latest.criteria) +

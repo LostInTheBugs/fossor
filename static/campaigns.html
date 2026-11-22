@@ -207,8 +207,10 @@ tr:last-child td{border-bottom:none}
           (c.origin === "hermes" ? ' <span class="sim">Hermes</span>' : "") +
           (c.verified === true ? ' <span class="sim">retour vérifié</span>' : "") + "</td>" +
         "<td>" + (c.profile_name || "—") +
-          '<div class="muted" style="font-size:10.5px">mode ' + (c.execution_mode || "host") +
-          (c.vm ? " · VM " + c.vm.name + " (" + (c.vm.ip || "sans IP") + ")" : "") + "</div></td>" +
+          '<div class="muted" style="font-size:10.5px">mode ' +
+          (c.execution_mode === "auto" ? (c.execution_mode_effective || "auto") + " (auto)" : (c.execution_mode || "host")) +
+          (c.vm ? " · VM " + c.vm.name + " (" + (c.vm.ip || "sans IP") + ")" : "") + "</div>" +
+          (c.execution_mode_reason ? '<div class="muted" style="font-size:10.5px">' + c.execution_mode_reason + "</div>" : "") + "</td>" +
         '<td class="muted">' + devicesText(c) + "</td>" +
         "<td>" + fmtDate(c.start_at) + "</td>" +
         "<td>" + (c.end_at ? fmtDate(c.end_at) : "sans limite") + "</td>" +
