@@ -104,12 +104,11 @@ async def test_alim_suivi_fleet_total_and_machines_summary(e2e_server):
         assert await page.locator(
             f'#psuSummary-{machine_id} a[href="/followup#psu"]'
         ).count() == 1
-        panel = page.locator(f"#psuSummary-{machine_id}").locator(
-            "xpath=ancestor::div[contains(@class,'card')][1]"
-        )
-        panel_text = (await panel.inner_text()).lower()
-        assert "conso totale" not in panel_text, panel_text
-        assert "rendement" not in panel_text, panel_text
+        # Le panneau Machines ne porte plus le suivi : ni « Conso totale », ni
+        # rendement, ni charge par alimentation.
+        body_text = (await page.inner_text("body")).lower()
+        assert "conso totale" not in body_text
+        assert "rendement" not in body_text
 
         assert page_errors == []
         assert console_errors == []
