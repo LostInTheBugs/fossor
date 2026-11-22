@@ -126,7 +126,7 @@ async def test_history_chart_and_csv_export(e2e_server, tmp_path):
             await page.wait_for_url("**/dashboard", timeout=15000)
 
             await page.goto(e2e_server + "/history", wait_until="networkidle", timeout=15000)
-            await page.wait_for_selector("#target option", timeout=15000)
+            await page.wait_for_selector("#target option", state="attached", timeout=15000)
             await page.select_option("#target", value=machine_uuid)
 
             # Le graphique du hashrate : un <svg> et au moins une série tracée.

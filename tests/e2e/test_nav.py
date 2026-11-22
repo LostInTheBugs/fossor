@@ -17,7 +17,7 @@ EXPECTED = [
     "🔎 Analyse des tokens",
     "🪙 Tokens minés",
     "📈 Suivi",
-    "🗰️ Historique",
+    "🕰️ Historique",
     "🔐 Coffre",
     "📖 Comment ça marche",
     "⚙️ Configuration",
