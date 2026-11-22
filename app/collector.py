@@ -366,14 +366,24 @@ def _apply_profile_api(stats: dict[str, Any], profile: Any) -> dict[str, Any]:
     if not port:
         return stats
     stats["api_port"] = port
+    # 2026.11.026 : le port du profil ne va qu'au processus lancé par Fossor.
+    # Un nœud solo (bitcoind) n'expose jamais l'API du mineur : lui prêter ce
+    # port faisait entrer le pool et les algorithmes Pearl dans l'entrée BigCoin.
     for miner in stats.get("miners") or []:
-        if not miner.get("api_port"):
-            miner["api_port"] = port
-            if software:
-                miner["name"] = software
-                miner["miner_name"] = software
-                miner["label"] = software
-            break
+        if miner.get("api_port") or str(miner.get("kind") or "") == "solo":
+            continue
+        if software:
+            text = " ".join(
+                str(miner.get(key) or "")
+                for key in ("name", "miner_name", "label", "binary", "cmd")
+            ).lower()
+            if software not in text:
+                continue
+            miner["name"] = software
+            miner["miner_name"] = software
+            miner["label"] = software
+        miner["api_port"] = port
+        break
     return stats
 
 

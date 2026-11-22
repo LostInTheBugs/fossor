@@ -155,6 +155,11 @@ def evaluate(
     for device in devices:
         if not device.get("enabled_for_mining"):
             continue
+        # 2026.11.026 : un device tenu par un mineur externe (BigCoin solo sur
+        # le CPU du Ryzen) n'est pas piloté par Fossor : son hashrate peut être
+        # illisible sans que la machine soit en faute.
+        if device.get("occupied_external") or device.get("occupied_by") == "external":
+            continue
         # §0.3 : un CPU peut faire tourner plusieurs mineurs (un par algo).  On
         # ne juge plus `device.hashrate_hs` (None dès que deux algos tournent,
         # c'est voulu) mais les mineurs CPU eux-mêmes, juste après.
@@ -163,7 +168,20 @@ def evaluate(
         if not device.get("hashrate_hs"):
             return _with_reason("orange", f"{_device_label(device)} sans hashrate")
 
-    if cpu_miners:
+    # Un CPU exclu du minage ou occupé par un mineur externe sort du contrôle
+    # « sans hashrate » : Fossor ne le pilote pas et ne peut pas le mesurer.
+    cpu_device = next((d for d in devices if d.get("kind") == "cpu"), None)
+    cpu_external = bool(
+        cpu_device
+        and (
+            cpu_device.get("occupied_external")
+            or cpu_device.get("occupied_by") == "external"
+        )
+    )
+    cpu_controlled = cpu_device is None or (
+        cpu_device.get("enabled_for_mining") and not cpu_external
+    )
+    if cpu_miners and cpu_controlled:
         fresh = [m for m in cpu_miners if m.get("hashrate_hs")]
         if not fresh:
             return _with_reason("orange", "CPU sans hashrate")
@@ -192,8 +210,7 @@ def evaluate(
         if temp > ceiling:
             return _with_reason("orange", f"{_device_label(device)} à {temp:.0f} °C")
 
-    cpu = machine.get("cpu") or {}
-    cpu_temp = cpu.get("temp_c")
+    cpu_temp = (machine.get("cpu") or {}).get("temp_c")
     if isinstance(cpu_temp, (int, float)) and cpu_temp > limits["cpu_temp_max_c"]:
         return _with_reason("orange", f"CPU à {cpu_temp:.0f} °C")
 

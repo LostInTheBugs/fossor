@@ -678,7 +678,15 @@ def detect_solo_miners(
 
     for row, base in daemons:
         datadir = _datadir(row["args"])
-        key = _coin_key(datadir, names) or _coin_key(row["args"], names) or base[:-1]
+        # 2026.11.026 : le datadir porte le nom de la pièce (``.bigcoin``)
+        # même quand le catalogue de pièces est vide ; sans cela le repli
+        # ``base[:-1]`` transformait ``bitcoind`` en « bitcoin » (BTC).
+        key = (
+            _coin_key(datadir, names)
+            or _coin_key(datadir, hints)
+            or _coin_key(row["args"], names)
+            or base[:-1]
+        )
         group = group_for(key)
         group["daemon"] = base
         group["pids"].add(row.get("pid"))

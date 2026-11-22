@@ -265,7 +265,9 @@ def expand_miner_algos(
 
     expanded: list[dict[str, Any]] = []
     for miner in miners:
-        if not miner.get("api_port"):
+        # 2026.11.026 : un nœud solo n'est jamais le processus qui répond à
+        # l'API SRBMiner ; lui recopier algo/pool fabriquait une fausse unité.
+        if not miner.get("api_port") or str(miner.get("kind") or "") == "solo":
             expanded.append(miner)
             continue
         for position, algo in enumerate(algos):

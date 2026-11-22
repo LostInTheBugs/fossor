@@ -374,12 +374,16 @@ def filter_external_miners(
     Pearl, ne peut pas faire réapparaître un mineur Fossor comme « externe ».
     """
     ports: set[int] = set()
+    softwares: set[str] = set()
     for profile in _profiles_here(db, machine):
         try:
             if profile.api_port:
                 ports.add(int(profile.api_port))
         except (TypeError, ValueError):
-            continue
+            pass
+        software = str(getattr(profile, "software", "") or "").strip().lower()
+        if software:
+            softwares.add(software)
     kept: list[dict[str, Any]] = []
     for entry in entries or []:
         if is_fossor_process(entry):
@@ -388,8 +392,23 @@ def filter_external_miners(
             port = int(entry.get("api_port")) if entry.get("api_port") else None
         except (TypeError, ValueError):
             port = None
-        if port is not None and port in ports:
-            continue  # port de l'API d'un profil Fossor de cette machine
+        # 2026.11.026 : le port ne suffit pas. Un nœud solo n'est pas l'unité
+        # du profil ; seul un processus qui porte le logiciel du profil est
+        # écarté par ce port. BigCoin garde son entrée, sans pool ni API Pearl.
+        text = " ".join(
+            str(entry.get(key) or "")
+            for key in ("name", "miner_name", "label", "binary", "process_name", "cmd")
+        ).lower()
+        is_profile_unit = (
+            any(software in text for software in softwares) if softwares else True
+        )
+        if (
+            port is not None
+            and port in ports
+            and str(entry.get("kind") or "") != "solo"
+            and is_profile_unit
+        ):
+            continue
         kept.append(entry)
     return kept
 
