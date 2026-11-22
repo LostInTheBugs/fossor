@@ -59,6 +59,19 @@ def _seed() -> None:
         conn.close()
 
 
+@pytest.fixture(autouse=True)
+def _clean_analysis():
+    """RCAT ne doit pas rester dans la base partagée : les autres e2e comptent
+    leurs propres tokens (test_z_parite attend exactement deux lignes)."""
+    yield
+    conn = sqlite3.connect(f"{E2E_DATA_DIR}/fossor.db", timeout=20)
+    try:
+        conn.execute("DELETE FROM analyses WHERE fingerprint=?", (FINGERPRINT,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 @pytest.mark.asyncio
 async def test_fiche_token_affiche_mineurs_et_mode_auto(e2e_server):
     _seed()
