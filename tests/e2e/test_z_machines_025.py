@@ -86,6 +86,41 @@ def _insert_metric(machine_uuid: str, device_uuid: str, hashrate: float | None) 
         conn.close()
 
 
+def _insert_profile() -> int:
+    """Profil Fossor fictif, comme le profil Pearl du Ryzen en prod."""
+    conn = _db()
+    try:
+        cur = conn.execute(
+            "INSERT INTO miner_profiles (uuid, name, coin, wallet, pool, software, "
+            "binary_url, sha256, binary_path, version, cmdline, api_port, api_kind, "
+            "binary_source, binary_stored, binary_size, binary_kind, wallet_mode, "
+            "execution_mode, threads, worker, cpu_governor, tty_wrapper, enabled, "
+            "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("00000000-0000-4000-8000-000000000099", "Profil fictif Pearl 025", "PRL",
+             "prl1fictif025", "stratum+tcp://pool.invalid:3333", "srbminer",
+             "https://192.0.2.90/srbminer.tar.gz", "0" * 64, "srbminer_compute", "3.8.3",
+             "{binary} --algorithm pearlhash --pool {pool} --wallet {wallet}", 21373, "srbminer",
+             "url", "", 0, "tar.gz", "pool_address", "host", 0, "", 0, 1, 1,
+             _now(), _now()),
+        )
+        conn.commit()
+        return int(cur.lastrowid or 0)
+    finally:
+        conn.close()
+
+
+def _set_default_token(device_uuid: str, profile_id: int) -> None:
+    conn = _db()
+    try:
+        conn.execute(
+            "UPDATE devices SET default_token_id=? WHERE uuid=?",
+            (profile_id, device_uuid),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 @pytest.mark.asyncio
 async def test_machines_page_uses_current_state(e2e_server):
     console_errors: list[str] = []
@@ -155,6 +190,8 @@ async def test_machines_page_uses_current_state(e2e_server):
                        "CPU fictif Ryzen", "external", external=True)
         _insert_device(ryzen, "00000000-0000-4000-8000-000000002602", "gpu", 0,
                        "GPU fictif Pearl", "fossor_default")
+        profile_id = _insert_profile()
+        _set_default_token("00000000-0000-4000-8000-000000002602", profile_id)
         _insert_status(ryzen_uuid, None)
         _insert_metric(ryzen_uuid, "00000000-0000-4000-8000-000000002601", 216162333806722.47)
         _insert_metric(ryzen_uuid, "00000000-0000-4000-8000-000000002601", None)
@@ -176,16 +213,17 @@ async def test_machines_page_uses_current_state(e2e_server):
         athlon_text = await page.evaluate(detail, f"e2e-025-athlon-{stamp}")
         ryzen_text = await page.evaluate(detail, f"e2e-025-ryzen-{stamp}")
 
-        assert "injoignable" not in athlon_text, athlon_text
+        # `.chip` applique text-transform:uppercase — innerText est en capitales.
+        assert "injoignable" not in athlon_text.lower(), athlon_text
         assert "externe" not in athlon_text.lower(), athlon_text
-        assert "Mineur Fossor (token par défaut)" in athlon_text, athlon_text
+        assert "mineur fossor (token par défaut)" in athlon_text.lower(), athlon_text
 
-        assert "occupé (externe)" in ryzen_text, ryzen_text
-        assert ryzen_text.count("occupé (externe)") == 1, ryzen_text
-        assert "Mineur Fossor (token par défaut)" in ryzen_text, ryzen_text
-        assert "hashrate inconnu" in ryzen_text, ryzen_text
+        assert "occupé (externe)" in ryzen_text.lower(), ryzen_text
+        assert ryzen_text.lower().count("occupé (externe)") == 1, ryzen_text
+        assert "mineur fossor (token par défaut)" in ryzen_text.lower(), ryzen_text
+        assert "hashrate inconnu" in ryzen_text.lower(), ryzen_text
         assert "216" not in ryzen_text, ryzen_text
-        assert "Mineur externe détecté" not in ryzen_text, ryzen_text
+        assert "mineur externe détecté" not in ryzen_text.lower(), ryzen_text
 
         # Cohérence : la fiche, Campagnes et /api/metrics/live lisent la même
         # occupation et le même api_error.
