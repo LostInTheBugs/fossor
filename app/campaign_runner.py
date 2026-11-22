@@ -811,7 +811,9 @@ async def _start(db: Any, campaign: Any, moment: datetime, backend: Any, simulat
         profile_error = str(exc)
 
     verdict = C.preflight(
-        machine_online=machines_online(db, targets),
+        # La simulation ne contacte jamais la machine : l'injoignabilité n'est
+        # bloquante que pour une campagne réelle.
+        machine_online=True if simulated else machines_online(db, targets),
         profile_error=profile_error,
         busy_devices=busy_devices(db, campaign),
         psu_worst_pct=psu_worst_pct(db, targets),

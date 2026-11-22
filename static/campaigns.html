@@ -350,7 +350,15 @@ tr:last-child td{border-bottom:none}
       .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
       .then(function (res) {
         if (!res.ok) { toast(res.data.detail || "Action refusée"); return; }
-        toast("Campagne #" + id + " : " + verb);
+        var refused = (res.data.actions || []).filter(function (a) {
+          return a && a.action === "refused";
+        });
+        if (refused.length) {
+          var reasons = refused[0].reasons || [];
+          toast("Campagne #" + id + " refusée : " + (reasons.join(" ; ") || "voir le journal"));
+        } else {
+          toast("Campagne #" + id + " : " + verb);
+        }
         load();
       });
   }

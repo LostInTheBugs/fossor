@@ -135,7 +135,7 @@ async def test_campaigns_page_cycle_simule(e2e_server):
         #    « en cours » peuvent venir d'une campagne d'un test précédent).
         before = max_campaign_id()
         await page.select_option("#fProfile", str(profile_id))
-        await page.check("#fDevices input[type=checkbox]")
+        await page.check(f'#fDevices input[type=checkbox][data-machine="{machine_id}"]')
         await page.check("#fNoEnd")
         await page.click("#createBtn")
         campaign_id = wait_new_campaign(before)
