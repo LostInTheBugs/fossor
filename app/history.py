@@ -597,25 +597,51 @@ def _purge_table(db: Session, model, column, cutoff: str, extra: list | None = N
     return deleted, True
 
 
+def _bounded_cut(hard_cut: datetime, cursor_key: str, db: Session) -> str | None:
+    """Coupe de purge : jamais au-delà du curseur d'agrégation correspondant.
+
+    Sans curseur, l'agrégation n'a encore rien traité : on ne purge rien.
+    Le curseur peut être en retard de plusieurs passages (lots bornés) ; la
+    purge attend alors qu'il ait rattrapé, plutôt que d'effacer du brut non
+    agrégé.
+    """
+    raw = _get_setting(db, cursor_key)
+    cursor = _parse(raw) if raw else None
+    if cursor is None:
+        return None
+    return min(hard_cut, cursor).isoformat()
+
+
 def purge(db: Session, retention: dict[str, int] | None = None, now: datetime | None = None) -> dict[str, Any]:
-    """Purge les étages selon la rétention, par lots bornés."""
-    from app.models import Metric, MetricAgg, PlugPowerSample, PriceSample
+    """Purge les étages selon la rétention, sans jamais dépasser l'agrégation."""
+    from app.models import Metric, MetricAgg, PlugPowerSample
 
     moment = _now(now)
     settings = retention or get_retention(db)
-    raw_cut = (moment - timedelta(days=int(settings["raw_days"]))).isoformat()
-    hour_cut = (moment - timedelta(days=int(settings["hourly_days"]))).isoformat()
-
-    metrics, cut1 = _purge_table(db, Metric, Metric.ts, raw_cut)
-    plugs, cut2 = _purge_table(db, PlugPowerSample, PlugPowerSample.ts, raw_cut)
-    prices, cut3 = _purge_table(db, PriceSample, PriceSample.ts, hour_cut)
-    hours, cut4 = _purge_table(
-        db,
-        MetricAgg,
-        MetricAgg.ts,
-        hour_cut,
-        [MetricAgg.bucket == "hour"],
+    raw_cut = _bounded_cut(
+        moment - timedelta(days=int(settings["raw_days"])), AGG_CURSOR_KEY, db
     )
+    hour_cut = _bounded_cut(
+        moment - timedelta(days=int(settings["hourly_days"])), DAY_CURSOR_KEY, db
+    )
+
+    metrics, cut1 = (0, False)
+    plugs, cut2 = (0, False)
+    if raw_cut is not None:
+        metrics, cut1 = _purge_table(db, Metric, Metric.ts, raw_cut)
+        plugs, cut2 = _purge_table(db, PlugPowerSample, PlugPowerSample.ts, raw_cut)
+    # Les prix ne sont jamais purgés : l'export comptable relit le prix à la
+    # date d'une réception, y compris plusieurs années en arrière.
+    prices = 0
+    hours, cut4 = (0, False)
+    if hour_cut is not None:
+        hours, cut4 = _purge_table(
+            db,
+            MetricAgg,
+            MetricAgg.ts,
+            hour_cut,
+            [MetricAgg.bucket == "hour"],
+        )
     daily = 0
     if int(settings.get("daily_days") or 0) > 0:
         day_cut = (moment - timedelta(days=int(settings["daily_days"]))).isoformat()
@@ -628,7 +654,7 @@ def purge(db: Session, retention: dict[str, int] | None = None, now: datetime | 
         "price_samples": prices,
         "hour_buckets": hours,
         "day_buckets": daily,
-        "truncated": any((cut1, cut2, cut3, cut4)),
+        "truncated": any((cut1, cut2, cut4)),
     }
 
 

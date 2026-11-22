@@ -163,14 +163,19 @@ def test_purge_respects_retention_and_keeps_daily():
                          ts=_iso(now - timedelta(hours=3)), samples=1))
         db.add(MetricAgg(scope="machine", scope_uuid=machine.uuid, bucket="day",
                          ts=_iso(now - timedelta(days=500)), samples=1))
+        db.add(PriceSample(ticker="XMR", ts=_iso(now - timedelta(days=400)), eur=150.0))
         db.commit()
 
+        # L'agrégation a traité jusqu'à maintenant : la purge peut avancer.
+        history._set_setting(db, history.AGG_CURSOR_KEY, _iso(now))
+        history._set_setting(db, history.DAY_CURSOR_KEY, _iso(now))
         result = history.purge(
             db, {"raw_days": 1, "hourly_days": 365, "daily_days": 0}, now=now
         )
         assert result["metrics"] == 1
         assert result["hour_buckets"] == 1
         assert result["day_buckets"] == 0
+        assert result["price_samples"] == 0
         assert db.query(Metric).count() == 1
         assert (
             db.query(MetricAgg).filter(MetricAgg.bucket == "day").count() == 1
@@ -178,6 +183,61 @@ def test_purge_respects_retention_and_keeps_daily():
         assert (
             db.query(MetricAgg).filter(MetricAgg.bucket == "hour").count() == 1
         )
+        assert db.query(PriceSample).count() == 1, "un prix n'est jamais purgé"
+    finally:
+        db.close()
+
+
+def test_purge_never_passes_aggregation_cursor():
+    """60 j de brut non agrégé, raw_days=30 : aucune ligne non agrégée perdue."""
+    db = SessionLocal()
+    try:
+        machine = _machine(db, name="rig-cursor", uuid="44444444-4444-4444-4444-444444444444")
+        now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        start = now - timedelta(days=60)
+        for day in range(60):
+            stamp = start + timedelta(days=day, hours=12)
+            db.add(Metric(machine_uuid=machine.uuid, ts=_iso(stamp), power_w=100.0))
+        db.commit()
+        retention = {"raw_days": 30, "hourly_days": 365, "daily_days": 0}
+
+        # Sans curseur, l'agrégation n'a rien traité : la purge ne touche à rien.
+        result = history.purge(db, retention, now=now)
+        assert result["metrics"] == 0
+        assert db.query(Metric).count() == 60
+
+        # 3 passages bornés (20 lots de 24 h) couvrent les 60 jours ; la purge
+        # ne supprime qu'après le passage du curseur d'agrégation.
+        for _ in range(3):
+            history.aggregate(db, now=now)
+            history.purge(db, retention, now=now)
+        raw_cut = _iso(now - timedelta(days=30))
+        assert db.query(Metric).filter(Metric.ts < raw_cut).count() == 0
+        assert db.query(MetricAgg).filter(MetricAgg.bucket == "hour").count() >= 60
+        assert (
+            db.query(MetricAgg)
+            .filter(MetricAgg.bucket == "hour", MetricAgg.ts == _iso(start + timedelta(hours=12)))
+            .count()
+            > 0
+        ), "le brut le plus ancien a été agrégé avant sa purge"
+    finally:
+        db.close()
+
+
+def test_price_samples_are_never_purged():
+    db = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        db.add(PriceSample(ticker="XMR", ts=_iso(now - timedelta(days=800)), eur=150.0))
+        db.commit()
+        result = history.purge(
+            db, {"raw_days": 1, "hourly_days": 30, "daily_days": 0}, now=now
+        )
+        assert result["price_samples"] == 0
+        assert db.query(PriceSample).count() == 1
+        # Le prix reste lisible pour valoriser une réception ancienne.
+        price, _source = history._price_at(db, "XMR", _iso(now), {})
+        assert price == 150.0
     finally:
         db.close()
 
