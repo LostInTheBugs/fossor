@@ -6,6 +6,7 @@ provoqué volontairement : Chromium les journalise comme erreurs console.
 """
 
 import sqlite3
+import time
 import uuid as uuid_lib
 
 import pytest
@@ -34,6 +35,25 @@ def seed_device(machine_id: int) -> str:
     finally:
         conn.close()
     return device_uuid
+
+
+def max_campaign_id() -> int:
+    conn = sqlite3.connect(f"{E2E_DATA_DIR}/fossor.db", timeout=20)
+    try:
+        return int(conn.execute("SELECT COALESCE(MAX(id), 0) FROM campaigns").fetchone()[0])
+    finally:
+        conn.close()
+
+
+def wait_new_campaign(before: int, timeout_s: float = 10.0) -> int:
+    """Attend l'id de la campagne créée ; la base est partagée par toute la suite."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        current = max_campaign_id()
+        if current > before:
+            return current
+        time.sleep(0.1)
+    raise AssertionError("aucune campagne créée dans le délai")
 
 
 @pytest.mark.e2e
@@ -110,32 +130,49 @@ async def test_campaigns_page_cycle_simule(e2e_server):
         assert "Campagnes" in await page.inner_text("body")
 
         # 2. Création par le formulaire (un device coché, sans limite de fin).
+        #    La base est partagée par toute la suite : on repère **notre**
+        #    campagne par son id et on ne lit que sa ligne (« proposée » et
+        #    « en cours » peuvent venir d'une campagne d'un test précédent).
+        before = max_campaign_id()
         await page.select_option("#fProfile", str(profile_id))
         await page.check("#fDevices input[type=checkbox]")
         await page.check("#fNoEnd")
         await page.click("#createBtn")
-        await page.wait_for_selector("#rows tr", timeout=10000)
+        campaign_id = wait_new_campaign(before)
+        row = page.locator(f'#rows tr[data-campaign-id="{campaign_id}"]')
+        await row.wait_for(state="visible", timeout=10000)
         await page.wait_for_function(
-            "document.querySelector('#rows').textContent.includes('proposée')", timeout=10000
+            f"""() => {{
+                const tr = document.querySelector('#rows tr[data-campaign-id="{campaign_id}"]');
+                return tr && tr.textContent.includes('proposée');
+            }}""",
+            timeout=10000,
         )
-        row = await page.inner_text("#rows")
-        assert "FAKE" in row
+        assert "FAKE" in await row.inner_text()
 
         # 3. Approbation puis démarrage immédiat (simulation). Le planificateur
         #    (tick 10 s) peut prendre la campagne approuvée avant le clic :
         #    on écarte l'échéance, seul le clic la rend due.
-        defer_newest_proposed_campaign()
-        await page.click('button[data-act="approve"]')
+        defer_newest_proposed_campaign(campaign_id=campaign_id)
+        await row.locator('button[data-act="approve"]').click()
         await page.wait_for_function(
-            "document.querySelector('#rows').textContent.includes('approuvée')", timeout=10000
+            f"""() => {{
+                const tr = document.querySelector('#rows tr[data-campaign-id="{campaign_id}"]');
+                return tr && tr.textContent.includes('approuvée');
+            }}""",
+            timeout=10000,
         )
-        await page.click('button[data-act="start"]')
+        await row.locator('button[data-act="start"]').click()
         await page.wait_for_function(
-            "document.querySelector('#rows').textContent.includes('en cours')", timeout=15000
+            f"""() => {{
+                const tr = document.querySelector('#rows tr[data-campaign-id="{campaign_id}"]');
+                return tr && tr.textContent.includes('en cours');
+            }}""",
+            timeout=15000,
         )
 
         # 4. Journal : commandes simulées, marquées comme telles.
-        await page.click('button[data-act="journal"]')
+        await row.locator('button[data-act="journal"]').click()
         await page.wait_for_selector("#journal.open li", timeout=10000)
         journal = await page.inner_text("#journal")
         assert "campaign-started" in journal

@@ -14,7 +14,7 @@ E2E_DATA_DIR = "/tmp/fossor_e2e_data"
 E2E_URL = f"http://127.0.0.1:{E2E_PORT}"
 
 
-def defer_newest_proposed_campaign(minutes: int = 60) -> int:
+def defer_newest_proposed_campaign(minutes: int = 60, campaign_id: int | None = None) -> int:
     """Écarte l'échéance de la campagne qui vient d'être créée.
 
     La boucle des campagnes tourne toutes les 10 s dans le serveur e2e et
@@ -29,11 +29,18 @@ def defer_newest_proposed_campaign(minutes: int = 60) -> int:
     when = (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat()
     conn = sqlite3.connect(f"{E2E_DATA_DIR}/fossor.db", timeout=20)
     try:
-        row = conn.execute(
-            "SELECT MAX(id) FROM campaigns WHERE status='proposed'"
-        ).fetchone()
-        assert row and row[0], "aucune campagne proposée à écarter"
-        campaign_id = int(row[0])
+        if campaign_id is None:
+            row = conn.execute(
+                "SELECT MAX(id) FROM campaigns WHERE status='proposed'"
+            ).fetchone()
+            assert row and row[0], "aucune campagne proposée à écarter"
+            campaign_id = int(row[0])
+        else:
+            campaign_id = int(campaign_id)
+            row = conn.execute(
+                "SELECT status FROM campaigns WHERE id=?", (campaign_id,)
+            ).fetchone()
+            assert row and row[0] == "proposed", f"campagne #{campaign_id} non proposée"
         conn.execute("UPDATE campaigns SET start_at=? WHERE id=?", (when, campaign_id))
         conn.commit()
     finally:
