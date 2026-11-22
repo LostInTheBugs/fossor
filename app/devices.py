@@ -402,12 +402,16 @@ def filter_external_miners(
         is_profile_unit = (
             any(software in text for software in softwares) if softwares else True
         )
-        if (
-            port is not None
-            and port in ports
-            and str(entry.get("kind") or "") != "solo"
-            and is_profile_unit
-        ):
+        # 2026.11.026 : une entrée solo contaminée (nom du logiciel Fossor,
+        # pool ou algorithme d'un autre processus, port du profil) est le
+        # résidu de l'ancienne fusion ; elle n'est pas un vrai nœud BigCoin.
+        if str(entry.get("kind") or "") == "solo":
+            contaminated = bool(entry.get("pool") or entry.get("algorithm"))
+            if is_profile_unit and (contaminated or (port is not None and port in ports)):
+                continue
+            kept.append(entry)
+            continue
+        if port is not None and port in ports and is_profile_unit:
             continue
         kept.append(entry)
     return kept
