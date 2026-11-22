@@ -659,6 +659,13 @@ def _store_metrics(db, machine, stats: dict[str, Any], ts: str) -> int:
     status.api_port = stats.get("api_port")
     status.total_hashrate_hs = _numeric(stats.get("total_hashrate_hs"))
     status.total_power_w = _numeric(stats.get("total_power_w"))
+    # §10.7 : puissance à la prise par machine, à chaque collecte.
+    try:
+        from app import history
+
+        history.record_plug_sample(db, machine, status.total_power_w)
+    except Exception:  # pragma: no cover - l'historisation ne casse pas la collecte
+        logger.warning("historisation de la puissance à la prise en échec", exc_info=True)
     status.api_error = stats.get("api_error")
     status.profiles_json = (
         json_lib.dumps(stats.get("profiles"), ensure_ascii=False)
@@ -745,10 +752,13 @@ def _purge_once_a_day() -> None:
     if _last_purge_date == today:
         return
     try:
-        purge_old_metrics()
+        # §10.7 : agrégation horaire/journalière puis purge bornée, journalisées.
+        from app import history
+
+        history.run_maintenance()
         _last_purge_date = today
     except Exception:  # pragma: no cover - defensive
-        logger.warning("metrics purge failed", exc_info=True)
+        logger.warning("maintenance de l'historique en échec", exc_info=True)
 
 
 # ── One machine ───────────────────────────────────────────────────────

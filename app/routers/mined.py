@@ -268,6 +268,14 @@ async def mined_refresh(db: Session = Depends(get_db), _user=Depends(require_log
     coins = db.query(Coin).all()
     ids = [c.coingecko_id for c in coins if c.coingecko_id and c.coingecko_verified]
     fetched = await prices.fetch_prices(ids, force=True) if ids else {}
+    # §10.7 : prix daté, pour valoriser une réception à sa propre date.
+    try:
+        from app import history
+
+        if history.record_prices(db, coins, fetched):
+            db.commit()
+    except Exception:  # pragma: no cover - un prix manquant ne casse pas le rafraîchissement
+        db.rollback()
 
     report: list[dict[str, Any]] = []
     stamp = _now()

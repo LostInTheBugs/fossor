@@ -79,6 +79,7 @@ header h1{font-size:26px}
     <button class="subtab" id="tabSpec" data-panel="panel-spec">Spec mining</button>
     <button class="subtab" id="tabAi" data-panel="panel-ai">Analyse IA</button>
     <button class="subtab" id="tabEnergy" data-panel="panel-energy">Électricité</button>
+    <button class="subtab" id="tabHistory" data-panel="panel-history">Données</button>
     <button class="subtab" id="tabNotifications" data-panel="panel-notifications">Notifications</button>
     <button class="subtab" id="tabUpdate" data-panel="panel-update">Mise à jour</button>
     <button class="subtab" id="tabWatchdog" data-panel="panel-watchdog">Watchdog</button>
@@ -98,6 +99,18 @@ header h1{font-size:26px}
       <div class="field narrow"><label>Rester connecté (jours)</label><input type="number" id="authDays" min="1" max="365" value="30"></div>
       <div class="actions"><button class="btn" id="authSave">Enregistrer</button><span id="authState" class="chip off">—</span></div>
       <p class="sub" id="authBypass" style="margin-top:10px"></p>
+    </div>
+  </div>
+
+  <div id="panel-history" style="display:none">
+    <div class="card">
+      <h2>Rétention de l'historique</h2>
+      <div class="sub">Les données brutes (un point par device et par collecte) sont agrégées en heures puis en jours avant d'être purgées. Un passage par jour, borné et journalisé (Log → Audit, routine « history »). Le journalier n'est jamais purgé.</div>
+      <div class="field narrow"><label>Données brutes (jours)</label><input type="number" id="histRawDays" min="1" max="3650" value="30"></div>
+      <div class="field narrow"><label>Agrégats horaires (jours)</label><input type="number" id="histHourlyDays" min="1" max="3650" value="365"></div>
+      <div class="field narrow"><label>Agrégats journaliers</label><input type="text" value="illimités" disabled></div>
+      <div class="actions"><button class="btn" id="histSave" type="button">Enregistrer</button><span id="histState" class="chip off">—</span></div>
+      <div class="sub" style="margin-top:10px">Puissance à la prise historisée par machine ; prix datés enregistrés à chaque rafraîchissement des soldes. L'export comptable est sur la page <a href="/history" style="color:var(--accent)">Historique</a>.</div>
     </div>
   </div>
 
@@ -1265,15 +1278,32 @@ $('#enTempoFetch').addEventListener('click',async()=>{
   await loadEnergy();
 });
 
+const loadHistoryRetention=async()=>{
+  const r=await fetch('/api/history/retention',{credentials:'include'});
+  if(!r.ok){chip($('#histState'),'indisponible','off');return;}
+  const d=await r.json();
+  $('#histRawDays').value=d.raw_days;
+  $('#histHourlyDays').value=d.hourly_days;
+  chip($('#histState'),'brut '+d.raw_days+' j · horaire '+d.hourly_days+' j','on');
+};
+$('#histSave').addEventListener('click',async()=>{
+  const r=await fetch('/api/history/retention',{method:'PUT',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({raw_days:parseInt($('#histRawDays').value,10),hourly_days:parseInt($('#histHourlyDays').value,10)})});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){toast(d.detail||'Rétention refusée','err');return;}
+  chip($('#histState'),'brut '+d.raw_days+' j · horaire '+d.hourly_days+' j','on');
+  toast('Rétention enregistrée');
+});
+
 document.querySelectorAll('.subtab').forEach(button=>{
   button.addEventListener('click',()=>{
     document.querySelectorAll('.subtab').forEach(b=>b.classList.toggle('active',b===button));
-    ['panel-general','panel-spec','panel-ai','panel-energy','panel-notifications','panel-update','panel-vault','panel-watchdog'].forEach(id=>{
+    ['panel-general','panel-spec','panel-ai','panel-energy','panel-history','panel-notifications','panel-update','panel-vault','panel-watchdog'].forEach(id=>{
       $('#'+id).style.display=(id===button.dataset.panel)?'block':'none';
     });
     if(button.dataset.panel==='panel-spec')loadSpec();
     if(button.dataset.panel==='panel-ai')loadAI();
     if(button.dataset.panel==='panel-energy')loadEnergy();
+    if(button.dataset.panel==='panel-history')loadHistoryRetention();
     if(button.dataset.panel==='panel-notifications')loadNotifications();
     if(button.dataset.panel==='panel-update')loadUpdate();
     if(button.dataset.panel==='panel-vault'&&typeof loadVault==='function')loadVault();

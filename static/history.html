@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fossor — Historique</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#12161c;--card:#1a2029;--border:#2c3544;--txt:#e6edf3;--muted:#8b98a9;--accent:#4f8cff;--green:#3fb950;--red:#f85149;--yellow:#d29922}
+body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;min-height:100vh}
+.wrap{max-width:1100px;margin:0 auto;padding:28px 18px 40px}
+header{display:flex;justify-content:space-between;align-items:center;margin-bottom:22px;gap:12px;flex-wrap:wrap}
+header h1{font-size:26px}
+.nav-tabs{display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.nav-tabs a{color:var(--muted);padding:8px 16px;font-size:13.5px;font-weight:600;text-decoration:none;border:1px solid transparent;border-bottom:none;border-radius:10px 10px 0 0}
+.nav-tabs a:hover{color:var(--txt)}
+.nav-tabs a.active{background:var(--card);border-color:var(--border);color:var(--txt)}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px}
+.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:10px}
+.controls{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+.field{display:flex;flex-direction:column;gap:4px}
+.field label{font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);font-weight:600}
+select,input[type=datetime-local]{background:var(--bg);color:var(--txt);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-family:inherit;font-size:13px}
+.btn{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 14px;font:600 13px inherit;cursor:pointer}
+.btn.outline{background:transparent;color:var(--txt);border:1px solid var(--border)}
+.btn.sm{padding:5px 10px;font-size:12px}
+.range{display:flex;gap:4px;flex-wrap:wrap}
+.range button{background:var(--bg);color:var(--muted);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font:600 12px inherit;cursor:pointer}
+.range button.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.chart{margin-top:8px;background:var(--bg);border-radius:10px;padding:8px 6px 2px}
+.legend{display:flex;flex-wrap:wrap;gap:4px;color:var(--muted);font-size:11px;padding:4px 10px 8px}
+.empty{color:var(--muted);font-size:13px;padding:22px;text-align:center;border:1px dashed var(--border);border-radius:12px}
+.mono{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--muted)}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+.err{margin-top:10px;padding:8px 10px;border:1px solid #5a2a2a;border-radius:8px;background:#241618;color:#f0a1a1;font-size:11.5px;display:none}
+.chip{display:inline-block;font-size:10px;font-weight:700;padding:2px 9px;border-radius:999px;text-transform:uppercase;letter-spacing:.3px;border:1px solid var(--border);color:var(--muted)}
+.note{color:var(--muted);font-size:11.5px;margin-top:8px}
+</style>
+  <script src="/static/nav.js" defer></script>
+  <script src="/static/chart.js" defer></script>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div><h1>🕰️ Historique</h1><span style="color:var(--muted);font-size:13px">Séries 24 h → 1 an, par machine, device ou coin</span></div>
+    <div class="mono" id="historyState">—</div>
+  </header>
+  <nav id="nav"></nav>
+
+  <div class="card">
+    <h2>Séries</h2>
+    <div class="controls">
+      <div class="field"><label for="scope">Portée</label>
+        <select id="scope">
+          <option value="machine">Machine</option>
+          <option value="device">Device</option>
+          <option value="coin">Coin</option>
+        </select>
+      </div>
+      <div class="field" style="min-width:240px"><label for="target">Cible</label>
+        <select id="target"></select>
+      </div>
+      <div class="field"><label>Période</label>
+        <div class="range" id="range">
+          <button type="button" data-range="24h" class="active">24 h</button>
+          <button type="button" data-range="7d">7 jours</button>
+          <button type="button" data-range="30d">30 jours</button>
+          <button type="button" data-range="1y">1 an</button>
+          <button type="button" data-range="custom">Libre</button>
+        </div>
+      </div>
+      <div class="field" id="customBox" style="display:none"><label for="customStart">Début</label>
+        <input type="datetime-local" id="customStart">
+      </div>
+      <div class="field" id="customBox2" style="display:none"><label for="customEnd">Fin</label>
+        <input type="datetime-local" id="customEnd">
+      </div>
+      <button class="btn" id="applyBtn" type="button">Afficher</button>
+    </div>
+    <div class="err" id="seriesError"></div>
+  </div>
+
+  <div id="charts">
+    <div class="card"><h2>Hashrate</h2><div class="chart" id="chart-hashrate"></div></div>
+    <div class="card"><h2>Consommation — DC et prise</h2><div class="chart" id="chart-power"></div></div>
+    <div class="card"><h2>Températures</h2><div class="chart" id="chart-temp"></div></div>
+    <div class="card" id="coinCards" style="display:none">
+      <h2>Soldes et valeur</h2>
+      <div class="grid2">
+        <div><div class="mono">Solde de pool</div><div class="chart" id="chart-balance"></div></div>
+        <div><div class="mono">Valeur en €</div><div class="chart" id="chart-value"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Export comptable (CSV)</h2>
+    <div class="controls">
+      <div class="field"><label for="exportStart">Début</label><input type="date" id="exportStart"></div>
+      <div class="field"><label for="exportEnd">Fin</label><input type="date" id="exportEnd"></div>
+      <div class="field"><label for="exportCoin">Coin</label><select id="exportCoin"><option value="">Tous</option></select></div>
+      <button class="btn outline" id="exportBtn" type="button">Télécharger le CSV</button>
+    </div>
+    <div class="note">Une ligne par réception (hausse du solde payé), séparateur « ; », décimales françaises, UTF-8 BOM.
+      Aucun wallet complet, aucune IP. <strong>Données fournies à titre informatif, pas de conseil fiscal.</strong></div>
+    <div class="err" id="exportError"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var state = { scope: "machine", target: "", range: "24h", targets: null };
+
+  function $(id) { return document.getElementById(id); }
+
+  function esc(text) {
+    return String(text == null ? "" : text).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  }
+
+  function fail(el, message) {
+    el.textContent = message;
+    el.style.display = message ? "block" : "none";
+  }
+
+  function fillTargets() {
+    var scope = state.scope;
+    var select = $("target");
+    select.innerHTML = "";
+    if (!state.targets) { return; }
+    var rows = [];
+    if (scope === "machine") {
+      rows = (state.targets.machines || []).map(function (m) { return [m.uuid, m.name]; });
+    } else if (scope === "device") {
+      rows = (state.targets.devices || []).map(function (d) { return [d.uuid, d.label]; });
+    } else {
+      rows = (state.targets.coins || []).map(function (c) { return [c, c]; });
+    }
+    if (!rows.length) {
+      select.innerHTML = '<option value="">Aucune cible</option>';
+      state.target = "";
+      return;
+    }
+    rows.forEach(function (row) {
+      var option = document.createElement("option");
+      option.value = row[0];
+      option.textContent = row[1];
+      select.appendChild(option);
+    });
+    select.value = rows[0][0];
+    state.target = rows[0][0];
+    var exportCoin = $("exportCoin");
+    exportCoin.innerHTML = '<option value="">Tous</option>';
+    (state.targets.coins || []).forEach(function (ticker) {
+      var option = document.createElement("option");
+      option.value = ticker;
+      option.textContent = ticker;
+      exportCoin.appendChild(option);
+    });
+  }
+
+  function seriesUrl() {
+    var params = new URLSearchParams({ scope: state.scope, target: state.target, range: state.range });
+    if (state.range === "custom") {
+      var start = $("customStart").value;
+      var end = $("customEnd").value;
+      if (!start || !end) { throw new Error("Période libre : renseignez le début et la fin."); }
+      params.set("start", new Date(start).toISOString());
+      params.set("end", new Date(end).toISOString());
+    }
+    return "/api/history/series?" + params.toString();
+  }
+
+  function pointsOf(points, field) {
+    return points.filter(function (p) { return p[field] != null; })
+      .map(function (p) { return [p.ts, p[field]]; });
+  }
+
+  function render(payload) {
+    var points = payload.points || [];
+    $("historyState").textContent = payload.count + " point(s) — résolution " + payload.resolution;
+    var isCoin = state.scope === "coin";
+    $("coinCards").style.display = isCoin ? "block" : "none";
+    ["chart-hashrate", "chart-power", "chart-temp"].forEach(function (id) {
+      $(id).parentElement.style.display = isCoin ? "none" : "block";
+    });
+    if (isCoin) {
+      window.FossorChart.render($("chart-balance"), {
+        title: "Solde de pool",
+        unit: "",
+        series: [{ label: "Solde", color: "#4f8cff", points: pointsOf(points, "balance") }]
+      });
+      window.FossorChart.render($("chart-value"), {
+        title: "Valeur en €",
+        unit: "€",
+        series: [{ label: "Valeur", color: "#3fb950", points: pointsOf(points, "value_eur") }]
+      });
+      return;
+    }
+    window.FossorChart.render($("chart-hashrate"), {
+      title: "Hashrate",
+      unit: "H/s",
+      series: [{ label: "Hashrate", color: "#4f8cff", points: pointsOf(points, "hashrate_hs") }]
+    });
+    window.FossorChart.render($("chart-power"), {
+      title: "Consommation",
+      unit: "W",
+      series: [
+        { label: "DC", color: "#4f8cff", points: pointsOf(points, "power_w") },
+        { label: "Prise", color: "#d29922", points: pointsOf(points, "power_plug_w") }
+      ]
+    });
+    window.FossorChart.render($("chart-temp"), {
+      title: "Températures",
+      unit: "°C",
+      series: [{ label: "Température", color: "#f85149", points: pointsOf(points, "temp_c") }]
+    });
+  }
+
+  function reload() {
+    fail($("seriesError"), "");
+    if (!state.target) { return; }
+    var url;
+    try { url = seriesUrl(); } catch (error) { fail($("seriesError"), error.message); return; }
+    fetch(url, { credentials: "same-origin" })
+      .then(function (response) {
+        if (!response.ok) { return response.json().then(function (body) { throw new Error(body.detail || response.status); }); }
+        return response.json();
+      })
+      .then(render)
+      .catch(function (error) {
+        fail($("seriesError"), String(error.message || error));
+        $("historyState").textContent = "—";
+      });
+  }
+
+  $("scope").addEventListener("change", function () {
+    state.scope = this.value;
+    fillTargets();
+    reload();
+  });
+  $("target").addEventListener("change", function () { state.target = this.value; reload(); });
+  $("range").addEventListener("click", function (event) {
+    var button = event.target.closest("button[data-range]");
+    if (!button) { return; }
+    state.range = button.dataset.range;
+    Array.prototype.forEach.call(this.querySelectorAll("button"), function (item) {
+      item.classList.toggle("active", item === button);
+    });
+    var custom = state.range === "custom";
+    $("customBox").style.display = custom ? "flex" : "none";
+    $("customBox2").style.display = custom ? "flex" : "none";
+    if (!custom) { reload(); }
+  });
+  $("applyBtn").addEventListener("click", reload);
+
+  $("exportBtn").addEventListener("click", function () {
+    fail($("exportError"), "");
+    var params = new URLSearchParams();
+    var start = $("exportStart").value;
+    var end = $("exportEnd").value;
+    var coin = $("exportCoin").value;
+    if (start) { params.set("start", new Date(start + "T00:00:00").toISOString()); }
+    if (end) { params.set("end", new Date(end + "T23:59:59").toISOString()); }
+    if (coin) { params.set("coin", coin); }
+    var href = "/api/history/export.csv" + (params.toString() ? "?" + params.toString() : "");
+    var link = document.createElement("a");
+    link.href = href;
+    link.setAttribute("download", "");
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  });
+
+  fetch("/api/history/targets", { credentials: "same-origin" })
+    .then(function (response) { return response.ok ? response.json() : Promise.reject(response.status); })
+    .then(function (targets) {
+      state.targets = targets;
+      fillTargets();
+      reload();
+    })
+    .catch(function () {
+      fail($("seriesError"), "Impossible de charger les cibles.");
+      $("historyState").textContent = "—";
+    });
+})();
+</script>
+</body>
+</html>

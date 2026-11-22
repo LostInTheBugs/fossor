@@ -305,6 +305,72 @@ class Metric(Base):
     load_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
+class MetricAgg(Base):
+    """Buckets horaires/journaliers des métriques (§10.7).
+
+    Les données brutes de ``metrics`` sont agrégées par (machine ou device),
+    par heure puis par jour ; la purge et l'agrégation sont bornées et
+    journalisées (voir ``app.history``).
+    """
+
+    __tablename__ = "metric_aggs"
+    __table_args__ = (
+        UniqueConstraint("scope", "scope_uuid", "bucket", "ts", name="uq_metric_agg"),
+        Index("ix_metric_aggs_scope_ts", "scope", "scope_uuid", "ts"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    scope: Mapped[str] = mapped_column(String(10), nullable=False)  # machine | device
+    scope_uuid: Mapped[str] = mapped_column(String(36), nullable=False)
+    bucket: Mapped[str] = mapped_column(String(4), nullable=False)  # hour | day
+    ts: Mapped[str] = mapped_column(String(30), nullable=False)
+    hashrate_avg_hs: Mapped[float | None] = mapped_column(Float, nullable=True)
+    hashrate_max_hs: Mapped[float | None] = mapped_column(Float, nullable=True)
+    power_avg_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    power_max_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    power_plug_avg_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    power_plug_max_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    temp_avg_c: Mapped[float | None] = mapped_column(Float, nullable=True)
+    temp_max_c: Mapped[float | None] = mapped_column(Float, nullable=True)
+    samples: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class PlugPowerSample(Base):
+    """Puissance à la prise d'une machine (§10.7), un point par collecte.
+
+    ``power_w`` vient du calcul alimentation (DC / rendement) ; ``source``
+    vaut ``psu`` quand au moins une PSU est déclarée, ``dc`` sinon (la valeur
+    est alors la puissance DC mesurée, pas une mesure à la prise).
+    """
+
+    __tablename__ = "plug_power_samples"
+    __table_args__ = (Index("ix_plug_samples_machine_ts", "machine_uuid", "ts"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    machine_uuid: Mapped[str] = mapped_column(String(36), nullable=False)
+    ts: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+    power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    dc_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source: Mapped[str] = mapped_column(String(10), default="dc")
+
+
+class PriceSample(Base):
+    """Prix daté d'un token (§10.7 / §4.16) — sert à valoriser une réception
+    à sa date. Aucun prix n'est inventé : sans point antérieur, la valeur
+    reste vide dans l'export comptable.
+    """
+
+    __tablename__ = "price_samples"
+    __table_args__ = (Index("ix_price_samples_ticker_ts", "ticker", "ts"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ticker: Mapped[str] = mapped_column(String(20), nullable=False)
+    ts: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+    eur: Mapped[float | None] = mapped_column(Float, nullable=True)
+    usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source: Mapped[str] = mapped_column(String(40), default="")
+
+
 class Coin(Base):
     """Token catalogue (§4.3): ticker, links, verified CoinGecko id, exchanges, manual price."""
 
