@@ -205,3 +205,96 @@ def test_upgrade_refuses_read_only_database(tmp_path, monkeypatch):
         assert "readonly" in message or "read-only" in message or "non migrable" in message
     finally:
         path.chmod(0o600)
+
+
+# ── Schéma 026 → courant : les tables de l'historique §10.7 ───────────
+NEW_TABLES_063 = ("metric_aggs", "plug_power_samples", "price_samples")
+
+
+def _build_026(tmp_path, monkeypatch):
+    """Base au schéma 026 : migrations réelles, puis tables 6.3 retirées."""
+    path = tmp_path / "fossor-026.db"
+    _point_at(path, monkeypatch)
+    database.init_db()
+    database.engine.dispose()
+    conn = sqlite3.connect(path)
+    try:
+        for table in NEW_TABLES_063:
+            conn.execute(f"DROP TABLE {table}")
+        conn.commit()
+        remaining = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        assert not (set(NEW_TABLES_063) & remaining)
+    finally:
+        conn.close()
+    return path
+
+
+def _fill_026(path):
+    """Base 026 remplie : une machine et 24 métriques brutes déjà collectées."""
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute(
+            "INSERT INTO machines (name, host, ssh_port, ssh_user, auth_type, sudo,"
+            " os_kind, machine_kind, usage, vm_host, fossor_host, enabled,"
+            " simulation_disabled, watchdog_reboot_ok, watchdog_power_ok,"
+            " platform_power_w, created_at, updated_at)"
+            " VALUES ('rig-026', '198.51.100.26', 22, 'fossor', 'key', 'none',"
+            " 'linux', 'rig', 'mining', 0, 0, 1, 0, 1, 1, 0, ?, ?)",
+            (TS, TS),
+        )
+        machine_uuid = "02600000-0000-0000-0000-000000000026"
+        for hour in range(24):
+            conn.execute(
+                "INSERT INTO metrics (machine_uuid, ts, power_w) VALUES (?, ?, ?)",
+                (machine_uuid, f"2026-11-01T{hour:02d}:00:00+00:00", 100.0 + hour),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return "02600000-0000-0000-0000-000000000026"
+
+
+def test_upgrade_from_026_creates_history_tables_on_filled_database(tmp_path, monkeypatch):
+    """La 026 remplie démarre : les trois tables 6.3 existent et sont utilisables."""
+    path = _build_026(tmp_path, monkeypatch)
+    machine_uuid = _fill_026(path)
+
+    _upgrade(path, monkeypatch)
+
+    conn = sqlite3.connect(path)
+    try:
+        tables = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        assert set(NEW_TABLES_063) <= tables
+        # Les données de la 026 sont intactes.
+        assert conn.execute("SELECT COUNT(*) FROM machines").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM metrics").fetchone()[0] == 24
+        assert conn.execute(
+            "SELECT COUNT(*) FROM metrics WHERE machine_uuid = ?", (machine_uuid,)
+        ).fetchone()[0] == 24
+        # Les nouvelles tables acceptent leurs lignes (pas seulement présentes).
+        conn.execute(
+            "INSERT INTO metric_aggs (scope, scope_uuid, bucket, ts, samples)"
+            " VALUES ('machine', ?, 'hour', '2026-11-01T00:00:00+00:00', 1)",
+            (machine_uuid,),
+        )
+        conn.execute(
+            "INSERT INTO plug_power_samples (machine_uuid, ts, power_w, dc_w, source)"
+            " VALUES (?, '2026-11-01T00:00:00+00:00', 120.0, 110.0, 'psu')",
+            (machine_uuid,),
+        )
+        conn.execute(
+            "INSERT INTO price_samples (ticker, ts, eur, source) VALUES ('XMR', '2026-11-01T00:00:00+00:00', 150.0, 'test')"
+        )
+        conn.commit()
+        assert conn.execute("SELECT COUNT(*) FROM metric_aggs").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM plug_power_samples").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM price_samples").fetchone()[0] == 1
+        assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    finally:
+        conn.close()
