@@ -27,9 +27,12 @@ from app.models import (
     MinerProfile,
 )
 
-ACTIVE_STATUSES = ("running", "stopping")
+ACTIVE_STATUSES = ("queued", "running", "stopping")
+TERMINAL_STATUSES = ("done", "failed", "cancelled", "restore_failed")
 POLL_S = 15.0
 _LOCK: asyncio.Lock | None = None
+#: Tâches de fond du benchmark, par identifiant de run. Une seule boucle.
+_TASKS: dict[int, asyncio.Task] = {}
 
 
 def lock() -> asyncio.Lock:
@@ -170,7 +173,7 @@ async def apply_watts(db: Any, run: Any, machine: Any, device: Any, watts: int,
 
 
 async def reapply(db: Any, run: Any, *, simulated: bool | None = None,
-                  backend: Any = None) -> dict[str, Any]:
+                  backend: Any = None, reason: str = "") -> dict[str, Any]:
     """Rejoue la limite retenue, sans nouveau balayage."""
     from app import pilotage
 
@@ -189,28 +192,75 @@ async def reapply(db: Any, run: Any, *, simulated: bool | None = None,
     results = []
     for device in devices_for(db, run):
         results.append(await apply_watts(db, run, machine, device, watts, simulated))
+    from app import hiveos as HV
+
     run.applied_watts = int(watts)
-    run.applied_at = B.iso(B.now_utc())
-    run.applied_uptime_s = int(getattr(machine, "uptime_s", 0) or 0)
+    if not HV.is_hiveos(machine):
+        run.applied_at = B.iso(B.now_utc())
+        run.applied_uptime_s = machine_uptime(db, machine)
     db.commit()
-    journal(db, run, "reapplied", f"limite {watts} W rejouee (mode {run.apply_mode})",
+    suffix = f" — {reason}" if reason else ""
+    journal(db, run, "reapplied-after-reboot" if reason == "redemarrage" else "reapplied",
+            f"limite {watts} W rejouee (mode {run.apply_mode}){suffix}",
             simulated=simulated, detail=results)
     return {"ok": all(bool(item.get("ok")) for item in results), "watts": int(watts),
             "applied": results}
 
 
-def reapply_after_reboot(db: Any) -> list[dict[str, Any]]:
+def machine_uptime(db: Any, machine: Any) -> int:
+    """Uptime releve par la derniere collecte (``machine_status``)."""
+    from app.models import MachineStatus
+
+    if machine is None or not getattr(machine, "uuid", None):
+        return 0
+    status = (
+        db.query(MachineStatus)
+        .filter(MachineStatus.machine_uuid == machine.uuid)
+        .first()
+    )
+    if status is None or status.uptime_s is None:
+        return 0
+    return int(status.uptime_s)
+
+
+def reapply_after_reboot(db: Any, machine_id: Any = None) -> list[dict[str, Any]]:
     """Benchmarks dont la limite a ete perdue par un redemarrage."""
+    from app.models import MachineStatus
+
+    query = db.query(BenchmarkRun).filter(BenchmarkRun.applied_at != None)  # noqa: E711
+    if machine_id is not None:
+        query = query.filter(BenchmarkRun.machine_id == int(machine_id))
     pending: list[dict[str, Any]] = []
-    for run in db.query(BenchmarkRun).filter(BenchmarkRun.applied_at != None).all():  # noqa: E711
+    for run in query.all():
         machine = db.get(Machine, run.machine_id)
-        if machine is None:
+        if machine is None or not getattr(machine, "uuid", None):
             continue
-        if B.needs_reapply(run.applied_uptime_s, getattr(machine, "uptime_s", None)):
+        status = (
+            db.query(MachineStatus)
+            .filter(MachineStatus.machine_uuid == machine.uuid)
+            .first()
+        )
+        if status is None or not status.online or status.uptime_s is None:
+            continue
+        if B.needs_reapply(run.applied_uptime_s, status.uptime_s):
             pending.append({"run_id": run.id, "machine_id": run.machine_id,
                             "applied_uptime_s": run.applied_uptime_s,
-                            "uptime_s": getattr(machine, "uptime_s", None)})
+                            "uptime_s": int(status.uptime_s)})
     return pending
+
+
+async def apply_pending_reboots(db: Any, machine_id: Any = None) -> list[dict[str, Any]]:
+    """Reapplique la limite retenue apres un redemarrage, et le journalise."""
+    results: list[dict[str, Any]] = []
+    for item in reapply_after_reboot(db, machine_id=machine_id):
+        run = db.get(BenchmarkRun, item["run_id"])
+        if run is None or run.status in ACTIVE_STATUSES:
+            continue
+        result = await reapply(db, run, reason="redemarrage")
+        results.append({"run_id": run.id, "machine_id": run.machine_id,
+                        "watts": result.get("watts"), "ok": bool(result.get("ok")),
+                        "uptime_s": item["uptime_s"]})
+    return results
 
 
 # ── Mesure ────────────────────────────────────────────────────────────
@@ -447,6 +497,46 @@ def store_profiles(db: Any, run: Any, machine: Any, bests: dict[str, Any]) -> No
     db.commit()
 
 
+# ── Tâche de fond ────────────────────────────────────────────────────
+def start_run(db: Any, run: Any) -> bool:
+    """Marque le run en file et le deroule dans une tache de fond."""
+    existing = _TASKS.get(run.id)
+    if existing is not None and not existing.done():
+        return False
+    if run.status in ACTIVE_STATUSES:
+        return False
+    run.status = "queued"
+    db.commit()
+    task = asyncio.create_task(_execute_task(run.id))
+    _TASKS[run.id] = task
+    task.add_done_callback(lambda _task, rid=run.id: _TASKS.pop(rid, None))
+    return True
+
+
+async def _execute_task(run_id: int) -> None:
+    """Execute un benchmark hors de la requete HTTP, sur sa propre session."""
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        run = db.get(BenchmarkRun, int(run_id))
+        if run is None:
+            return
+        await execute(db, run)
+    except Exception as exc:  # une tache de fond ne tue jamais la boucle
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        run = db.get(BenchmarkRun, int(run_id))
+        if run is not None:
+            journal(db, run, "background-error", str(exc)[:800], result="fail",
+                    simulated=bool(run.simulated))
+            finish(db, run, "failed", simulated=bool(run.simulated))
+    finally:
+        db.close()
+
+
 # ── Cycle complet ─────────────────────────────────────────────────────
 def finish(db: Any, run: Any, status: str, *, simulated: bool) -> dict[str, Any]:
     run.status = status
@@ -524,7 +614,7 @@ async def execute(db: Any, run: Any, *, backend: Any = None,
         if not HV.is_hiveos(machine):
             run.applied_watts = int(watts)
             run.applied_at = B.iso(B.now_utc())
-            run.applied_uptime_s = int(getattr(machine, "uptime_s", 0) or 0)
+            run.applied_uptime_s = machine_uptime(db, machine)
         db.commit()
     except Exception as exc:
         journal(db, run, "apply-failed", str(exc)[:400], result="fail", simulated=simulated)

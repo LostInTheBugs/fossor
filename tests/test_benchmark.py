@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 import uuid as uuid_lib
 
 import pytest
@@ -150,6 +152,23 @@ def _machine(db, *, hiveos=False, uptime=5000, model="RTX 5060 Ti"):
     return machine, device, profile
 
 
+async def _wait_run(client, run_id: int) -> dict:
+    """Attend le statut terminal d'un run deja lance, par polling."""
+    for _ in range(1200):
+        run = (await client.get(f"/api/benchmark/{run_id}")).json()
+        if run["status"] not in ("queued", "running", "stopping"):
+            return run
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"benchmark #{run_id} toujours actif apres 60 s")
+
+
+async def _execute_and_wait(client, run_id: int) -> dict:
+    """Lance le run en fond (202) puis attend son statut terminal."""
+    response = await client.post(f"/api/benchmark/{run_id}/execute", json={})
+    assert response.status_code == 202, response.text
+    return await _wait_run(client, run_id)
+
+
 def _run(db, machine, profile, **kw):
     from app.models import BenchmarkRun
 
@@ -211,7 +230,7 @@ async def test_benchmark_simule_jusquau_bout(client):
     try:
         machine, device, profile = _machine(db)
         created = (await client.post("/api/benchmark", json={"machine_id": machine.id})).json()
-        payload = (await client.post(f"/api/benchmark/{created['id']}/execute", json={})).json()["run"]
+        payload = await _execute_and_wait(client, created["id"])
         assert payload["status"] == "done"
         assert payload["simulated"] is True
         assert len(payload["steps"]) == 5
@@ -235,7 +254,7 @@ async def test_application_du_mode_puis_reapplication(client):
     try:
         machine, device, profile = _machine(db)
         created = (await client.post("/api/benchmark", json={"machine_id": machine.id})).json()
-        await client.post(f"/api/benchmark/{created['id']}/execute", json={})
+        await _execute_and_wait(client, created["id"])
         applied = (await client.post(
             f"/api/benchmark/{created['id']}/apply",
             json={"mode": "efficiency"})).json()
@@ -255,7 +274,7 @@ async def test_hiveos_proposition_seulement(client):
     try:
         machine, device, profile = _machine(db, hiveos=True)
         created = (await client.post("/api/benchmark", json={"machine_id": machine.id})).json()
-        payload = (await client.post(f"/api/benchmark/{created['id']}/execute", json={})).json()["run"]
+        payload = await _execute_and_wait(client, created["id"])
         assert payload["hiveos_proposal"]
         assert "HiveOS" in payload["hiveos_proposal"]
         assert payload["applied_watts"] is None
@@ -270,9 +289,75 @@ async def test_annulation_retour_verifie(client):
         machine, device, profile = _machine(db)
         created = (await client.post("/api/benchmark", json={"machine_id": machine.id})).json()
         await client.post(f"/api/benchmark/{created['id']}/cancel", json={})
-        payload = (await client.post(f"/api/benchmark/{created['id']}/execute", json={})).json()["run"]
+        payload = await _execute_and_wait(client, created["id"])
         assert payload["status"] == "cancelled"
         assert payload["restore_status"] == "ok"
         assert payload["verified"] is True
+    finally:
+        db.close()
+
+
+# ── Tâche de fond : 202 et boucle jamais bloquée ────────────────────
+async def test_execute_repond_202_et_ne_bloque_pas_la_boucle(client, monkeypatch):
+    db = _db()
+    try:
+        machine, device, profile = _machine(db)
+        created = (await client.post("/api/benchmark", json={"machine_id": machine.id})).json()
+
+        async def slow_measure(*args, **kwargs):
+            await asyncio.sleep(0.4)
+            return {"hashrate_hs": 1000.0, "power_w": 150.0, "temperature_c": 55.0,
+                    "accepted": 10, "rejected": 0, "reject_pct": 0.0}
+
+        monkeypatch.setattr(RUN, "measure", slow_measure)
+        response = await client.post(f"/api/benchmark/{created['id']}/execute", json={})
+        assert response.status_code == 202
+        assert response.json()["id"] == created["id"]
+        assert response.json()["status"] == "queued"
+
+        started = time.perf_counter()
+        version = await client.get("/api/version")
+        elapsed = time.perf_counter() - started
+        assert version.status_code == 200
+        assert elapsed < 1.0, f"/api/version a pris {elapsed:.2f} s pendant le benchmark"
+
+        payload = await _wait_run(client, created["id"])
+        assert payload["status"] == "done"
+        assert len(payload["steps"]) == 5
+    finally:
+        db.close()
+
+
+async def test_reapplication_automatique_apres_redemarrage(client):
+    db = _db()
+    try:
+        machine, device, profile = _machine(db)
+        machine.uuid = str(uuid_lib.uuid4())
+        db.commit()
+        created = (await client.post("/api/benchmark", json={"machine_id": machine.id})).json()
+        await _execute_and_wait(client, created["id"])
+
+        from app.models import BenchmarkEvent, BenchmarkRun, MachineStatus
+
+        run = db.get(BenchmarkRun, created["id"])
+        run.apply_mode = "efficiency"
+        run.bests_json = json.dumps({
+            "performance": {"watts": 180}, "efficiency": {"watts": 108}})
+        run.applied_watts = 108
+        run.applied_at = B.iso(B.now_utc())
+        run.applied_uptime_s = 5000
+        db.add(MachineStatus(machine_uuid=machine.uuid, ts=B.iso(B.now_utc()),
+                             online=True, uptime_s=120))
+        db.commit()
+
+        applied = await RUN.apply_pending_reboots(db, machine.id)
+        assert applied and applied[0]["ok"] is True
+        assert applied[0]["watts"] == 108
+
+        db.refresh(run)
+        assert run.applied_uptime_s == 120
+        kinds = [row.kind for row in db.query(BenchmarkEvent)
+                 .filter(BenchmarkEvent.run_id == run.id).all()]
+        assert "reapplied-after-reboot" in kinds
     finally:
         db.close()

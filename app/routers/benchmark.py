@@ -17,7 +17,7 @@ from app.models import BenchmarkEvent, BenchmarkProfile, BenchmarkRun, Benchmark
 
 router = APIRouter(prefix="/api", tags=["benchmark"])
 SUDOERS_RULE = (
-    "fossor ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -i [0-9]* -pl [0-9]*"
+    "fossor ALL=(root) NOPASSWD: /usr/local/sbin/fossor-gpu-pl"
 )
 
 
@@ -256,15 +256,17 @@ def detail(run_id: int, db: Session = Depends(get_db), user=Depends(require_logi
     return run_to_dict(db, run)
 
 
-@router.post("/benchmark/{run_id}/execute")
+@router.post("/benchmark/{run_id}/execute", status_code=202)
 async def execute(run_id: int, db: Session = Depends(get_db), user=Depends(require_login)) -> dict:
+    """Lance le benchmark en tache de fond : 202 + id, la page suit par polling."""
     run = db.get(BenchmarkRun, int(run_id))
     if run is None:
         raise HTTPException(status_code=404, detail="benchmark inconnu")
     if run.status in RUN.ACTIVE_STATUSES:
         raise HTTPException(status_code=409, detail="benchmark deja en cours")
-    result = await RUN.execute(db, run)
-    return {"result": result, "run": run_to_dict(db, run)}
+    if not RUN.start_run(db, run):
+        raise HTTPException(status_code=409, detail="benchmark deja en cours")
+    return {"id": run.id, "status": run.status, "run": run_to_dict(db, run, steps=False)}
 
 
 @router.post("/benchmark/{run_id}/cancel")

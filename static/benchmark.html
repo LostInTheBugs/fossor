@@ -244,12 +244,23 @@
         measure_min: Number($("benchMinutes").value) || 3,
         apply_mode: $("benchMode").value
       })
+    }).then(function (accepted) {
+      var id = accepted.id || (accepted.run && accepted.run.id);
+      return waitForRun(id);
     }).then(function (run) {
-      return api("/api/benchmark/" + run.id + "/execute", {method: "POST", body: "{}"});
-    }).then(function (payload) {
-      renderRun(payload.run);
+      renderRun(run);
       return loadOptions();
     }).catch(fail).then(function () { $("benchLaunch").disabled = false; });
+  }
+
+  var TERMINAL = ["done", "failed", "cancelled", "restore_failed"];
+  function waitForRun(id) {
+    return api("/api/benchmark/" + id).then(function (run) {
+      renderRun(run);
+      if (TERMINAL.indexOf(run.status) >= 0) { return run; }
+      return new Promise(function (resolve) { setTimeout(resolve, 1000); })
+        .then(function () { return waitForRun(id); });
+    });
   }
 
   function renderRun(run) {
