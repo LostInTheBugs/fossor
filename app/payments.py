@@ -34,11 +34,12 @@ PAYMENT_POOLS = {"luckypool"}
 COINGECKO_HISTORY_URL = "https://api.coingecko.com/api/v3/coins/{coin_id}/history"
 SYNC_INTERVAL_KEY = "pool_payments_interval"
 SYNC_LAST_KEY = "pool_payments_last_sync"
-SOLO_RPC_KEY = "solo_rpc_nodes"
 DEFAULT_SYNC_INTERVAL_S = 3600
 MIN_SYNC_INTERVAL_S = 300
 MAX_SYNC_INTERVAL_S = 86400
 MAX_PAYMENTS_PER_SYNC = 500
+SOLO_MAX_NODES = 5
+SOLO_MAX_TRANSACTIONS = 200
 MAX_HISTORY_PRICES_PER_SYNC = 10
 REQUEST_TIMEOUT_S = 20.0
 
@@ -369,71 +370,122 @@ def record_solo_blocks(db: Any, rows: list[dict[str, Any]]) -> list[Any]:
     return added
 
 
-def solo_nodes(db: Any) -> list[dict[str, Any]]:
-    """Read-only RPC nodes configured by the admin (``solo_rpc_nodes``)."""
-    from app.ai_config import get_setting
+def solo_coin_ticker(probe: dict[str, Any]) -> str:
+    """Ticker of a detected solo node (``bigcoin`` -> ``BIG``)."""
+    from app.external_miners import COIN_ALIASES, DEFAULT_COIN_HINTS
 
-    value = get_setting(db, SOLO_RPC_KEY, [])
-    if not isinstance(value, list):
-        return []
-    nodes: list[dict[str, Any]] = []
-    for row in value:
-        if isinstance(row, dict) and row.get("url") and row.get("coin"):
-            nodes.append(row)
-    return nodes
+    key = str(probe.get("coin") or probe.get("key") or "").strip().lower()
+    ticker = str(DEFAULT_COIN_HINTS.get(key) or "").upper() or key.upper()
+    return str(COIN_ALIASES.get(ticker, ticker)).upper()
 
 
-async def sync_solo_nodes(db: Any) -> dict[str, Any]:
-    """``listtransactions`` on each configured node — read-only, bounded.
+async def solo_node_probes(machine: Any) -> list[dict[str, Any]]:
+    """Solo nodes of *machine*, detected by the same ``ps`` probe as collect.
 
-    The node list is empty on a stock install, so nothing is contacted. The
-    RPC account/key is the node's own read-only account; Fossor never sends a
-    wallet key. If the node is unreachable the error is reported, not hidden.
+    Nothing is configured by hand: the list is exactly what the CPU collector
+    already sees (daemon, script, ``*-cli``), never a settings field.
     """
-    from app.models import PriceSample
+    from app.cpu_stats import plan_cpu_probes
+    from app.ssh_client import ps_miners_command, ssh_run_command
 
-    nodes = solo_nodes(db)
-    if not nodes:
-        return {"ok": False, "skipped": True, "error": "aucun nœud RPC solo configuré"}
+    raw = await ssh_run_command(machine, ps_miners_command(), audit_kind="solo-transactions")
+    if not raw.get("ok"):
+        raise RuntimeError(str(raw.get("error") or "sonde ps indisponible"))
+    return list(plan_cpu_probes(str(raw.get("stdout") or "")).get("nodes") or [])
+
+
+def parse_cli_response(stdout: str, key: str) -> Any | None:
+    """JSON printed after ``### SOLO <key>``; ``None`` if the CLI said nothing."""
+    import json
+
+    marker = f"### SOLO {key}"
+    body: list[str] = []
+    lines = (stdout or "").splitlines()
+    for index, line in enumerate(lines):
+        if line.strip() != marker:
+            continue
+        for row in lines[index + 1:]:
+            if row.startswith("### "):
+                break
+            body.append(row)
+        break
+    text = "\n".join(body).strip()
+    if not text.startswith(("{", "[")):
+        return None
+    try:
+        return json.loads(text)
+    except ValueError:
+        return None
+
+
+async def sync_solo_nodes(db: Any, machines: list[Any] | None = None) -> dict[str, Any]:
+    """``listtransactions`` through SSH, on the nodes the collector detected.
+
+    Same binary and same datadir as the ``### NODE`` probe, read-only and
+    bounded. No RPC account, no wallet key and no password is stored or sent:
+    the SSH key of the machine is the only credential. A missing CLI or a
+    refused right is written to the journal and reported, never worked around.
+    """
+    from app.models import Machine, PriceSample
+    from app.ssh_client import cpu_probe_command, ssh_run_command
+
+    rows = machines if machines is not None else (
+        db.query(Machine).filter(Machine.machine_kind == "host").all()
+    )
+    if not rows:
+        return {"ok": False, "skipped": True, "error": "aucune machine SSH"}
     if offline():
         return {"ok": False, "skipped": True, "error": "réseau désactivé (FOSSOR_OFFLINE=1)"}
-    import httpx
 
     report: list[dict[str, Any]] = []
-    for node in nodes[:5]:
-        url = str(node["url"])
+    for machine in rows:
+        label = str(getattr(machine, "name", "") or getattr(machine, "host", "") or "")
         try:
-            async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_S, transport=TRANSPORT) as client:
-                response = await client.post(
-                    url,
-                    json={
-                        "jsonrpc": "1.0",
-                        "id": "fossor",
-                        "method": "listtransactions",
-                        "params": ["*", int(node.get("count") or 200), 0, True],
-                    },
-                    auth=(str(node.get("user") or ""), str(node.get("password") or "")),
-                )
-            response.raise_for_status()
-            payload = response.json()
-            rows = parse_solo_transactions(payload, coin=str(node["coin"]), node=str(node.get("node") or url))
-            added = record_solo_blocks(db, rows)
-            for item in added:
-                db.commit()
-                priced = (
-                    db.query(PriceSample.id)
-                    .filter(PriceSample.ticker == item.coin_ticker, PriceSample.ts <= item.found_at)
-                    .first()
-                )
-                if priced is None:
-                    await ensure_historical_price(db, item.coin_ticker, item.found_at)
-            db.commit()
-            report.append({"node": node.get("node") or url, "ok": True, "seen": len(rows), "new": len(added)})
+            probes = await solo_node_probes(machine)
         except Exception as exc:
-            db.rollback()
-            logger.warning("RPC solo indisponible (%s): %s", node.get("node") or url, exc)
-            report.append({"node": node.get("node") or url, "ok": False, "error": str(exc)})
-    return {"ok": all(item.get("ok") for item in report), "nodes": report}
+            logger.warning("sonde solo indisponible (%s) : %s", label, exc)
+            report.append({"machine": label, "ok": False, "error": str(exc)})
+            continue
+        if not probes:
+            report.append({"machine": label, "ok": True, "skipped": True, "nodes": 0})
+            continue
+        for probe in probes[:SOLO_MAX_NODES]:
+            key = str(probe.get("key") or "")
+            node = f"{label}:{key}"
+            try:
+                command = cpu_probe_command(
+                    {"nodes": [probe]}, extra="listtransactions", tx_count=SOLO_MAX_TRANSACTIONS
+                )
+                raw = await ssh_run_command(machine, command, audit_kind="solo-transactions")
+                if not raw.get("ok"):
+                    raise RuntimeError(str(raw.get("error") or "SSH en échec"))
+                payload = parse_cli_response(str(raw.get("stdout") or ""), key)
+                if payload is None:
+                    raise RuntimeError(
+                        "CLI du nœud sans réponse listtransactions (binaire ou droits manquants)"
+                    )
+                found = parse_solo_transactions(
+                    payload, coin=solo_coin_ticker(probe), node=node
+                )
+                added = record_solo_blocks(db, found)
+                for item in added:
+                    db.commit()
+                    priced = (
+                        db.query(PriceSample.id)
+                        .filter(PriceSample.ticker == item.coin_ticker, PriceSample.ts <= item.found_at)
+                        .first()
+                    )
+                    if priced is None:
+                        await ensure_historical_price(db, item.coin_ticker, item.found_at)
+                db.commit()
+                report.append({"machine": label, "node": key, "ok": True,
+                               "seen": len(found), "new": len(added)})
+            except Exception as exc:
+                db.rollback()
+                logger.warning("blocs solo indisponibles (%s) : %s", node, exc)
+                report.append({"machine": label, "node": key, "ok": False, "error": str(exc)})
+    ok = all(item.get("ok") or item.get("skipped") for item in report)
+    return {"ok": ok, "nodes": report}
 
 
 # ── Orchestration ─────────────────────────────────────────────────────

@@ -832,7 +832,8 @@ async def ssh_solo_getbalance(machine: Any, actor: str = "system") -> dict[str, 
     )
 
 
-def cpu_probe_command(probes: dict[str, Any]) -> str:
+def cpu_probe_command(probes: dict[str, Any], *, extra: str = "",
+                      tx_count: int = 200) -> str:
     """Whitelisted, read-only ``collect_cpu`` command built from *probes*.
 
     Every interpolated value is validated here: an absolute path with no shell
@@ -973,6 +974,19 @@ def cpu_probe_command(probes: dict[str, Any]) -> str:
             f"echo '### NETPS {key}'",
             f"[ -n \"$P\" ] && RD \"$P\"{datadir_arg} getnetworkhashps",
         ]
+        if extra == "listtransactions":
+            # Même binaire, même datadir que la sonde : seule la méthode
+            # change. Lecture seule, nombre de lignes borné, aucune écriture.
+            try:
+                count = int(tx_count)
+            except (TypeError, ValueError):
+                count = 200
+            if not 1 <= count <= 500:
+                count = 200
+            lines += [
+                f"echo '### SOLO {key}'",
+                f"[ -n \"$P\" ] && RD \"$P\"{datadir_arg} listtransactions '*' {count} 0",
+            ]
         # (b) redirection du lanceur du script solo : « ~/… » est développé
         # avec le home du compte du processus (getent passwd).  Cette voie ne
         # dépend pas de /proc/<pid>/fd, réservé au propriétaire et à root.

@@ -283,3 +283,105 @@ async def test_payments_api_returns_truncated_address(client):
     assert body["count"] == 1
     assert body["rows"][0]["address"] == payments.mask_address(ADDRESS)
     assert ADDRESS not in response.text
+
+
+# ── Blocs solo par SSH (6.5-fin) ─────────────────────────────────────
+import asyncio
+import json
+import logging
+from pathlib import Path
+
+
+def _solo_probe():
+    return {
+        "key": "bigcoin",
+        "cli": "/home/fictif/bigcoin-mine/bigcoin/bigcoin-cli",
+        "datadir": "/home/fictif/bigcoin-mine/bigcoin/data",
+        "pid": 4242,
+        "coin": "bigcoin",
+    }
+
+
+def _host(db, name="hote-fictif"):
+    from app.models import Machine
+
+    machine = Machine(name=name, host="192.0.2.11", ssh_user="fictif", machine_kind="host")
+    db.add(machine)
+    db.commit()
+    db.refresh(machine)
+    return machine
+
+
+def test_solo_blocks_come_from_the_node_cli_over_ssh(monkeypatch):
+    calls = []
+
+    async def fake_probes(machine):
+        return [_solo_probe()]
+
+    payload = {
+        "result": [
+            {"category": "immature", "amount": 0.5, "blockheight": 900,
+             "time": 1762000000, "txid": "fictif-a"},
+            {"category": "generate", "amount": 0.5, "blockheight": 900,
+             "time": 1762000000, "txid": "fictif-a"},
+            {"category": "generate", "amount": 0.5, "blockheight": 901,
+             "time": 1762000100, "txid": "fictif-b"},
+        ]
+    }
+
+    async def fake_ssh(machine, command, **kwargs):
+        calls.append(command)
+        return {"ok": True, "stdout": "### SOLO bigcoin\n" + json.dumps(payload) + "\n"}
+
+    async def no_price(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(payments, "solo_node_probes", fake_probes)
+    monkeypatch.setattr("app.ssh_client.ssh_run_command", fake_ssh)
+    monkeypatch.setattr(payments, "ensure_historical_price", no_price)
+
+    with SessionLocal() as db:
+        machine = _host(db, "hote-fictif-cli")
+        report = asyncio.run(payments.sync_solo_nodes(db, machines=[machine]))
+        blocks = (
+            db.query(SoloBlock)
+            .filter(SoloBlock.coin_ticker == "BIG", SoloBlock.height.in_((900, 901)))
+            .all()
+        )
+        assert {block.height for block in blocks} == {900, 901}
+        assert all(block.reward == 0.5 for block in blocks)
+        assert report["ok"] is True
+        assert report["nodes"][0]["new"] == 2
+        assert len(calls) == 1
+        # même binaire et même datadir que la sonde ### NODE
+        assert "/home/fictif/bigcoin-mine/bigcoin/bigcoin-cli" in calls[0]
+        assert 'D=/home/fictif/bigcoin-mine/bigcoin/data' in calls[0]
+        assert '-datadir="$D" listtransactions' in calls[0]
+        assert "listtransactions '*' 200 0" in calls[0]
+        assert "password" not in calls[0] and "http" not in calls[0]
+
+
+def test_solo_sync_stores_no_rpc_account():
+    source = Path(payments.__file__).read_text()
+    assert "solo_rpc_nodes" not in source
+    assert not hasattr(payments, "SOLO_RPC_KEY")
+
+
+def test_solo_node_unreachable_is_reported(monkeypatch, caplog):
+    async def fake_probes(machine):
+        return [_solo_probe()]
+
+    async def fake_ssh(machine, command, **kwargs):
+        return {"ok": False, "error": "Connexion refusée par le nœud fictif"}
+
+    monkeypatch.setattr(payments, "solo_node_probes", fake_probes)
+    monkeypatch.setattr("app.ssh_client.ssh_run_command", fake_ssh)
+
+    with SessionLocal() as db:
+        machine = _host(db, "hote-fictif-injoignable")
+        with caplog.at_level(logging.WARNING, logger="fossor.payments"):
+            report = asyncio.run(payments.sync_solo_nodes(db, machines=[machine]))
+        assert report["ok"] is False
+        assert report["nodes"][0]["ok"] is False
+        assert "refusée" in report["nodes"][0]["error"]
+        assert "blocs solo indisponibles" in caplog.text
