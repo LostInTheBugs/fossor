@@ -31,6 +31,115 @@ from urllib.parse import quote
 logger = logging.getLogger("fossor.payments")
 
 PAYMENT_POOLS = {"luckypool"}
+
+
+class PaymentWallet:
+    """Wallet à interroger pour un pool — identité partagée par la synchro et l'UI.
+
+    Expose ``id`` (identifiant en base, ou ``None`` quand l'adresse ne vit que
+    dans un profil de mineur) pour les appelants qui lisaient ``Wallet.id``.
+    """
+
+    __slots__ = ("coin_ticker", "address", "pool", "pool_host", "wallet_id", "label", "source")
+
+    def __init__(self, coin_ticker, address, pool="luckypool", pool_host="",
+                 wallet_id=None, label="", source="wallet"):
+        self.coin_ticker = coin_ticker
+        self.address = address
+        self.pool = pool
+        self.pool_host = pool_host
+        self.wallet_id = wallet_id
+        self.label = label
+        self.source = source
+
+    @property
+    def id(self):
+        return self.wallet_id
+
+
+def _is_luckypool(value) -> bool:
+    return "luckypool" in str(value or "").lower()
+
+
+def _host_of_value(pool, pool_host) -> str:
+    from app.coins import pool_host as host_of
+
+    raw = str(pool_host or pool or "").strip()
+    host = host_of(raw) or ""
+    return host or raw.split("://")[-1].split("@")[-1].split(":")[0]
+
+
+def payment_wallets(db, materialize: bool = False) -> list:
+    """Les wallets qu'un connecteur de pool peut interroger — **source unique**.
+
+    Même règle pour la synchro des paiements, le rafraîchissement des soldes et
+    l'écran Tokens minés. Trois origines, dédupliquées par (pièce, adresse) :
+
+    1. un ``Wallet`` dont ``pool`` (ou ``pool_host``) désigne Luckypool ;
+    2. le champ ``wallet`` d'un ``MinerProfile`` dont le ``pool`` est un hôte
+       Luckypool, pour une pièce qu'une campagne active mine — c'est là que vit
+       l'adresse Pearl de la prod, aucun ``Wallet`` n'ayant été créé pour ce
+       coin ;
+    3. ``materialize=True`` crée le ``Wallet`` manquant de ce profil (une seule
+       fois : la contrainte unique ``(coin_ticker, address)`` rend l'appel
+       idempotent), pour que solde, curseur et paiements partagent la même
+       identité.
+
+    L'ancien filtre ``Wallet.pool.in_(PAYMENT_POOLS)`` ne retenait rien : en
+    production les sept wallets ont ``pool = ""`` et celui de Pearl n'existait
+    qu'en profil, d'où ``"wallets": []`` et zéro paiement importé.
+    """
+    from app.models import MinedCampaign, MinerProfile, Wallet
+
+    out = []
+    seen = set()
+
+    def push(coin, address, pool, pool_host, wallet_id, label, source):
+        coin = str(coin or "").upper()
+        address = str(address or "").strip()
+        if not coin or not address:
+            return
+        if not (_is_luckypool(pool) or _is_luckypool(pool_host)):
+            return
+        key = (coin, address)
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(PaymentWallet(coin, address, "luckypool",
+                                 _host_of_value(pool, pool_host), wallet_id, label, source))
+
+    for wallet in db.query(Wallet).order_by(Wallet.id.asc()).all():
+        push(wallet.coin_ticker, wallet.address, wallet.pool, wallet.pool_host,
+             wallet.id, wallet.label, "wallet")
+
+    active = {
+        str(row.coin_ticker or "").upper()
+        for row in db.query(MinedCampaign).filter(MinedCampaign.state == "active").all()
+    }
+    for profile in db.query(MinerProfile).order_by(MinerProfile.id.asc()).all():
+        coin = str(profile.coin or "").upper()
+        if coin not in active or not _is_luckypool(profile.pool):
+            continue
+        wallet = (
+            db.query(Wallet)
+            .filter(Wallet.coin_ticker == coin, Wallet.address == str(profile.wallet or ""))
+            .first()
+        )
+        if wallet is None and materialize and str(profile.wallet or "").strip():
+            wallet = Wallet(
+                coin_ticker=coin,
+                address=str(profile.wallet).strip(),
+                label=f"profil : {profile.name}"[:100],
+                location=f"profil de mineur {profile.name}"[:200],
+                pool="luckypool",
+                pool_host=_host_of_value(profile.pool, ""),
+            )
+            db.add(wallet)
+            db.flush()
+            logger.info("wallet %s créé depuis le profil %s", coin, profile.name)
+        push(coin, profile.wallet, profile.pool, "", wallet.id if wallet else None,
+             profile.name, "profile")
+    return out
 COINGECKO_HISTORY_URL = "https://api.coingecko.com/api/v3/coins/{coin_id}/history"
 SYNC_INTERVAL_KEY = "pool_payments_interval"
 SYNC_LAST_KEY = "pool_payments_last_sync"
@@ -498,7 +607,11 @@ async def sync_all(db: Any | None = None) -> dict[str, Any]:
     owned = db is None
     db = db or SessionLocal()
     try:
-        wallets = db.query(Wallet).filter(Wallet.pool.in_(tuple(PAYMENT_POOLS))).all()
+        # Même source que l'affichage du solde (écran Tokens minés) : un wallet
+        # dont l'adresse ne vit que dans un profil de mineur est retenu aussi.
+        wallets = payment_wallets(db, materialize=True)
+        if wallets:
+            db.commit()
         report: list[dict[str, Any]] = []
         for wallet in wallets:
             try:

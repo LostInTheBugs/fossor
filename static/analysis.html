@@ -654,9 +654,19 @@ label{display:block;color:var(--muted);font-size:11px;font-weight:600;margin-bot
       });
   });
 
+  // Libellés par défaut (app/criteria.py DEFAULT_CRITERIA) : une liste de
+  // règles enregistrée sans une clé ne doit pas faire retomber l'UI sur la clé
+  // brute (« fenetre » au lieu de « Fenêtre de sortie »).
+  var DEFAULT_CRITERIA_LABELS = {
+    fenetre: "Fenêtre de sortie", utilite: "Utilité du projet",
+    equipe: "Crédibilité de l'équipe", intuition: "Intuition de Fred",
+    gpu: "Compatible avec les GPU de Fred"
+  };
+
   function criteriaLabel(key) {
     var found = (state.criteria || []).find(function (item) { return item.key === key; });
-    return found ? found.label : key;
+    if (found && found.label) { return found.label; }
+    return DEFAULT_CRITERIA_LABELS[key] || key;
   }
 
   function criteriaGrid(items) {

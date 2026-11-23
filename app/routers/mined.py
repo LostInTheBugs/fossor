@@ -188,17 +188,21 @@ def _history_json(row: MinedCampaign, coin: Coin | None, quote: dict[str, Any]) 
     }
 
 
-def _wallet_for(row: MinedCampaign, wallets: dict, by_coin: dict) -> Wallet | None:
+def _wallet_for(row: MinedCampaign, wallets: dict, by_coin: dict,
+                payment_by_coin: dict) -> Any | None:
     """Wallet of a campaign: exact address first, else the coin's first wallet.
 
     Imported campaigns often carry no address (the Pearl wallet lives in the old
     page, not in the JSON files): the wallet added by hand for that coin is used.
+    À défaut il vient de :func:`app.payments.payment_wallets` — la même source
+    que la synchro des paiements, donc le solde affiché est bien celui collecté.
     """
     if row.wallet_address:
         wallet = wallets.get((row.coin_ticker, row.wallet_address))
         if wallet is not None:
             return wallet
-    return by_coin.get(row.coin_ticker)
+    wallet = by_coin.get(row.coin_ticker)
+    return wallet if wallet is not None else payment_by_coin.get(row.coin_ticker)
 
 
 @router.get("/mined")
@@ -217,6 +221,10 @@ async def mined(db: Session = Depends(get_db), _user=Depends(require_login)):
         if current is None or (not current.pool and wallet.pool):
             by_coin[wallet.coin_ticker] = wallet
 
+    payment_by_coin: dict[str, Any] = {}
+    for shared in payments.payment_wallets(db):
+        payment_by_coin.setdefault(shared.coin_ticker, shared)
+
     rows = db.query(MinedCampaign).order_by(MinedCampaign.id.asc()).all()
     campaigns: list[dict[str, Any]] = []
     history: list[dict[str, Any]] = []
@@ -225,7 +233,7 @@ async def mined(db: Session = Depends(get_db), _user=Depends(require_login)):
         coin = coins.get(row.coin_ticker)
         quote = quotes.get(row.coin_ticker) or {}
         if row.state == "active":
-            wallet = _wallet_for(row, wallets, by_coin)
+            wallet = _wallet_for(row, wallets, by_coin, payment_by_coin)
             balance = balances.get(wallet.id) if wallet else None
             campaigns.append(_campaign_json(row, coin, quote, wallet, balance))
         else:
@@ -295,7 +303,9 @@ async def mined_refresh(db: Session = Depends(get_db), _user=Depends(require_log
 
     report: list[dict[str, Any]] = []
     stamp = _now()
-    for wallet in db.query(Wallet).filter(Wallet.pool != "").all():
+    # Même source que la synchro des paiements : l'adresse d'un wallet peut ne
+    # vivre que dans un profil de mineur (Pearl de la prod en 2026.11.029).
+    for wallet in payments.payment_wallets(db, materialize=True):
         result = await pools.refresh_wallet(wallet)
         if result.get("skipped"):
             report.append({
