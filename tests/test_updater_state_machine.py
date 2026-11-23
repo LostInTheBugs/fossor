@@ -175,6 +175,8 @@ def test_nominal_update_reaches_done(tmp_path):
     assert status["state"] == "done"
     assert status["from"] == OLD and status["to"] == TARGET
     events = [json.loads(line)["event"] for line in config.history_path.read_text().splitlines()]
+    assert events.count("health_attempt") >= 1, "chaque tentative de santé est journalisée"
+    events = [event for event in events if event != "health_attempt"]
     assert events[:6] == ["request", "pulling", "backing_up", "switching", "health_check", "done"]
     # puis le compagnon tire son image et se remplace, puis la fin explicite.
     assert events[-3:] == ["self_pull", "self_update", "finished"]
