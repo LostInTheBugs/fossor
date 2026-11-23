@@ -722,6 +722,7 @@ const loadMachines=async()=>{
     const usageChips={cpu:'cpu',gpu:'gpu',both:'both',none:'none'};
     const enabledChip=m.enabled?'on':'off';
     const authLabel={password:'Mdp',fossor_key:'Clé Fossor',provision:'Préparation',provision_pending:'À préparer'}[m.auth_type]||m.auth_type;
+    const isHiveos=(m.os_kind==='hiveos'||m.os_kind_detected==='hiveos');
     return `<tr>
       <td><b>${m.name}</b>${(LIVE[m.uuid]&&(LIVE[m.uuid].wall_power_w||LIVE[m.uuid].total_power_w))?`<div class="mono" style="font-size:10px">${Math.round(LIVE[m.uuid].wall_power_w||LIVE[m.uuid].total_power_w)} W à la prise${LIVE[m.uuid].worst_psu_load_pct?' · PSU '+LIVE[m.uuid].worst_psu_load_pct+' %':''}</div>`:''}</td>
       <td class="mono">${m.host}</td>
@@ -737,7 +738,9 @@ const loadMachines=async()=>{
         <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
           ${m.auth_type!=='provision_pending'?`<button class="btn sm outline" onclick="detectMachine(${m.id},this)">🔍 Détecter le matériel</button>`:'<span class="chip off" style="font-size:9px">Préparation requise</span>'}
           <button class="btn sm outline" onclick="openMiner(${m.id})" title="Profil, GPU et démarrage du mineur sur cette machine">⛏️ Mineur</button>
+          <button class="btn sm outline" onclick="location.href='/benchmark?machine=${m.id}'" title="${isHiveos?'Benchmark de la limite de puissance — proposition seulement : HiveOS écrase nvidia-smi -pl':'Benchmark de la limite de puissance, paliers et retour vérifié'}">🌡️ Benchmark${isHiveos?' (proposition seulement)':''}</button>
           ${(m.os_kind==='hiveos'||m.os_kind_detected==='hiveos')?`<button class="btn sm outline" onclick="openHiveos(${m.id})" title="Mineur de la flight sheet, watchdog, devices pris en charge">🐝 Pilotage HiveOS</button>`:''}
+          ${m.auth_type==='fossor_key'?`<button class="btn sm outline" onclick="updatePreparation(${m.id},this)" title="Réinstaller le script fossor-gpu-pl et sa règle sudoers étroite (identifiants admin demandés une fois, non conservés)">🛡️ Mettre à jour la préparation</button>`:''}
           ${m.auth_type==='fossor_key'?`<button class="btn sm outline" onclick="deprovisionMachine(${m.id},this)" title="Retirer la clé publique, le fichier sudoers et l'accès Fossor">🔒 Retirer l'accès Fossor</button>`:''}
         </div></td>
     </tr>`+detailRow(m);
@@ -765,6 +768,22 @@ const detectMachine=async(id,btn)=>{
 const retryProvision=async(id)=>{
   // Open modal pre-filled for re-provisioning
   editMachine(id);
+};
+const updatePreparation=async(id,btn)=>{
+  const user=prompt('Identifiant admin (utilisé une seule fois pour cette mise à jour, non conservé) :');
+  if(user===null)return;
+  const password=prompt('Mot de passe admin (non conservé) :');
+  if(password===null)return;
+  const original=btn.textContent;
+  btn.disabled=true;btn.textContent='⏳ Mise à jour…';
+  try{
+    const r=await fetch('/api/machines/'+id+'/provision/update',{method:'POST',credentials:'include',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({temp_user:user,temp_password:password})});
+    const d=await r.json().catch(()=>({}));
+    if(r.ok&&d.ok){toast(d.message||'Préparation mise à jour');}
+    else{toast(d.error||d.detail||'Mise à jour échouée','err');}
+  }catch(e){toast('Erreur réseau','err');}
+  btn.disabled=false;btn.textContent=original;
 };
 const patchDevice=async(deviceId,body,message)=>{
   const r=await fetch('/api/devices/'+deviceId,{method:'PATCH',credentials:'include',
