@@ -955,6 +955,12 @@ async def collect_machine(machine_id: int) -> dict[str, Any]:
         _store_raw_collection(db, machine, combined)
         rows = _store_metrics(db, machine, stats, ts)
         try:
+            from app import benchmark_runner as bench_runner
+
+            await bench_runner.apply_pending_reboots(db, machine.id)
+        except Exception:  # la reapplication ne casse jamais une collecte
+            logger.warning("reapplication apres redemarrage en echec", exc_info=True)
+        try:
             from app import watchdog
 
             await watchdog.evaluate_machine(
