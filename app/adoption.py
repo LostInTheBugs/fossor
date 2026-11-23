@@ -361,8 +361,13 @@ def launcher_of(
         return _launcher("script", account, script, script=script, verified=True,
                          reason="script dans la ligne de commande du processus")
 
-    # 6. Autre unité systemd (hors Fossor) : information, pas d'attribution.
-    if own_unit and own_unit not in SYSTEM_UNITS:
+    # 6. Autre service systemd (hors Fossor) : information, jamais une session
+    #    SSH ni un scope, qui ne lancent rien au démarrage.
+    if (
+        own_unit.endswith(".service")
+        and own_unit not in SYSTEM_UNITS
+        and not own_unit.startswith(("session-", "user@"))
+    ):
         return _launcher("service hors Fossor", account, own_unit, unit=own_unit,
                          verified=True, reason=f"cgroup {own_unit}")
 
@@ -954,7 +959,7 @@ def _json(value: Any) -> str:
 # --------------------------------------------------------------------------- #
 # Sondes de l'hôte et plan complet (toutes en lecture seule)
 # --------------------------------------------------------------------------- #
-PROBE_PS = "ps -eo user,pid,ppid,pcpu,etimes,args --no-headers"
+PROBE_PS = "ps -eo user:20,pid,ppid,pcpu,etimes,args --no-headers"
 PROBE_UNITS = "systemctl list-unit-files 'fossor-miner-*' --no-legend --no-pager 2>/dev/null || true"
 
 

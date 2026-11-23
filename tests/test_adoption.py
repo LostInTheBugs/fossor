@@ -117,7 +117,7 @@ def make_runner(
         calls.append(command)
         if fail_on and fail_on in command:
             return 1, "", "boom"
-        if command.startswith("ps -eo user,pid,ppid"):
+        if command.startswith("ps -eo user"):
             return 0, PS, ""
         if command.startswith("screen -ls"):
             return 0, "", ""
