@@ -824,6 +824,7 @@ const openAdoption=async(machineId,key)=>{
     'binaire     : '+(item.process?.binary||''),
     'arguments   : '+item.args_masked,
     'datadir     : '+(item.datadir||'—'),
+    'wallet.dat  : '+(item.wallet?((item.wallet_present?'présent ('+item.wallet_size+' octets)':'absent')+' — '+item.wallet):'— (mineur de pool)'),
     'pool / threads : '+(item.pool||'—')+' / '+(item.threads||'—'),
     'log / API   : '+(item.log||'—')+' / '+(item.api_port||'—'),
     'lancement   : '+(item.launcher?.mode||'?')+' — '+(item.launcher?.detail||''),
