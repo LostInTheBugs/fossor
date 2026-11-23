@@ -568,10 +568,39 @@ async def provision_machine(
     }
 
 
+async def _update_with_fossor_key(machine: Any, account: str, actor: str) -> dict[str, Any] | None:
+    """§6.7 §1 ter — la clé de Fossor suffit : ``fossor ALL=(ALL) NOPASSWD:ALL``.
+
+    Aucun identifiant admin n'est demandé quand ``sudo -n`` fonctionne.  Le
+    retour ``None`` signifie « passez par le formulaire de secours ».
+    """
+    from app.ssh_client import ssh_run_command
+
+    probe = await ssh_run_command(machine, "sudo -n -l", actor=actor, audit_kind="provision-update")
+    text = str(probe.get("stdout") or "") + str(probe.get("stderr") or "")
+    if probe.get("ok") is False or not re.search(r"NOPASSWD:\s*ALL|fossor-gpu-pl", text):
+        return None
+    pre = await ssh_run_command(machine, _PREFLIGHT, actor=actor, audit_kind="provision-update")
+    if pre.get("ok") is False or "PREFLIGHT_OK" not in str(pre.get("stdout") or ""):
+        return None
+    command = _sudo(_INSTALL_GPU_WRAPPER, GPU_PL_WRAPPER, account, no_password=True)
+    result = await ssh_run_command(machine, command, actor=actor, audit_kind="provision-update")
+    if "GPU_WRAPPER_INSTALLED" not in str(result.get("stdout") or ""):
+        return {
+            "ok": False,
+            "step": STEP_GPU,
+            "error": f"mise à jour échouée à l'étape « {STEP_GPU} » — "
+            + _detail(str(result.get("stdout") or ""), str(result.get("stderr") or "")),
+            "mode": "key",
+        }
+    _audit(machine.id, "ok", "préparation mise à jour (clé Fossor, sudo -n)", actor=actor)
+    return {"ok": True, "mode": "key", "steps_done": ["préflight", "limite GPU"]}
+
+
 async def update_preparation(
     machine: Any,
-    temp_user: str,
-    temp_password: str,
+    temp_user: str = "",
+    temp_password: str = "",
     actor: str = "system",
 ) -> dict[str, Any]:
     """Réinstalle le script enveloppe et sa règle sudoers sur une machine préparée.
@@ -582,8 +611,17 @@ async def update_preparation(
     from app.ssh_client import open_pinned_connection
 
     account = validate_account(machine.ssh_user or "")
+    # §1 ter : d'abord la clé Fossor ; le formulaire n'est que le secours.
+    try:
+        key_result = await _update_with_fossor_key(machine, account, actor)
+    except Exception:  # hôte muet : on retombe sur le formulaire, sans mentir
+        key_result = None
+    if key_result is not None:
+        return key_result
     if not isinstance(temp_user, str) or not temp_user.strip():
-        raise ProvisionError("Login admin requis")
+        raise ProvisionError(
+            "Login admin requis : sudo -n -l n'a pas donné NOPASSWD (secours)"
+        )
     if not isinstance(temp_password, str) or not temp_password:
         raise ProvisionError("Mot de passe admin requis")
     temp_user = temp_user.strip()

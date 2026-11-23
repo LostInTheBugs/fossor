@@ -9,21 +9,16 @@ from playwright.async_api import async_playwright
 
 ADMIN_PASSWORD = "adminpass"
 PAGES = ["/dashboard", "/machines", "/profiles", "/campaigns", "/benchmark", "/analysis", "/mined", "/followup", "/history", "/vault", "/help", "/settings", "/audit"]
-EXPECTED = [
-    "📊 Tableau de bord",
-    "🖥️ Machines",
-    "⛏️ Profils",
-    "🎯 Campagnes",
-    "🌡️ Benchmark",
-    "🔎 Analyse des tokens",
-    "🪙 Tokens minés",
-    "📈 Suivi",
-    "🕰️ Historique",
-    "🔐 Coffre",
-    "📖 Comment ça marche",
-    "⚙️ Configuration",
-    "📋 Log",
-]
+SECTIONS = {
+    "Pilotage": [("Tableau de bord", "/dashboard"), ("Machines", "/machines"),
+                 ("Profils", "/profiles"), ("Campagnes", "/campaigns"),
+                 ("Benchmark", "/benchmark")],
+    "Suivi": [("Suivi", "/followup"), ("Historique", "/history"),
+              ("Tokens minés", "/mined"), ("Log", "/audit")],
+    "Analyse": [("Analyse des tokens", "/analysis"), ("Comment ça marche", "/help")],
+    "Réglages": [("Configuration", "/settings"), ("Coffre", "/vault")],
+}
+EXPECTED = [href for items in SECTIONS.values() for _label, href in items]
 
 
 @pytest.mark.e2e
@@ -57,14 +52,26 @@ async def test_same_navigation_on_every_page(e2e_server):
                 "els => els.map(e => ({href: new URL(e.href).pathname,"
                 " text: e.textContent.trim(), active: e.classList.contains('active')}))",
             )
-            texts = [link["text"] for link in links]
-            assert texts == EXPECTED, f"{path}: {texts}"
-            assert [link["href"] for link in links] == PAGES, f"{path}: {links}"
+            hrefs = [link["href"] for link in links if link["href"] in EXPECTED]
+            assert sorted(hrefs) == sorted(EXPECTED), f"{path}: {hrefs}"
             assert [link["href"] for link in links if link["active"]] == [path], path
-            seen[path] = texts
+            # DOM identique à part la classe active
+            dom = await page.eval_on_selector(
+                "#nav",
+                "nav => nav.innerHTML.replace(/ ?active/g, '').replace(/ aria-current=\"page\"/g, '')",
+            )
+            seen[path] = dom
 
         await browser.close()
 
-    assert len({tuple(texts) for texts in seen.values()}) == 1, seen
+    assert len(set(seen.values())) == 1, "menu différent d'une page à l'autre"
+    # aucun menu codé en dur : tout lien de navigation vit dans #nav
+    outside = await page.evaluate(
+        "() => [...document.querySelectorAll('a')].filter(a => "
+        "['/dashboard','/machines','/profiles','/campaigns','/benchmark','/followup',"
+        "'/history','/mined','/audit','/analysis','/help','/settings','/vault']"
+        ".includes(a.getAttribute('href')) && !a.closest('#nav')).length"
+    )
+    assert outside == 0, f"{outside} lien(s) de menu hors #nav"
     assert console_errors == [], console_errors
     assert page_errors == [], page_errors

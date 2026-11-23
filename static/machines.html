@@ -231,6 +231,20 @@ tr.absent td{opacity:.5}
 
 <div class="toast" id="toast"></div>
 
+<div class="modal" id="adoptModal">
+  <div class="modal-box" style="width:720px">
+    <h2>Adopter ce mineur</h2>
+    <div id="adoptBody" class="mono" style="font-size:12.5px;white-space:pre-wrap"></div>
+    <div id="adoptImpact" style="margin:14px 0;padding:12px;border:1px solid var(--border);border-radius:10px"></div>
+    <label style="display:flex;gap:8px;align-items:center;margin-bottom:14px">
+      <input type="checkbox" id="adoptConfirm"> Je confirme l'arrêt du processus et la sauvegarde du wallet
+    </label>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" onclick="document.getElementById('adoptModal').classList.remove('open')">Annuler</button>
+      <button class="btn primary" id="adoptGo" onclick="runAdoption()" disabled>Adopter</button>
+    </div>
+  </div>
+</div>
 <div class="modal" id="rawModal">
   <div class="modal-box" style="width:820px">
     <h2>Dernière collecte brute — <span id="rawMachine"></span></h2>
@@ -487,7 +501,9 @@ const minerAlertHTML=(m)=>{
       txt+=' — '+(miner.hashrate_hs?hsText(miner.hashrate_hs):(miner.hashrate_note||'hashrate CPU inconnu'));
       if(miner.hashrate_hs&&miner.hashrate_source)txt+=' (source '+miner.hashrate_source+')';
     }
-    return `<div class="miner-alert">🪨 <b>Mineur externe détecté (non géré par Fossor)</b> : ${txt}</div>`;
+    const key=(miner.pid||'')+':'+(miner.name||'');
+    return `<div class="miner-alert">🪨 <b>Lancé hors Fossor</b> — mineur externe détecté : ${txt}`
+      +` <button class="btn small" onclick="openAdoption(${m.id},${JSON.stringify(key).replace(/"/g,'&quot;')})">Adopter</button></div>`;
   }).join('');
   return alerts;
 };
@@ -795,6 +811,60 @@ const patchDevice=async(deviceId,body,message)=>{
 const setDeviceRole=(id,role)=>patchDevice(id,{role:role},'Rôle du device enregistré');
 const setDeviceBoost=(id,on)=>patchDevice(id,{boost_pool:!!on},'Pool de boost '+(on?'activé':'désactivé'));
 
+let ADOPT_PLAN=null, ADOPT_KEY='', ADOPT_MACHINE=0;
+const openAdoption=async(machineId,key)=>{
+  ADOPT_KEY=key; ADOPT_MACHINE=machineId;
+  const r=await fetch('/api/machines/'+machineId+'/adoption-plan',{credentials:'include'});
+  const d=await r.json().catch(()=>({}));
+  if(r.status===401){location.href='/';return;}
+  if(!r.ok){toast(d.detail||'Plan indisponible','err');return;}
+  ADOPT_PLAN=d;
+  const item=(d.miners||[]).find(x=>x.key===key)||(d.miners||[])[0];
+  if(!item){toast('Aucun mineur externe à adopter','err');return;}
+  ADOPT_KEY=item.key;
+  const lines=[
+    'processus   : '+(item.process?.name||'')+' '+(item.process?.version||'')+' (pid '+item.pid+')',
+    'compte      : '+item.account,
+    'binaire     : '+(item.process?.binary||''),
+    'arguments   : '+item.args_masked,
+    'datadir     : '+(item.datadir||'—'),
+    'pool / threads : '+(item.pool||'—')+' / '+(item.threads||'—'),
+    'log / API   : '+(item.log||'—')+' / '+(item.api_port||'—'),
+    'lancement   : '+(item.launcher?.mode||'?')+' — '+(item.launcher?.detail||''),
+    '',
+    'profil proposé : '+(item.profile?.name||'')+' ('+(item.profile?.coin||'')+')',
+    "unité proposée : "+(item.unit?.name||'')+" — compte "+(item.unit?.user||'')
+  ];
+  document.getElementById('adoptBody').textContent=lines.join('\n');
+  const wallet=item.wallet?('Sauvegarde du wallet : '+item.wallet+' → copie datée, droits 600, empreinte vérifiée. Contenu jamais lu ni déplacé.'):'Pas de wallet (mineur de pool).';
+  document.getElementById('adoptImpact').innerHTML='<b>Impact</b><br>Arrêt propre du processus actuel, puis démarrage de l\'unité Fossor. '
+    +'Minage interrompu environ '+(item.verify_after_minutes||5)+' minutes (vérification du hashrate).<br>'+wallet
+    +(item.adoptable?'':'<br><b style="color:#f85149">Bloqué : '+(item.blocked_reason||'')+'</b>')
+    +((item.warnings||[]).length?'<br>⚠️ '+item.warnings.join('<br>⚠️ '):'');
+  const go=document.getElementById('adoptGo');
+  go.disabled=!item.adoptable;
+  document.getElementById('adoptConfirm').checked=false;
+  document.getElementById('adoptConfirm').onchange=e=>{go.disabled=!e.target.checked||!item.adoptable;};
+  document.getElementById('adoptModal').classList.add('open');
+};
+const runAdoption=async()=>{
+  const go=document.getElementById('adoptGo');
+  go.disabled=true; go.textContent='Adoption…';
+  const r=await fetch('/api/machines/'+ADOPT_MACHINE+'/adopt',{method:'POST',credentials:'include',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({key:ADOPT_KEY,confirm:true})});
+  const d=await r.json().catch(()=>({}));
+  go.textContent='Adopter';
+  if(r.status===401){location.href='/';return;}
+  if(!r.ok){toast(d.detail||'Adoption refusée','err');go.disabled=false;return;}
+  if(d.ok===false){
+    toast('Adoption échouée à « '+(d.failed_step||'?')+' » — retour arrière : '+(d.rollback?.ok?'ok':'échec'),'err');
+    go.disabled=false; return;
+  }
+  document.getElementById('adoptModal').classList.remove('open');
+  toast('Adopté — vérification du hashrate dans '+(d.pending_verification||5)+' min');
+  await loadMachines();
+};
 const toggleDevice=async(deviceId,machineId,checked)=>{
   const r=await fetch('/api/devices/'+deviceId,{method:'PATCH',credentials:'include',
     headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled_for_mining:checked})});

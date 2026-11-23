@@ -7,6 +7,7 @@ from app.dependencies import require_login
 from app.models import Machine, Device, AuditLog, MachineStatus
 from app.os_presets import apply_preset, compare_os, os_label, preset_fields, public_presets
 from app.validation import validate_machine_payload
+from app import adoption as A
 
 router = APIRouter(prefix="/api/machines", tags=["machines"])
 
@@ -576,4 +577,100 @@ async def update_machine_preparation(
         )
     except ProvisionError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    return result
+
+
+def _adoption_runner(machine: Machine):
+    """Adaptateur : une commande construite ici, jamais un champ libre."""
+    from app.ssh_client import ssh_run_command
+
+    async def run(command: str):
+        result = await ssh_run_command(
+            machine, command, actor="adoption", audit_kind="adoption"
+        )
+        if result.get("ok") is False:
+            return 1, "", str(result.get("error") or "")
+        return (
+            int(result.get("exit_status") or result.get("status") or 0),
+            str(result.get("stdout") or result.get("output") or ""),
+            str(result.get("stderr") or ""),
+        )
+
+    return run
+
+
+@router.get("/{machine_id}/adoption-plan")
+async def adoption_plan(
+    machine_id: int, db: Session = Depends(get_db), _user=Depends(require_login)
+):
+    """Plan d'adoption, **en lecture seule** : ps, crontabs, screen, unités."""
+    machine = db.query(Machine).filter(Machine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=404, detail="Machine not found")
+    miners = _external_miners(machine)
+    if not miners:
+        return {"machine": {"id": machine.id, "name": machine.name}, "miners": [], "read_only": True}
+    try:
+        return await A.build_plan(_adoption_runner(machine), machine, miners)
+    except Exception as exc:  # hôte injoignable : le plan dit pourquoi, sans écrire
+        return {
+            "machine": {"id": machine.id, "name": machine.name, "host": machine.host},
+            "miners": [
+                {
+                    "key": f"{m.get('pid')}:{m.get('name')}",
+                    "process": {"name": m.get("name"), "binary": "", "kind": m.get("kind")},
+                    "args_masked": m.get("cmd") or "",
+                    "adoptable": False,
+                    "blocked_reason": f"lecture de l'hôte impossible — {exc}",
+                    "warnings": [],
+                    "launcher": {"mode": "inconnu", "detail": ""},
+                    "profile": {},
+                    "unit": {},
+                }
+                for m in miners
+            ],
+            "read_only": True,
+        }
+
+
+@router.post("/{machine_id}/adopt")
+async def adopt_external_miner(
+    machine_id: int,
+    data: dict | None = None,
+    db: Session = Depends(get_db),
+    _user=Depends(require_login),
+):
+    """Adopte un mineur externe. ``confirm`` obligatoire ; ``dry_run`` accepté.
+
+    L'exécution réelle en production est une mission séparée : ici la séquence
+    est construite, ordonnée et testée, et le retour arrière est câblé.
+    """
+    data = data or {}
+    machine = db.query(Machine).filter(Machine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=404, detail="Machine not found")
+    if not data.get("confirm"):
+        raise HTTPException(status_code=400, detail="Confirmation explicite requise")
+    plan = await A.build_plan(
+        _adoption_runner(machine), machine, _external_miners(machine), include_secrets=True
+    )
+    item = next((m for m in plan["miners"] if m["key"] == data.get("key")), None)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Mineur absent du plan : relancez la lecture")
+    if not item.get("adoptable"):
+        raise HTTPException(status_code=409, detail=item.get("blocked_reason") or "adoption impossible")
+    dry_run = bool(data.get("dry_run", False))
+    result = await A.apply(_adoption_runner(machine), item, dry_run=dry_run)
+    if result.get("ok") and not dry_run:
+        A.finish_adoption(db, machine, item)
+        _audit(
+            db,
+            machine,
+            "adopt",
+            "ok",
+            f"{item['process']['name']} pid={item['pid']} unité={item['unit']['name']}",
+            actor="fred",
+        )
+    else:
+        _audit(db, machine, "adopt", "fail", str(result.get("failed_step") or "dry-run"), actor="fred")
     return result
