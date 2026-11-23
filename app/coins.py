@@ -68,6 +68,29 @@ POOL_COINS: dict[str, str] = {
 LUCKYPOOL_DOMAIN = "luckypool.io"
 LUCKYPOOL_PREFIXES: dict[str, str] = {"pearl": "PRL"}
 
+# LuckyPool : le serveur **stratum** et le **site web** sont deux hôtes
+# distincts.  ``pearl-eu1/eu2/us1.luckypool.io:3360`` ne servent que le stratum
+# (leur certificat n'est pas celui du site) ; l'API ``/api/stats`` et
+# ``/api/stats_address`` est servie par le site.  Hôte API **observé** : le
+# client public chargé depuis ``https://pearl.luckypool.io`` interroge sa
+# propre origine (``/assets/index-*.js`` → ``GET /api/stats_address``,
+# RAPPORT-luckypool-wallet.md, RAPPORT-prod-030).  Clés = libellé court ou hôte
+# complet, sans port.
+LUCKYPOOL_API_HOSTS: dict[str, str] = {
+    "pearl": "pearl.luckypool.io",
+    "pearl.luckypool.io": "pearl.luckypool.io",
+    "pearl-eu1": "pearl.luckypool.io",
+    "pearl-eu1.luckypool.io": "pearl.luckypool.io",
+    "pearl-eu2": "pearl.luckypool.io",
+    "pearl-eu2.luckypool.io": "pearl.luckypool.io",
+    "pearl-us1": "pearl.luckypool.io",
+    "pearl-us1.luckypool.io": "pearl.luckypool.io",
+    "korsh": "korsh.luckypool.io",
+    "korsh.luckypool.io": "korsh.luckypool.io",
+    "wamcoin": "wamcoin.luckypool.io",
+    "wamcoin.luckypool.io": "wamcoin.luckypool.io",
+}
+
 # Fallback when the pool is unknown (SRBMiner announces ``pearlhash``).
 ALGO_COINS: dict[str, str] = {"pearlhash": "PRL"}
 

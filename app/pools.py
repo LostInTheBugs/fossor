@@ -69,10 +69,31 @@ def _float(value: Any) -> float | None:
 
 
 def luckypool_host(coin: str = "PRL", pool_host: str = "") -> str:
-    """Host of the coin's Luckypool site: wallet setting first, ticker fallback."""
+    """Hôte du **site** Luckypool — jamais un point d'entrée stratum.
+
+    Un profil stocke ``stratum+tcp://pearl-eu2.luckypool.io:3360`` ; interroger
+    cet hôte en HTTPS échoue sur le certificat (le stratum ne sert pas le
+    site).  ``LUCKYPOOL_API_HOSTS`` ramène chaque ferme connue au site observé
+    dans le client du pool (``pearl.luckypool.io``).  Un hôte inconnu lève
+    avant toute requête : on ne devine pas une URL, et on ne désactive jamais
+    la vérification TLS.
+    """
+    from app.coins import LUCKYPOOL_API_HOSTS, LUCKYPOOL_DOMAIN, pool_host as host_of
+
     raw = (pool_host or "").strip().lower().rstrip(".")
+    raw = host_of(raw) or raw
     if raw:
-        return raw if raw.endswith("luckypool.io") else f"{raw}.luckypool.io"
+        mapped = LUCKYPOOL_API_HOSTS.get(raw)
+        if mapped is None and raw.endswith("." + LUCKYPOOL_DOMAIN):
+            mapped = LUCKYPOOL_API_HOSTS.get(raw.split(".", 1)[0])
+        if mapped:
+            return mapped
+        if "." not in raw:
+            return f"{raw}.luckypool.io"
+        raise ValueError(
+            f"hôte Luckypool inconnu : {raw} — aucune API web connue pour cet hôte "
+            "(un serveur stratum ne répond pas en HTTPS)"
+        )
     ticker = (coin or "").strip().upper()
     sub = LUCKYPOOL_HOSTS.get(ticker) or (ticker.lower() if ticker else "")
     if not sub:

@@ -348,7 +348,11 @@ async def sync_luckypool_wallet(db: Any, wallet: Any) -> dict[str, Any]:
     address = (getattr(wallet, "address", "") or "").strip()
     if not address:
         return {"ok": False, "error": "adresse de wallet absente"}
-    host = pools.luckypool_host(wallet.coin_ticker, getattr(wallet, "pool_host", "") or "")
+    try:
+        host = pools.luckypool_host(wallet.coin_ticker, getattr(wallet, "pool_host", "") or "")
+    except ValueError as exc:
+        logger.warning("Luckypool : %s", exc)
+        return {"ok": False, "error": str(exc), "host": ""}
     try:
         import httpx
 
