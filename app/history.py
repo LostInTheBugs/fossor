@@ -934,24 +934,52 @@ def gains_rows(
     end: str | None = None,
     coin: str | None = None,
 ) -> dict[str, Any]:
-    """Réceptions déduites des soldes de pool successifs (§4.16).
+    """Réceptions : journal de paiements d'abord, blocs solo, repli par solde.
 
-    Les paiements de pool ne sont pas encore stockés comme un journal de
-    paiements : chaque hausse du solde ``paid`` entre deux relevés est une
-    réception, datée du relevé. Aucune ligne n'est inventée ; les blocs solo
-    ne sont pas historisés et la réponse le dit (``solo_rows: 0``).
+    ``pool_payments`` est la source de vérité d'un pool qui expose ses
+    paiements (Luckypool). Le calcul par hausse du solde ``paid`` ne sert plus
+    que pour un pool sans API de paiements, et la ligne porte alors
+    ``source=pool-delta``. Aucune ligne n'est inventée.
     """
-    from app.models import PoolBalance, PoolBalanceSample, Wallet
+    from app.ai_config import get_setting
+    from app.models import PoolBalance, PoolBalanceSample, PoolPayment, SoloBlock, Wallet
+    from app.payments import PAYMENT_POOLS
+
+    begin = _parse(start).isoformat() if start else None
+    stop = _parse(end).isoformat() if end else None
+    price_cache: dict[str, list[tuple[str, float, str]]] = {}
+    synced = bool(get_setting(db, "pool_payments_last_sync", ""))
+    rows: list[dict[str, Any]] = []
 
     query = db.query(Wallet)
     if coin:
         query = query.filter(Wallet.coin_ticker == coin.upper())
     wallets = query.order_by(Wallet.coin_ticker.asc(), Wallet.id.asc()).all()
-    begin = _parse(start).isoformat() if start else None
-    stop = _parse(end).isoformat() if end else None
-    price_cache: dict[str, list[tuple[str, float, str]]] = {}
-    rows: list[dict[str, Any]] = []
     for wallet in wallets:
+        kept = (
+            db.query(PoolPayment)
+            .filter(PoolPayment.wallet_id == wallet.id)
+            .order_by(PoolPayment.received_at.asc())
+            .all()
+        )
+        for payment in kept:
+            ts = payment.received_at
+            if (begin and ts < begin) or (stop and ts >= stop):
+                continue
+            price, source = _price_at(db, payment.coin_ticker, ts, price_cache)
+            rows.append({
+                "coin": payment.coin_ticker.upper(),
+                "quantite": float(payment.amount),
+                "date_reception": ts,
+                "valeur_eur": round(float(payment.amount) * price, 6) if price is not None else None,
+                "prix_source": source if price is not None else "inconnu",
+                "source": "pool",
+                "reference": payment.tx,
+            })
+        if kept or (wallet.pool in PAYMENT_POOLS and synced) or wallet.pool == "solo":
+            continue  # API du pool déjà historisée (même vide) : pas de delta
+
+        # Repli : pool sans API de paiements, ou connecteur jamais passé.
         samples = (
             db.query(PoolBalanceSample)
             .filter(PoolBalanceSample.wallet_id == wallet.id)
@@ -981,21 +1009,40 @@ def gains_rows(
                     and previous_ts < balance.last_payment_at <= ts
                 ):
                     reference = balance.last_payment_tx
-                rows.append(
-                    {
-                        "coin": wallet.coin_ticker.upper(),
-                        "quantite": amount,
-                        "date_reception": ts,
-                        "valeur_eur": round(amount * price, 6) if price is not None else None,
-                        "prix_source": source if price is not None else "inconnu",
-                        "source": _source_label(wallet),
-                        "reference": reference,
-                    }
-                )
+                rows.append({
+                    "coin": wallet.coin_ticker.upper(),
+                    "quantite": amount,
+                    "date_reception": ts,
+                    "valeur_eur": round(amount * price, 6) if price is not None else None,
+                    "prix_source": source if price is not None else "inconnu",
+                    "source": "pool-delta",
+                    "reference": reference,
+                })
             previous = float(paid)
             previous_ts = sample.ts
+
+    solo_query = db.query(SoloBlock)
+    if coin:
+        solo_query = solo_query.filter(SoloBlock.coin_ticker == coin.upper())
+    solo_count = 0
+    for block in solo_query.order_by(SoloBlock.found_at.asc()).all():
+        ts = block.found_at
+        if (begin and ts < begin) or (stop and ts >= stop):
+            solo_count += 1
+            continue
+        price, source = _price_at(db, block.coin_ticker, ts, price_cache)
+        rows.append({
+            "coin": block.coin_ticker.upper(),
+            "quantite": float(block.reward),
+            "date_reception": ts,
+            "valeur_eur": round(float(block.reward) * price, 6) if price is not None else None,
+            "prix_source": source if price is not None else "inconnu",
+            "source": "solo",
+            "reference": block.tx or f"height:{block.height}",
+        })
+        solo_count += 1
     rows.sort(key=lambda item: (item["date_reception"], item["coin"]))
-    return {"rows": rows, "solo_rows": 0, "count": len(rows)}
+    return {"rows": rows, "solo_rows": solo_count, "count": len(rows)}
 
 
 def _source_label(wallet) -> str:
@@ -1025,7 +1072,10 @@ def csv_export(
     buffer = io.StringIO(newline="")
     writer = csv.writer(buffer, delimiter=";", lineterminator="\r\n")
     writer.writerow([f"# {EXPORT_NOTE}"])
-    writer.writerow([f"# blocs solo : non historisés (solo_rows={result['solo_rows']})"])
+    writer.writerow([
+        f"# sources : pool = API du pool, solo = bloc de nœud, pool-delta = repli par solde "
+        f"(blocs solo={result['solo_rows']})"
+    ])
     writer.writerow(EXPORT_HEADER)
     for row in result["rows"]:
         writer.writerow(

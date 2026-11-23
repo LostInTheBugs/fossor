@@ -431,7 +431,7 @@ def test_csv_format_bom_separator_and_no_secret():
     assert by_coin["TST"][1] == "0,5", "décimale française"
     assert by_coin["TST"][3] == "1", "0,5 × 2 €"
     assert by_coin["TST"][4] == "coingecko"
-    assert by_coin["TST"][5] == "pool"
+    assert by_coin["TST"][5] == "pool-delta"
     assert by_coin["TST"][6] == "txfictive0001"
 
     assert by_coin["NOP"][1] == "2"

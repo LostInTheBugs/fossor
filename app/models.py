@@ -488,6 +488,50 @@ class PoolBalanceSample(Base):
     total: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
+class PoolPayment(Base):
+    """One payment kept from a pool's history (§4.16) — never a full address.
+
+    ``dedupe_key`` is ``pool + tx`` when the transaction exists, otherwise
+    ``pool + received_at + amount``; its unique constraint makes repeated
+    syncs idempotent even when a pool omits the transaction hash.
+    """
+
+    __tablename__ = "pool_payments"
+    __table_args__ = (
+        Index("ix_pool_payments_coin_date", "coin_ticker", "received_at"),
+        Index("ix_pool_payments_wallet_date", "wallet_id", "received_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    wallet_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("wallets.id"), nullable=True)
+    coin_ticker: Mapped[str] = mapped_column(String(20), nullable=False)
+    pool: Mapped[str] = mapped_column(String(30), nullable=False)
+    amount: Mapped[float] = mapped_column(Float, nullable=False)
+    received_at: Mapped[str] = mapped_column(String(30), nullable=False)
+    tx: Mapped[str] = mapped_column(String(160), default="")
+    address_hint: Mapped[str] = mapped_column(String(24), default="")
+    source: Mapped[str] = mapped_column(String(30), default="luckypool")
+    dedupe_key: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
+    created_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class SoloBlock(Base):
+    """A block found by a solo node (§4.16), one row per height."""
+
+    __tablename__ = "solo_blocks"
+    __table_args__ = (UniqueConstraint("coin_ticker", "height", name="uq_solo_coin_height"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    coin_ticker: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    height: Mapped[int] = mapped_column(Integer, nullable=False)
+    reward: Mapped[float] = mapped_column(Float, nullable=False)
+    found_at: Mapped[str] = mapped_column(String(30), nullable=False)
+    node: Mapped[str] = mapped_column(String(120), default="")
+    tx: Mapped[str] = mapped_column(String(160), default="")
+    source: Mapped[str] = mapped_column(String(20), default="solo")
+    created_at: Mapped[str] = mapped_column(String(30), default=lambda: datetime.now(timezone.utc).isoformat())
+
+
 class NotificationLog(Base):
     """One queued/sent notification: the queue *and* the journal (§4.14)."""
 

@@ -207,6 +207,9 @@ async def startup():
     # §8 phase 2a: metrics collection every FOSSOR_COLLECT_INTERVAL seconds.
     from app import collector
     collector.start()
+    # §4.16 : relevé périodique borné des paiements de pool et blocs solo.
+    from app import payments
+    payments.start()
     # §4.8/§4.12 : la cadence de la veille déclenche un tick Hermes (après le
     # premier tick manuel).  Aucun appel au démarrage.
     from app import veille

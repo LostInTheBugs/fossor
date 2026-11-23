@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
-from app import legacy_import, pools, prices
+from app import legacy_import, payments, pools, prices
 from app.database import get_db
 from app.dependencies import require_login
 from app.models import (
@@ -262,6 +262,22 @@ async def mined(db: Session = Depends(get_db), _user=Depends(require_login)):
     }
 
 
+@router.get("/mined/payments")
+def mined_payments(
+    coin: str | None = Query(None, max_length=20),
+    pool: str | None = Query(None, max_length=30),
+    source: str | None = Query(None, pattern="^(pool|luckypool|solo)$"),
+    start: str | None = Query(None, max_length=40),
+    end: str | None = Query(None, max_length=40),
+    limit: int = Query(200, ge=1, le=500),
+    db: Session = Depends(get_db),
+    _user=Depends(require_login),
+):
+    """« Paiements reçus » : lignes de pool et blocs solo, adresse tronquée."""
+    return payments.list_payments(db, coin=coin, pool=pool, source=source,
+                                  start=start, end=end, limit=limit)
+
+
 @router.post("/mined/refresh")
 async def mined_refresh(db: Session = Depends(get_db), _user=Depends(require_login)):
     """Fetch CoinGecko prices and every configured pool balance, store, report."""
@@ -361,6 +377,15 @@ async def mined_refresh(db: Session = Depends(get_db), _user=Depends(require_log
         })
     db.commit()
 
+    # §4.16 : l'historique des paiements du pool (et les blocs solo
+    # configurés) est relevé au même moment, de façon bornée.  Un échec est
+    # rapporté sans invalider le rafraîchissement des soldes.
+    try:
+        payments_report = await payments.sync_all(db)
+    except Exception as exc:  # pragma: no cover - jamais bloquant
+        logger.warning("synchronisation des paiements en échec: %s", exc)
+        payments_report = {"ok": False, "error": str(exc)}
+
     # §4.14: first price seen for a token that had none (new listing / price).
     try:
         from app import notifications
@@ -380,6 +405,7 @@ async def mined_refresh(db: Session = Depends(get_db), _user=Depends(require_log
             "offline": prices.offline(),
         },
         "pools": report,
+        "payments": payments_report,
     }
 
 

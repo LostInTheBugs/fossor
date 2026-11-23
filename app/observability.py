@@ -35,6 +35,7 @@ ROUTINE_LABELS = {
     "update-check": "Vérification de version",
     "veille": "Veille Hermes",
     "updater": "Battement de l'updater",
+    "pool-payments": "Paiements de pool",
 }
 DEFAULT_INTERVALS = {
     "backup": BACKUP_INTERVAL,
