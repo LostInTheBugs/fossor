@@ -279,6 +279,9 @@ async def sync_luckypool_wallet(db: Any, wallet: Any) -> dict[str, Any]:
         if priced is None:
             await ensure_historical_price(db, item.coin_ticker, item.received_at)
             prices += 1
+    from app.ai_config import set_setting
+
+    set_setting(db, f"pool_payments_synced:{wallet.id}", _stamp())
     db.commit()
     return {
         "ok": True,

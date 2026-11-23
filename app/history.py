@@ -948,7 +948,6 @@ def gains_rows(
     begin = _parse(start).isoformat() if start else None
     stop = _parse(end).isoformat() if end else None
     price_cache: dict[str, list[tuple[str, float, str]]] = {}
-    synced = bool(get_setting(db, "pool_payments_last_sync", ""))
     rows: list[dict[str, Any]] = []
 
     query = db.query(Wallet)
@@ -976,8 +975,9 @@ def gains_rows(
                 "source": "pool",
                 "reference": payment.tx,
             })
+        synced = bool(get_setting(db, f"pool_payments_synced:{wallet.id}", ""))
         if kept or (wallet.pool in PAYMENT_POOLS and synced) or wallet.pool == "solo":
-            continue  # API du pool déjà historisée (même vide) : pas de delta
+            continue  # API du pool déjà relevée pour ce wallet (même vide)
 
         # Repli : pool sans API de paiements, ou connecteur jamais passé.
         samples = (
