@@ -114,11 +114,11 @@ async def test_sync_all_queries_the_profile_wallet(monkeypatch):
 
         seen: list[tuple[str, str]] = []
 
-        async def fake_sync(db_, wallet):
+        async def fake_sync(db_, wallet, **kwargs):
             seen.append((wallet.coin_ticker, wallet.address))
             return {"ok": True, "new": 0}
 
-        async def fake_solo(db_):
+        async def fake_solo(db_, **kwargs):
             return {"ok": True, "nodes": []}
 
         monkeypatch.setattr(payments, "sync_luckypool_wallet", fake_sync)
