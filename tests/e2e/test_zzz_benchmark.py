@@ -31,12 +31,12 @@ def seed(machine_id: int) -> dict[str, str]:
         conn.execute(
             "INSERT INTO miner_profiles (uuid, name, coin, wallet, pool, software,"
             " binary_url, sha256, binary_path, version, cmdline, api_port, enabled,"
-            " created_at, updated_at)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " execution_mode, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (profile_uuid, f"e2e-bench-{profile_uuid[:6]}", "PRL", WALLET,
              "stratum+tcp://pearl-eu2.luckypool.io:3360", "srbminer",
              "http://192.0.2.1/srbminer.tar.gz", SHA, "/opt/fossor/miners/srbminer",
-             "2.0.0", "/bin/true", 0, 1, "2026-11-23T00:00:00+00:00",
+             "2.0.0", "/bin/true", 0, 1, "host", "2026-11-23T00:00:00+00:00",
              "2026-11-23T00:00:00+00:00"),
         )
         profile_id = int(conn.execute("SELECT MAX(id) FROM miner_profiles").fetchone()[0])
