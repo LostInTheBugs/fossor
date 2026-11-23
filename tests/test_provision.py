@@ -184,6 +184,7 @@ class TestProvision:
                 ("PREFLIGHT_OK\n", "", 0),
                 ("ACCOUNT_CREATED\n", "", 0),
                 ("KEY_INSTALLED\n", "", 0),
+                ("GPU_WRAPPER_INSTALLED\n", "", 0),
                 ("SUDOERS_INSTALLED\n", "", 0),
             ]
         )
@@ -200,7 +201,7 @@ class TestProvision:
         assert any("authorized_keys" in cmd for cmd in temp.commands)
         assert any("visudo -cf" in cmd for cmd in temp.commands)
         assert any("install -m 0440" in cmd for cmd in temp.commands)
-        assert any("sudo -n true" in cmd for cmd in verify.commands)
+        assert any("sudo -n -l /usr/local/sbin/fossor-gpu-pl" in cmd for cmd in verify.commands)
 
         db.expire_all()
         machine = db.query(type(machine)).filter_by(id=machine.id).first()
@@ -230,6 +231,7 @@ class TestProvision:
                 ("PREFLIGHT_OK\n", "", 0),
                 ("ACCOUNT_CREATED\n", "", 0),
                 ("KEY_INSTALLED\n", "", 0),
+                ("GPU_WRAPPER_INSTALLED\n", "", 0),
                 ("", "visudo: syntax error", 1),
                 ("KEY_REMOVED\n", "", 0),
                 ("ACCOUNT_DELETED\n", "", 0),
@@ -282,6 +284,7 @@ class TestProvision:
                 ("PREFLIGHT_OK\n", "", 0),
                 ("ACCOUNT_CREATED\n", "", 0),
                 ("KEY_INSTALLED\n", "", 0),
+                ("GPU_WRAPPER_INSTALLED\n", "", 0),
                 ("SUDOERS_INSTALLED\n", "", 0),
             ]
         )

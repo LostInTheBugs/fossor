@@ -686,7 +686,7 @@ async def ssh_set_gpu_power_limit(
         if ! command -v nvidia-smi >/dev/null 2>&1; then
           echo 'nvidia-smi absent'; exit 0
         fi
-        sudo -n nvidia-smi -i {gpu_index} -pl {limit_w} 2>&1
+        sudo -n /usr/local/sbin/fossor-gpu-pl {gpu_index} {limit_w} 2>&1
         echo '### READ'
         nvidia-smi -i {gpu_index} --query-gpu=power.limit --format=csv,noheader,nounits 2>/dev/null
         exit 0

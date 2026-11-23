@@ -547,3 +547,33 @@ def set_machine_simulation(
         "pilotage": label,
         "simulated": pilotage.simulated_for(db, machine),
     }
+
+
+@router.post("/{machine_id}/provision/update")
+async def update_machine_preparation(
+    machine_id: int,
+    data: dict,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_login),
+):
+    """Installe le script enveloppe fossor-gpu-pl et sa règle sudoers étroite."""
+    from app.provision import ProvisionError, update_preparation
+
+    machine = db.query(Machine).filter(Machine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=404, detail="Machine not found")
+    if machine.auth_type != "fossor_key":
+        raise HTTPException(
+            status_code=400,
+            detail="Cette machine n'utilise pas la clé de Fossor",
+        )
+    try:
+        result = await update_preparation(
+            machine,
+            temp_user=data.get("temp_user") or "",
+            temp_password=data.get("temp_password") or "",
+            actor=current_user if current_user else "system",
+        )
+    except ProvisionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return result

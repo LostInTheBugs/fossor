@@ -36,7 +36,10 @@ STEP_PREFLIGHT = "préflight (sudo / useradd / visudo)"
 STEP_ACCOUNT = "création du compte"
 STEP_KEY = "pose de la clé publique"
 STEP_SUDOERS = "fichier sudoers"
+STEP_GPU = "script de limite de puissance"
 STEP_VERIFY = "vérification par clé"
+GPU_PL_PATH = "/usr/local/sbin/fossor-gpu-pl"
+GPU_PL_SUDOERS_PATH = "/etc/sudoers.d/fossor-gpu-pl"
 
 
 class ProvisionError(ValueError):
@@ -78,6 +81,7 @@ _PREFLIGHT = textwrap.dedent(
     command -v visudo >/dev/null 2>&1 || { echo MISSING:visudo; exit 22; }
     command -v install >/dev/null 2>&1 || { echo MISSING:install; exit 23; }
     command -v getent >/dev/null 2>&1 || { echo MISSING:getent; exit 24; }
+    command -v awk >/dev/null 2>&1 || { echo MISSING:awk; exit 25; }
     echo PREFLIGHT_OK
     """
 ).strip()
@@ -117,9 +121,66 @@ _INSTALL_SUDOERS = textwrap.dedent(
     """
 ).strip()
 
-_VERIFY_SUDO = "sudo -n true >/dev/null 2>&1 && echo SUDO_OK || echo SUDO_FAIL"
+#: Script enveloppe root : deux entiers seulement, bornes relues ici.
+GPU_PL_WRAPPER = textwrap.dedent(r"""#!/bin/sh
+# Applique une limite de puissance GPU. Seuls deux entiers sont acceptes ;
+# les bornes sont relues ici, jamais fournies par l'appelant.
+set -eu
+if [ "$#" -ne 2 ]; then
+  echo "usage: fossor-gpu-pl <index> <watts>" >&2
+  exit 2
+fi
+case "$1" in ''|*[!0-9]*) echo "index invalide" >&2; exit 2 ;; esac
+case "$2" in ''|*[!0-9]*) echo "watts invalide" >&2; exit 2 ;; esac
+INDEX=$1
+WATTS=$2
+NVSMI=$(command -v nvidia-smi 2>/dev/null || true)
+if [ -z "$NVSMI" ]; then
+  echo "nvidia-smi absent" >&2
+  exit 3
+fi
+BOUNDS=$("$NVSMI" -i "$INDEX" --query-gpu=power.min_limit,power.max_limit --format=csv,noheader,nounits 2>/dev/null | head -n 1)
+if [ -z "$BOUNDS" ]; then
+  echo "bornes illisibles pour GPU $INDEX" >&2
+  exit 4
+fi
+MIN=$(printf '%s' "$BOUNDS" | cut -d, -f1 | tr -d ' ')
+MAX=$(printf '%s' "$BOUNDS" | cut -d, -f2 | tr -d ' ')
+case "$MIN" in ''|*[!0-9.]*) echo "borne minimale illisible" >&2; exit 4 ;; esac
+case "$MAX" in ''|*[!0-9.]*) echo "borne maximale illisible" >&2; exit 4 ;; esac
+if ! awk -v w="$WATTS" -v lo="$MIN" -v hi="$MAX" 'BEGIN { exit !(w + 0 >= lo + 0 && w + 0 <= hi + 0) }'; then
+  echo "limite $WATTS W hors bornes [$MIN, $MAX] pour GPU $INDEX" >&2
+  exit 5
+fi
+exec "$NVSMI" -i "$INDEX" -pl "$WATTS"
+""").strip()
+
+_INSTALL_GPU_WRAPPER = textwrap.dedent(
+    """    set -e
+    T=$(mktemp)
+    printf '%s' "$1" > "$T"
+    sh -n "$T"
+    install -m 0755 -o root -g root "$T" /usr/local/sbin/fossor-gpu-pl
+    S=$(mktemp)
+    printf '%s ALL=(root) NOPASSWD: /usr/local/sbin/fossor-gpu-pl\\n' "$2" > "$S"
+    visudo -cf "$S" >/dev/null
+    install -m 0440 -o root -g root "$S" /etc/sudoers.d/fossor-gpu-pl
+    rm -f "$T" "$S"
+    echo GPU_WRAPPER_INSTALLED
+    """
+).strip()
+
+_VERIFY_SUDO = (
+    "sudo -n -l /usr/local/sbin/fossor-gpu-pl >/dev/null 2>&1"
+    " && echo SUDO_OK || echo SUDO_FAIL"
+)
 
 _REMOVE_SUDOERS = "rm -f /etc/sudoers.d/fossor && echo SUDOERS_REMOVED"
+
+_REMOVE_GPU_WRAPPER = (
+    "rm -f /usr/local/sbin/fossor-gpu-pl /etc/sudoers.d/fossor-gpu-pl"
+    " && echo GPU_WRAPPER_REMOVED"
+)
 
 _REMOVE_KEY = textwrap.dedent(
     """\
@@ -158,6 +219,14 @@ def _script_install_sudoers(account: str) -> str:
     return _sudo(_INSTALL_SUDOERS, account)
 
 
+def _script_install_gpu_wrapper(account: str) -> str:
+    return _sudo(_INSTALL_GPU_WRAPPER, GPU_PL_WRAPPER, account)
+
+
+def _script_remove_gpu_wrapper() -> str:
+    return _sudo(_REMOVE_GPU_WRAPPER, no_password=True)
+
+
 def _script_rollback_account(account: str) -> str:
     return _sudo(_ROLLBACK_ACCOUNT, account)
 
@@ -175,6 +244,8 @@ def _script_deprovision(account: str, public_key: str, delete_account: bool) -> 
     inner = textwrap.dedent(
         f"""\
         set -e
+        rm -f /usr/local/sbin/fossor-gpu-pl /etc/sudoers.d/fossor-gpu-pl
+        echo GPU_WRAPPER_REMOVED
         rm -f {SUDOERS_PATH}
         echo SUDOERS_REMOVED
         H=$(getent passwd "$1" | cut -d: -f6)
@@ -292,6 +363,9 @@ async def _rollback(conn, machine_id: int | None, state: dict[str, bool],
     """Undo what was created, in reverse order. Returns a note for the user."""
     notes: list[str] = []
     try:
+        if state.get("gpu_wrapper"):
+            status, _out, err = await _exec(conn, _script_remove_gpu_wrapper(), password)
+            notes.append("script GPU retiré" if status == 0 else f"script GPU non retiré ({_detail('', err)})")
         if state.get("sudoers"):
             status, _out, err = await _exec(conn, _script_remove_sudoers(), password)
             notes.append("sudoers retiré" if status == 0 else f"sudoers non retiré ({_detail('', err)})")
@@ -348,7 +422,8 @@ async def provision_machine(
     public_key = validate_public_key(fossor_keys.public_key_text())
 
     steps: list[str] = []
-    state = {"account_created": False, "key_installed": False, "sudoers": False}
+    state = {"account_created": False, "key_installed": False,
+             "gpu_wrapper": False, "sudoers": False}
 
     conn, fingerprint, failure = await open_pinned_connection(
         host=machine.host,
@@ -390,6 +465,13 @@ async def provision_machine(
             return _failed(machine.id, STEP_KEY, _detail(out, err), steps, note, actor=actor)
         state["key_installed"] = "KEY_INSTALLED" in out
         steps.append("clé")
+
+        status, out, err = await _exec(conn, _script_install_gpu_wrapper(account), temp_password)
+        if status != 0 or "GPU_WRAPPER_INSTALLED" not in out:
+            note = await _rollback(conn, machine.id, state, account, public_key, temp_password)
+            return _failed(machine.id, STEP_GPU, _detail(out, err), steps, note, actor=actor)
+        state["gpu_wrapper"] = True
+        steps.append("limite GPU")
 
         status, out, err = await _exec(conn, _script_install_sudoers(account), temp_password)
         if status != 0 or "SUDOERS_INSTALLED" not in out:
@@ -482,6 +564,98 @@ async def provision_machine(
         "message": (
             f"Machine préparée : connexion par la clé de Fossor avec le compte "
             f"{account} (sudo sans mot de passe). L'accès temporaire n'a pas été conservé."
+        ),
+    }
+
+
+async def update_preparation(
+    machine: Any,
+    temp_user: str,
+    temp_password: str,
+    actor: str = "system",
+) -> dict[str, Any]:
+    """Réinstalle le script enveloppe et sa règle sudoers sur une machine préparée.
+
+    Une seule session avec les identifiants admin ; ils ne sont ni stockés,
+    ni journalisés, ni audités.
+    """
+    from app.ssh_client import open_pinned_connection
+
+    account = validate_account(machine.ssh_user or "")
+    if not isinstance(temp_user, str) or not temp_user.strip():
+        raise ProvisionError("Login admin requis")
+    if not isinstance(temp_password, str) or not temp_password:
+        raise ProvisionError("Mot de passe admin requis")
+    temp_user = temp_user.strip()
+
+    conn, _fingerprint, failure = await open_pinned_connection(
+        host=machine.host,
+        port=machine.ssh_port,
+        username=temp_user,
+        auth_type="password",
+        secret=temp_password,
+        pinned_fp=(machine.host_key or "").strip() or None,
+        pinned_public_key=(machine.host_key_public or "").strip() or None,
+        machine_id=machine.id,
+        audit_kind="provision-update",
+        actor=actor,
+    )
+    if failure is not None:
+        message = (
+            "connexion admin impossible — "
+            + _french_connection_error(_redact(failure.get("error", ""), temp_password))
+        )
+        _audit(machine.id, "fail", message, actor=actor)
+        return {"ok": False, "error": message}
+
+    steps: list[str] = []
+    try:
+        status, out, err = await _exec(conn, _PREFLIGHT)
+        if status != 0 or "PREFLIGHT_OK" not in out:
+            message = f"mise à jour impossible — {_missing_tool_message(out or err)}"
+            _audit(machine.id, "fail", message, actor=actor)
+            return {"ok": False, "error": message, "steps_done": steps}
+        steps.append("préflight")
+
+        status, out, err = await _exec(
+            conn, _script_install_gpu_wrapper(account), temp_password
+        )
+        if status != 0 or "GPU_WRAPPER_INSTALLED" not in out:
+            message = (
+                f"mise à jour échouée à l'étape « {STEP_GPU} » — {_detail(out, err)}"
+            )
+            _audit(machine.id, "fail", message, actor=actor)
+            return {"ok": False, "step": STEP_GPU, "error": message,
+                    "steps_done": steps}
+        steps.append("limite GPU")
+    except asyncio.TimeoutError:
+        message = f"mise à jour échouée — délai dépassé ({STEP_TIMEOUT} s)"
+        _audit(machine.id, "fail", message, actor=actor)
+        return {"ok": False, "error": message, "steps_done": steps}
+    except (asyncssh.Error, OSError) as exc:
+        message = f"mise à jour échouée — {_redact(exc, temp_password)}"
+        _audit(machine.id, "fail", message, actor=actor)
+        return {"ok": False, "error": message, "steps_done": steps}
+    finally:
+        conn.close()
+        try:
+            await conn.wait_closed()
+        except Exception:
+            pass
+
+    _audit(
+        machine.id,
+        "ok",
+        f"préparation mise à jour pour {account} : script {GPU_PL_PATH} et règle "
+        f"sudoers étroite ; identifiants admin oubliés",
+        actor=actor,
+    )
+    return {
+        "ok": True,
+        "steps_done": steps,
+        "message": (
+            "Préparation mise à jour : le script fossor-gpu-pl et sa règle sudoers "
+            "étroite sont installés. Les identifiants admin n'ont pas été conservés."
         ),
     }
 
