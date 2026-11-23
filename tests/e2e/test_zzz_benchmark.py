@@ -140,7 +140,7 @@ async def test_benchmark_validation_simulation_resultats_mode(e2e_server):
         await page.select_option("#benchApplyMode", "efficiency")
         await page.click("#benchApply")
         await page.wait_for_function(
-            "() => (document.getElementById('benchApplied').textContent || '').includes('W')",
+            "() => (document.getElementById('benchApplied').textContent || '').includes('108')",
             timeout=15000,
         )
         applied = await page.inner_text("#benchApplied")
