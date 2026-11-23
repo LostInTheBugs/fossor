@@ -244,6 +244,8 @@
         measure_min: Number($("benchMinutes").value) || 3,
         apply_mode: $("benchMode").value
       })
+    }).then(function (created) {
+      return api("/api/benchmark/" + created.id + "/execute", {method: "POST", body: "{}"});
     }).then(function (accepted) {
       var id = accepted.id || (accepted.run && accepted.run.id);
       return waitForRun(id);

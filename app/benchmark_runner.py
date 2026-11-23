@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid as uuid_lib
 from datetime import datetime
 from typing import Any
@@ -26,6 +27,8 @@ from app.models import (
     Machine,
     MinerProfile,
 )
+
+logger = logging.getLogger("fossor.benchmark")
 
 ACTIVE_STATUSES = ("queued", "running", "stopping")
 TERMINAL_STATUSES = ("done", "failed", "cancelled", "restore_failed")
@@ -524,6 +527,7 @@ async def _execute_task(run_id: int) -> None:
             return
         await execute(db, run)
     except Exception as exc:  # une tache de fond ne tue jamais la boucle
+        logger.exception("benchmark #%s en echec", run_id)
         try:
             db.rollback()
         except Exception:
