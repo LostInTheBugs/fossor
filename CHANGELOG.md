@@ -2,6 +2,13 @@
 
 ## 2026.11.020 (en cours)
 
+### Benchmark de puissance — fin
+
+- **Tâche de fond** : `POST /api/benchmark/{id}/execute` répond `202` + id, le run se déroule hors de la requête HTTP ; la page suit l'état par polling. `/api/version` reste sous la seconde pendant un benchmark lent.
+- **Script enveloppe root** `fossor-gpu-pl` : index et watts entiers, bornes `power.min_limit`/`power.max_limit` relues par le script, aucune option libre. Règle sudoers étroite `/usr/local/sbin/fossor-gpu-pl`, déposée par la préparation ; action « Mettre à jour la préparation » pour les machines déjà préparées.
+- **Réapplication après redémarrage** : à chaque collecte, un uptime de `machine_status` inférieur à celui de l'application rejoue la limite retenue et journalise `reapplied-after-reboot`.
+- **Fiche machine** : bouton « Benchmark » ouvrant l'écran de validation de la machine ; mention « proposition seulement » pour HiveOS.
+
 ### Durcissement TLS des ASIC
 
 - **Empreinte épinglée sur la connexion qui porte la requête** : le certificat observé est validé contre l'empreinte, puis un `SSLContext` (`cadata`, `CERT_REQUIRED`, `check_hostname=False`) ne fait confiance qu'à ce certificat. Un autre certificat fait échouer la poignée de main **avant** tout envoi d'identifiant ; le premier contact (TOFU) est inchangé.

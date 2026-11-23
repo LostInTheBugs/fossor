@@ -51,6 +51,12 @@ exit 0
 """
 
 
+FAKE_WRAPPER = """#!/bin/sh
+echo "$@" >> /tmp/fake-fossor-gpu-pl.log
+exec /usr/local/bin/nvidia-smi -i "$1" -pl "$2"
+"""
+
+
 def _target() -> dict[str, str]:
     host = os.environ.get("FOSSOR_TEST_SSH_HOST", "")
     if not host:
@@ -74,11 +80,15 @@ async def _ssh(target: dict[str, str], command: str) -> tuple[str, str, int]:
 
 async def _install_fake(target: dict[str, str]) -> None:
     payload = FAKE_NVIDIA.replace("'", "'\\''")
-    await _ssh(target, "sudo -n rm -f /tmp/fake-nvidia-smi.state /tmp/fake-nvidia-smi.log")
+    wrapper = FAKE_WRAPPER.replace("'", "'\\''")
+    await _ssh(target, "sudo -n rm -f /tmp/fake-nvidia-smi.state /tmp/fake-nvidia-smi.log"
+                       " /tmp/fake-fossor-gpu-pl.log")
     stdout, stderr, code = await _ssh(
         target,
         f"printf '%s' '{payload}' | sudo -n tee /usr/local/bin/nvidia-smi > /dev/null"
-        " && sudo -n chmod 0755 /usr/local/bin/nvidia-smi",
+        " && sudo -n chmod 0755 /usr/local/bin/nvidia-smi"
+        f" && printf '%s' '{wrapper}' | sudo -n tee /usr/local/sbin/fossor-gpu-pl > /dev/null"
+        " && sudo -n chmod 0755 /usr/local/sbin/fossor-gpu-pl",
     )
     assert code == 0, (stdout, stderr)
 
@@ -116,6 +126,8 @@ async def test_bornes_limite_et_sonde_reelles_par_ssh():
         assert "set to 150" in set_result["stdout"]
         log, _, _ = await _ssh(target, "cat /tmp/fake-nvidia-smi.log")
         assert "-i 0 -pl 150" in log
+        wrapper_log, _, _ = await _ssh(target, "cat /tmp/fake-fossor-gpu-pl.log")
+        assert wrapper_log.strip() == "0 150"
 
         probe = await S.ssh_benchmark_probe(machine)
         assert probe["ok"] is True
