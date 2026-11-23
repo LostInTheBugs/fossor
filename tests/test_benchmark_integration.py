@@ -31,7 +31,7 @@ pytestmark = pytest.mark.integration
 
 FAKE_NVIDIA = """#!/bin/sh
 STATE=/tmp/fake-nvidia-smi.state
-LOG=/tmp/fake-nvidia-smi.log
+LOG=/var/log/fossor-bench/nvidia.log
 echo "$@" >> $LOG
 PL=$(cat $STATE 2>/dev/null || echo 180)
 case "$*" in
@@ -52,7 +52,7 @@ exit 0
 
 
 FAKE_WRAPPER = """#!/bin/sh
-echo "$@" >> /tmp/fake-fossor-gpu-pl.log
+echo "$@" >> /var/log/fossor-bench/wrapper.log
 exec /usr/local/bin/nvidia-smi -i "$1" -pl "$2"
 """
 
@@ -81,8 +81,11 @@ async def _ssh(target: dict[str, str], command: str) -> tuple[str, str, int]:
 async def _install_fake(target: dict[str, str]) -> None:
     payload = FAKE_NVIDIA.replace("'", "'\\''")
     wrapper = FAKE_WRAPPER.replace("'", "'\\''")
-    await _ssh(target, "sudo -n rm -f /tmp/fake-nvidia-smi.state /tmp/fake-nvidia-smi.log"
-                       " /tmp/fake-fossor-gpu-pl.log")
+    await _ssh(target, "sudo -n rm -f /tmp/fake-nvidia-smi.state /var/log/fossor-bench/nvidia.log"
+                       " /var/log/fossor-bench/wrapper.log")
+    await _ssh(target, "sudo -n install -d -m 0777 /var/log/fossor-bench"
+                       " && sudo -n sh -c 'install -m 0666 /dev/null /var/log/fossor-bench/nvidia.log"
+                       " /var/log/fossor-bench/wrapper.log'")
     stdout, stderr, code = await _ssh(
         target,
         f"printf '%s' '{payload}' | sudo -n tee /usr/local/bin/nvidia-smi > /dev/null"
@@ -124,13 +127,14 @@ async def test_bornes_limite_et_sonde_reelles_par_ssh():
         set_result = await S.ssh_set_gpu_power_limit(machine, 0, 150)
         assert set_result["ok"] is True
         assert "set to 150" in set_result["stdout"]
-        log, _, _ = await _ssh(target, "cat /tmp/fake-nvidia-smi.log")
-        assert "-i 0 -pl 150" in log
-        wrapper_log, _, _ = await _ssh(target, "cat /tmp/fake-fossor-gpu-pl.log")
-        assert wrapper_log.strip() == "0 150"
+        log, _, _ = await _ssh(target, "cat /var/log/fossor-bench/nvidia.log")
+        wrapper_log, _, _ = await _ssh(target, "cat /var/log/fossor-bench/wrapper.log")
+        assert "-i 0 -pl 150" in log, (log, wrapper_log, set_result["stdout"])
+        assert wrapper_log.strip() == "0 150", (log, wrapper_log, set_result["stdout"])
 
         probe = await S.ssh_benchmark_probe(machine)
-        assert probe["ok"] is True
+        assert probe["ok"] is True, probe
+        assert 0 in probe["gpus"], (probe.get("stdout"), probe)
         assert probe["gpus"][0]["limit_w"] == 150.0
         assert probe["gpus"][0]["power_w"] == pytest.approx(144.0)
 

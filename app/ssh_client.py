@@ -1276,7 +1276,6 @@ BENCHMARK_PROBE_COMMAND = textwrap.dedent("""\
 async def ssh_benchmark_probe(machine: Any, actor: str = "benchmark") -> dict[str, Any]:
     """Puissance et temperature par GPU, en lecture seule."""
     from app.benchmark import parse_probe
-    from app.hw_parser import split_sections
 
     raw = await _run_whitelisted(
         host=machine.host,
@@ -1293,6 +1292,10 @@ async def ssh_benchmark_probe(machine: Any, actor: str = "benchmark") -> dict[st
     )
     if not raw.get("ok"):
         return raw
-    sections = split_sections(raw.get("stdout", ""))
-    return {"ok": True, "gpus": parse_probe(sections.get("NVSMI", "")),
-            "stdout": raw.get("stdout", "")}
+    stdout = raw.get("stdout", "")
+    text = ""
+    if "### NVSMI" in stdout:
+        text = stdout.split("### NVSMI", 1)[1]
+        if "###" in text:
+            text = text.split("###", 1)[0]
+    return {"ok": True, "gpus": parse_probe(text), "stdout": stdout}
