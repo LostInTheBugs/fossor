@@ -221,6 +221,45 @@ def _units_from_config(payload: dict[str, Any]) -> float:
     return float(parse_stats(payload).get("units_per_coin") or 100_000_000)
 
 
+def _parse_flat_payment(row: str, units: float, coin: str) -> dict[str, Any] | None:
+    """Forme brute du pool : ``timestamp:txHash:amount[:fee[:kernels]]``.
+
+    Le bundle public découpe l'élément ainsi (source citée au rapport) ::
+
+        fr = e => { const [t,r,a,o,i] = e.split(":");
+                    return {timestamp: Number(t), txHash: r, amount: Number(a),
+                            fee: Number(o||0), kernels: i ? i.split(",") : []} }
+
+    Horodatage d'abord, donc aucune alternance chaîne / horodatage à gérer.
+    ``amount`` et ``fee`` sont en unités atomiques, comme la forme ``dict``.
+    """
+    parts = [part.strip() for part in row.split(":")]
+    if len(parts) < 3:
+        return None
+    stamp, tx, atomic = parts[0], parts[1], parts[2]
+    if not tx or not stamp:
+        return None
+    amount_atomic = _float(atomic)
+    if amount_atomic is None:
+        return None
+    amount = round(amount_atomic / units, 12)
+    if amount <= 0:
+        return None
+    received_at = to_iso(stamp)
+    if not received_at:
+        return None
+    fee_atomic = _float(parts[3]) if len(parts) > 3 else None
+    return {
+        "coin": (coin or "PRL").upper(),
+        "pool": "luckypool",
+        "amount": amount,
+        "received_at": received_at,
+        "tx": tx,
+        "fee": round((fee_atomic or 0.0) / units, 12),
+        "source": "luckypool",
+    }
+
+
 def parse_luckypool_payments(
     payload: dict[str, Any],
     units_per_coin: float = 100_000_000.0,
@@ -228,8 +267,14 @@ def parse_luckypool_payments(
 ) -> list[dict[str, Any]]:
     """Shape the ``payments`` array of ``/api/stats_address``.
 
-    Champs observés dans le bundle public : ``timestamp``, ``txHash``,
-    ``amount``, ``fee``, ``payees``. Un montant absent ou nul est ignoré ;
+    Deux formes coexistent, et les deux sont gardées :
+
+    * **chaîne plate** (observée en prod, famille cryptonote-pool) :
+      ``"timestamp:txHash:amount[:fee[:kernels]]"``, horodatage en tête ;
+    * **objet** (autre déploiement, et tests) : ``timestamp``, ``txHash``,
+      ``amount``, ``fee``.
+
+    Un montant absent ou nul est ignoré, comme un horodatage illisible :
     aucune ligne n'est inventée.
     """
     payload = payload if isinstance(payload, dict) else {}
@@ -239,6 +284,11 @@ def parse_luckypool_payments(
     units = float(units_per_coin or 100_000_000.0)
     out: list[dict[str, Any]] = []
     for row in rows:
+        if isinstance(row, str):
+            flat = _parse_flat_payment(row, units, coin)
+            if flat is not None:
+                out.append(flat)
+            continue
         if not isinstance(row, dict):
             continue
         atomic = _float(row.get("amount"))

@@ -69,6 +69,44 @@ def test_luckypool_parser_reads_documented_payment_fields():
     assert rows[0]["pool"] == "luckypool"
 
 
+def test_luckypool_parser_reads_flat_timestamp_tx_amount_strings():
+    """Forme réelle du pool : liste plate ``timestamp:txHash:amount``, sans objet."""
+    payload = {
+        "payments": [
+            "1762000000:" + "a" * 64 + ":250000000",
+            "1761900000:" + "b" * 64 + ":100000000",
+            "1761800000:" + "c" * 64 + ":1",
+            "tronque:" + "e" * 64,
+            "inv-ts:" + "f" * 64,
+        ]
+    }
+    rows = payments.parse_luckypool_payments(payload, units_per_coin=100_000_000, coin="TST")
+    assert len(rows) == 3, "trois lignes valides, aucune inventée"
+    assert [row["tx"] for row in rows] == ["c" * 64, "b" * 64, "a" * 64]
+    assert rows[0]["amount"] == 0.00000001
+    assert rows[1]["amount"] == 1.0
+    assert rows[2]["amount"] == 2.5
+    assert rows[2]["received_at"] == "2025-11-01T12:26:40+00:00"
+    assert rows[0]["pool"] == "luckypool" and rows[0]["coin"] == "TST"
+    assert rows[2]["fee"] == 0.0
+
+
+def test_luckypool_parser_reads_flat_fee_and_keeps_dict_form():
+    payload = {
+        "payments": [
+            "1761700000:" + "d" * 64 + ":300000000:50000",
+            {"timestamp": 1762000000000, "txHash": "fictive-tx-0002", "amount": "250000000"},
+        ]
+    }
+    rows = payments.parse_luckypool_payments(payload, units_per_coin=100_000_000, coin="TST")
+    assert len(rows) == 2, "les deux formes coexistent"
+    assert [row["tx"] for row in rows] == ["d" * 64, "fictive-tx-0002"]
+    assert rows[0]["amount"] == 3.0
+    assert rows[1]["amount"] == 2.5
+    assert rows[0]["fee"] == 0.0005
+    assert rows[1]["fee"] == 0.0
+
+
 def test_address_is_truncated_everywhere():
     assert payments.mask_address(ADDRESS).startswith("TSTWAL")
     assert ADDRESS not in payments.mask_address(ADDRESS)
