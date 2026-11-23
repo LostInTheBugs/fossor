@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import quote
@@ -150,10 +151,17 @@ MAX_PAYMENTS_PER_SYNC = 500
 SOLO_MAX_NODES = 5
 SOLO_MAX_TRANSACTIONS = 200
 MAX_HISTORY_PRICES_PER_SYNC = 10
+#: Premier passage après démarrage : budget réduit, le reste passe au tour suivant.
+MAX_HISTORY_PRICES_FIRST_SYNC = 3
+#: Attente avant le premier passage : l'application répond avant de synchroniser.
+STARTUP_DELAY_S = 60.0
+#: Espacement minimal entre deux appels CoinGecko (limite de l'API gratuite).
+PRICE_CALL_MIN_INTERVAL_S = 1.5
 REQUEST_TIMEOUT_S = 20.0
 
 TRANSPORT = None  # monkeypatched in tests
 _task: asyncio.Task | None = None
+_last_price_call = 0.0
 
 
 def offline() -> bool:
@@ -343,6 +351,20 @@ def record_payments(db: Any, wallet: Any, rows: list[dict[str, Any]]) -> list[An
     return added
 
 
+def _day_of(value: Any) -> str:
+    return str(value or "")[:10]
+
+
+async def _space_price_call() -> None:
+    """Aucun appel CoinGecko à moins de ``PRICE_CALL_MIN_INTERVAL_S`` du précédent."""
+    global _last_price_call
+    interval = float(PRICE_CALL_MIN_INTERVAL_S)
+    elapsed = time.monotonic() - _last_price_call
+    if _last_price_call and 0 <= elapsed < interval:
+        await asyncio.sleep(interval - elapsed)
+    _last_price_call = time.monotonic()
+
+
 async def ensure_historical_price(db: Any, ticker: str, received_at: str) -> float | None:
     """Cache the CoinGecko price of the payment's day in ``price_samples``.
 
@@ -373,6 +395,7 @@ async def ensure_historical_price(db: Any, ticker: str, received_at: str) -> flo
     try:
         import httpx
 
+        await _space_price_call()
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_S, transport=TRANSPORT) as client:
             response = await client.get(url, params={"date": date_param, "localization": "false"})
         response.raise_for_status()
@@ -388,10 +411,66 @@ async def ensure_historical_price(db: Any, ticker: str, received_at: str) -> flo
     return eur
 
 
-async def sync_luckypool_wallet(db: Any, wallet: Any) -> dict[str, Any]:
+async def price_missing_days(db: Any, items: list[Any], day_attr: str, budget: int) -> int:
+    """Un échantillon de prix par (coin, jour), dans la limite de ``budget`` appels.
+
+    La présence d'un prix est vérifiée **sur le jour** de la réception : un
+    échantillon d'un autre jour ne valorise pas le paiement. Un seul prix
+    historique ne peut donc pas couvrir des paiements de jours différents.
+    """
+    from app.models import PriceSample
+
+    done: set[tuple[str, str]] = set()
+    calls = 0
+    limit = max(0, int(budget))
+    for item in items:
+        if calls >= limit:
+            break
+        ticker = str(getattr(item, "coin_ticker", "") or "").upper()
+        stamp = getattr(item, day_attr, None)
+        day = _day_of(stamp)
+        if not ticker or not day or (ticker, day) in done:
+            continue
+        done.add((ticker, day))
+        cached = (
+            db.query(PriceSample.id)
+            .filter(PriceSample.ticker == ticker, PriceSample.ts.like(f"{day}%"))
+            .first()
+        )
+        if cached is not None:
+            continue
+        calls += 1
+        await ensure_historical_price(db, ticker, str(stamp))
+    return calls
+
+
+async def backfill_missing_prices(db: Any, budget: int = MAX_HISTORY_PRICES_PER_SYNC) -> int:
+    """Valorise les jours des paiements déjà en base, sans en inventer.
+
+    Une base écrite par une version antérieure peut contenir des paiements
+    couverts par un seul prix : chaque jour manquant est demandé ici, dans la
+    limite de ``budget`` appels, les autres passent au tour suivant.
+    """
+    from app.models import PoolPayment, SoloBlock
+
+    if offline():
+        return 0
+    pool_rows = (
+        db.query(PoolPayment).order_by(PoolPayment.received_at.desc()).limit(200).all()
+    )
+    solo_rows = db.query(SoloBlock).order_by(SoloBlock.found_at.desc()).limit(100).all()
+    calls = await price_missing_days(db, pool_rows, "received_at", budget)
+    if calls < max(0, int(budget)):
+        calls += await price_missing_days(db, solo_rows, "found_at", int(budget) - calls)
+    return calls
+
+
+async def sync_luckypool_wallet(
+    db: Any, wallet: Any, price_budget: int = MAX_HISTORY_PRICES_PER_SYNC
+) -> dict[str, Any]:
     """Read the full payment history once, then only rows newer than the cursor."""
     from app import notifications, pools
-    from app.models import PoolPayment, PriceSample
+    from app.models import PoolPayment
 
     if offline():
         return {"ok": False, "skipped": True, "error": "réseau désactivé (FOSSOR_OFFLINE=1)"}
@@ -431,18 +510,7 @@ async def sync_luckypool_wallet(db: Any, wallet: Any) -> dict[str, Any]:
             f"Paiement reçu sur {item.coin_ticker} : +{item.amount:.8f} {item.coin_ticker} "
             f"(wallet {item.address_hint}).",
         )
-    prices = 0
-    for item in added:
-        if prices >= MAX_HISTORY_PRICES_PER_SYNC:
-            break
-        priced = (
-            db.query(PriceSample.id)
-            .filter(PriceSample.ticker == item.coin_ticker, PriceSample.ts <= item.received_at)
-            .first()
-        )
-        if priced is None:
-            await ensure_historical_price(db, item.coin_ticker, item.received_at)
-            prices += 1
+    await price_missing_days(db, added, "received_at", price_budget)
     from app.ai_config import set_setting
 
     set_setting(db, f"pool_payments_synced:{wallet.id}", _stamp())
@@ -581,7 +649,11 @@ def parse_cli_response(stdout: str, key: str) -> Any | None:
         return None
 
 
-async def sync_solo_nodes(db: Any, machines: list[Any] | None = None) -> dict[str, Any]:
+async def sync_solo_nodes(
+    db: Any,
+    machines: list[Any] | None = None,
+    price_budget: int = MAX_HISTORY_PRICES_PER_SYNC,
+) -> dict[str, Any]:
     """``listtransactions`` through SSH, on the nodes the collector detected.
 
     Same binary and same datadir as the ``### NODE`` probe, read-only and
@@ -631,15 +703,8 @@ async def sync_solo_nodes(db: Any, machines: list[Any] | None = None) -> dict[st
                     payload, coin=solo_coin_ticker(probe), node=node
                 )
                 added = record_solo_blocks(db, found)
-                for item in added:
-                    db.commit()
-                    priced = (
-                        db.query(PriceSample.id)
-                        .filter(PriceSample.ticker == item.coin_ticker, PriceSample.ts <= item.found_at)
-                        .first()
-                    )
-                    if priced is None:
-                        await ensure_historical_price(db, item.coin_ticker, item.found_at)
+                db.commit()
+                await price_missing_days(db, added, "found_at", price_budget)
                 db.commit()
                 report.append({"machine": label, "node": key, "ok": True,
                                "seen": len(found), "new": len(added)})
@@ -652,8 +717,12 @@ async def sync_solo_nodes(db: Any, machines: list[Any] | None = None) -> dict[st
 
 
 # ── Orchestration ─────────────────────────────────────────────────────
-async def sync_all(db: Any | None = None) -> dict[str, Any]:
-    """One bounded pass over Luckypool wallets + configured solo nodes."""
+async def sync_all(db: Any | None = None, first_pass: bool = False) -> dict[str, Any]:
+    """One bounded pass over Luckypool wallets + configured solo nodes.
+
+    ``first_pass`` réduit le budget de prix : le démarrage ne part pas en
+    rafale d'appels CoinGecko, les jours restants passent au tour suivant.
+    """
     from app.ai_config import set_setting
     from app.database import SessionLocal
     from app.models import Wallet
@@ -666,15 +735,20 @@ async def sync_all(db: Any | None = None) -> dict[str, Any]:
         wallets = payment_wallets(db, materialize=True)
         if wallets:
             db.commit()
+        budget = MAX_HISTORY_PRICES_FIRST_SYNC if first_pass else MAX_HISTORY_PRICES_PER_SYNC
         report: list[dict[str, Any]] = []
         for wallet in wallets:
             try:
-                report.append({"wallet_id": wallet.id, **await sync_luckypool_wallet(db, wallet)})
+                report.append({
+                    "wallet_id": wallet.id,
+                    **await sync_luckypool_wallet(db, wallet, price_budget=budget),
+                })
             except Exception as exc:  # one broken wallet never stops the pass
                 db.rollback()
                 logger.warning("paiements wallet %s en échec: %s", wallet.id, exc)
                 report.append({"wallet_id": wallet.id, "ok": False, "error": str(exc)})
-        solo = await sync_solo_nodes(db)
+        await backfill_missing_prices(db, budget=budget)
+        solo = await sync_solo_nodes(db, price_budget=budget)
         ok = all(item.get("ok") or item.get("skipped") for item in report) and (
             solo.get("ok") or solo.get("skipped")
         )
@@ -783,6 +857,10 @@ def sync_interval(db: Any) -> int:
 async def _loop() -> None:
     from app.database import SessionLocal
 
+    first_pass = True
+    if STARTUP_DELAY_S > 0:
+        # Le premier passage attend que l'application ait répondu à ses clients.
+        await asyncio.sleep(float(STARTUP_DELAY_S))
     while True:
         interval = DEFAULT_SYNC_INTERVAL_S
         try:
@@ -793,16 +871,18 @@ async def _loop() -> None:
                 db.close()
             if interval <= 0:
                 return
-            await sync_all()
+            await sync_all(first_pass=first_pass)
+            first_pass = False
         except Exception:  # pragma: no cover - defensive
             logger.warning("synchronisation des paiements en échec", exc_info=True)
         await asyncio.sleep(interval if interval > 0 else DEFAULT_SYNC_INTERVAL_S)
 
 
 def start() -> None:
-    global _task
+    global _task, _last_price_call
     if _task is not None and not _task.done():
         return
+    _last_price_call = 0.0
     try:
         _task = asyncio.create_task(_loop())
     except RuntimeError:  # pragma: no cover - no running loop at import time
