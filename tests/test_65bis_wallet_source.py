@@ -21,7 +21,7 @@ from app.models import (
     Wallet,
 )
 
-PEARL = "prl1pna5fictif0000000000000000000000000000xFwJ"
+PEARL = "prl1qtestfixture00000000000000000000000000k9vd"
 PROFILE_POOL = "stratum+tcp://pearl-eu2.luckypool.io:3360"
 
 

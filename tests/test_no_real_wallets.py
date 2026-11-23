@@ -1,9 +1,11 @@
 """Garde-fou : aucune adresse de wallet réelle recopiée dans le dépôt.
 
 Les adresses réelles de la page de suivi ne figurent pas ici, même en clair :
-seules des empreintes SHA-256 de fenêtres de 16 caractères sont stockées. Le
-test relit chaque fichier suivi par git et échoue si l'une de ses fenêtres de
-16 caractères a la même empreinte.
+seules des empreintes SHA-256 de fenêtres de 16 caractères et de couples
+préfixe 8 + suffixe 4 sont stockées. Le test relit chaque fichier suivi par git
+et échoue si l'une de ses fenêtres ou l'un de ses couples a la même empreinte.
+Le couple attrape une adresse recopiée avec un milieu inventé, que les fenêtres
+ne voient pas.
 
 Une adresse de test ne se fabrique jamais à partir d'une vraie, même en
 remplaçant son préfixe : elle s'écrit de zéro (``big1qtestaddressfossor000…``).
@@ -12,6 +14,8 @@ remplaçant son préfixe : elle s'écrit de zéro (``big1qtestaddressfossor000�
 from __future__ import annotations
 
 import hashlib
+import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -226,6 +230,52 @@ BANNED_SHA256 = frozenset({
     "ff043e013ae41cb3bbf93d003f8807e42a638c22c1d214c6ce78d46a31805d7c",
 })
 
+# Même principe pour le couple préfixe 8 + suffixe 4 : une adresse réelle
+# recopiée avec un milieu inventé n'a aucune fenêtre de 16 caractères intacte,
+# mais garde son début et sa fin. Seule l'empreinte du couple est stockée.
+PAIR_SHA256 = frozenset({
+    "40bd65633fa08c62d3c9bbcd28d9f01658ae9b7a47828bfed4e3d968f7b986e0",
+    "4ebbf50455c510fa06430ff593cc8d81706ece261a735619538674ce2f43e1a5",
+    "5b1cc4cc5bca9cad4440c402d90e3dafeddc9065345e3f40420ba2978e66ce20",
+    "9806a383f395bd01cd4300d833723349061a4b33ab95a0740b8a4b17e44caa8b",
+    "bd1f1533f1c03d2848fd39f1965e3c8e31f635f7945271585e887b5cf53612f7",
+    "cbb2d000848ec7a1ae4e59674c8424cdebcdb3412f09a2672548c7aa0fb1bf5c",
+    "f8e6514ec6b8f1784e514db8ad5984e5bbdd95b01cf98c7586fee3f44cfc1a67",
+})
+
+PAIR_RE = re.compile(r"[A-Za-z0-9]{12,}")
+
+
+def _pair_hash(token: str) -> str:
+    return hashlib.sha256((token[:8] + "|" + token[-4:]).encode()).hexdigest()
+
+
+def _local_pair_hashes() -> frozenset[str]:
+    """Couples d'adresses réelles fournis localement, jamais commités.
+
+    Une adresse par ligne dans ``$FOSSOR_REAL_WALLETS`` (défaut :
+    ``~/.config/fossor/real-wallets.txt``). Fichier absent : seules les
+    empreintes ci-dessus s'appliquent.
+    """
+    path = Path(os.environ.get("FOSSOR_REAL_WALLETS", "~/.config/fossor/real-wallets.txt")).expanduser()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return frozenset()
+    return frozenset(_pair_hash(line.strip()) for line in lines if len(line.strip()) >= 12)
+
+
+def _pair_hits(path: Path, banned: frozenset[str]) -> list[str]:
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return []
+    hits = []
+    for token in PAIR_RE.findall(text):
+        if _pair_hash(token) in banned:
+            hits.append(f"{path.relative_to(REPO)}@{text.find(token)}")
+    return hits
+
 
 def _tracked_files() -> list[Path]:
     try:
@@ -262,3 +312,10 @@ def test_no_real_wallet_in_tracked_files():
     assert BANNED_SHA256, "liste d'empreintes vide : garde-fou inopérant"
     hits = [hit for path in _tracked_files() for hit in _hits(path)]
     assert not hits, "adresse de wallet réelle recopiée : " + ", ".join(hits)
+
+
+def test_no_real_wallet_pair_in_tracked_files():
+    banned = PAIR_SHA256 | _local_pair_hashes()
+    assert banned, "liste d'empreintes de couples vide : garde-fou inopérant"
+    hits = [hit for path in _tracked_files() for hit in _pair_hits(path, banned)]
+    assert not hits, "préfixe/suffixe d'adresse réelle recopiés : " + ", ".join(hits)
