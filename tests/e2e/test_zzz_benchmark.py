@@ -22,24 +22,11 @@ async def shot(page, name: str) -> None:
         await page.screenshot(path=f"{SHOTS}/{name}.png", full_page=True)
 
 
-def seed(machine_id: int) -> dict[str, str]:
-    """Profil PRL + un GPU, en SQL direct (aucune machine réelle)."""
+def seed_device(machine_id: int, profile_id: int) -> str:
+    """Un GPU dans le parc, en SQL direct (aucune machine réelle)."""
     device_uuid = str(uuid_lib.uuid4())
-    profile_uuid = str(uuid_lib.uuid4())
     conn = sqlite3.connect(f"{E2E_DATA_DIR}/fossor.db")
     try:
-        conn.execute(
-            "INSERT INTO miner_profiles (uuid, name, coin, wallet, pool, software,"
-            " binary_url, sha256, binary_path, version, cmdline, api_port, enabled,"
-            " execution_mode, created_at, updated_at)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (profile_uuid, f"e2e-bench-{profile_uuid[:6]}", "PRL", WALLET,
-             "stratum+tcp://pearl-eu2.luckypool.io:3360", "srbminer",
-             "http://192.0.2.1/srbminer.tar.gz", SHA, "/opt/fossor/miners/srbminer",
-             "2.0.0", "/bin/true", 0, 1, "host", "2026-11-23T00:00:00+00:00",
-             "2026-11-23T00:00:00+00:00"),
-        )
-        profile_id = int(conn.execute("SELECT MAX(id) FROM miner_profiles").fetchone()[0])
         conn.execute(
             "INSERT INTO devices (uuid, machine_id, kind, \"index\", model, present,"
             " enabled_for_mining, integrated, occupied_external, role,"
@@ -53,7 +40,7 @@ def seed(machine_id: int) -> dict[str, str]:
         conn.commit()
     finally:
         conn.close()
-    return {"device": device_uuid, "profile": str(profile_id)}
+    return device_uuid
 
 
 @pytest.mark.e2e
@@ -93,7 +80,28 @@ async def test_benchmark_validation_simulation_resultats_mode(e2e_server):
                 return (await res.json()).id;
             }"""
         )
-        seed(machine_id)
+        profile_id = await page.evaluate(
+            """async () => {
+                const res = await fetch('/api/miner/profiles', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        name: 'e2e-bench-prl', coin: 'PRL',
+                        wallet: 'prl1testwalletfossor0000000000000000000000000000000000',
+                        pool: 'stratum+tcp://pearl-eu2.luckypool.io:3360',
+                        software: 'srbminer', cmdline: '/bin/true', api_port: 0,
+                        execution_mode: 'host', threads: 1,
+                        binary_url: 'http://192.0.2.1/srbminer.tar.gz',
+                        sha256: 'c'.repeat(64), version: '2.0.0',
+                        binary_path: '/opt/fossor/miners/srbminer'
+                    })
+                });
+                const body = await res.json();
+                if (!res.ok) throw new Error('profil ' + res.status + ' ' + JSON.stringify(body));
+                return body.id;
+            }"""
+        )
+        seed_device(machine_id, profile_id)
 
         await page.goto(E2E_URL + f"/benchmark?machine={machine_id}",
                         wait_until="domcontentloaded", timeout=15000)
