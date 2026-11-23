@@ -68,6 +68,8 @@ DEFAULT_UPDATER_IMAGE = "ghcr.io/lostinthebugs/fossor-updater"
 PULL_TIMEOUT = 300
 UP_TIMEOUT = 120
 INSPECT_TIMEOUT = 30
+#: Lignes de log du conteneur fautif conservées avant un retour arrière.
+CONTAINER_LOG_TAIL = 200
 
 #: Battement de cœur par défaut (secondes).
 HEARTBEAT_INTERVAL = 10
@@ -365,6 +367,25 @@ class DockerRunner:
                           timeout=INSPECT_TIMEOUT)
         return (state.stdout or "").strip() == "true"
 
+    def container_report(self, service: str, tail: int = CONTAINER_LOG_TAIL) -> str:
+        """Logs récents et état inspecté du conteneur, pour le journal d'échec."""
+        ids = self._run(self._compose("ps", "-q", service), timeout=INSPECT_TIMEOUT)
+        containers = (ids.stdout or "").strip().splitlines()
+        name = containers[0] if containers else service
+        logs = self._run(["docker", "logs", "--tail", str(tail), name], timeout=INSPECT_TIMEOUT)
+        state = self._run([
+            "docker", "inspect", "-f",
+            "status={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} "
+            "health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
+            name,
+        ], timeout=INSPECT_TIMEOUT)
+        return "\n".join([
+            f"== docker logs --tail {tail} {name}",
+            ((logs.stdout or "") + (logs.stderr or "")).strip() or "(aucune sortie)",
+            f"== docker inspect {name}",
+            (state.stdout or state.stderr or "").strip() or "(aucune sortie)",
+        ])
+
     def self_image(self) -> str | None:
         """Image de ce conteneur (lue au démon), pour rapporter sa version."""
         inspected = self._run([
@@ -601,6 +622,7 @@ class Updater:
             return "failed"
         up, detail = self.runner.compose_up()
         if not up:
+            self._failed_report(target, f"recréation impossible : {detail}")
             return self._rollback(previous, old_text, backup, f"recréation impossible : {detail}")
         log("bascule", f"service {self.config.service} recréé sur {target} ({detail})")
 
@@ -613,6 +635,7 @@ class Updater:
             self._history("finished", target=target)
             log("fin", f"mise à jour {previous} → {target} terminée")
             return "done"
+        self._failed_report(target, f"contrôle de santé en échec : {detail}")
         return self._rollback(previous, old_text, backup, f"contrôle de santé en échec : {detail}")
 
     # ── Auto-mise à jour du compagnon ──────────────────────────────────
@@ -800,12 +823,47 @@ class Updater:
         log("oubli", f"image {reference} supprimée")
         return "done"
 
+    def _failed_report(self, target: str, reason: str) -> Path | None:
+        """Logs et état du conteneur fautif, écrits avant tout retour arrière."""
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        path = self.config.update_dir / f"failed-{target}-{stamp}.log"
+        probe = getattr(self.runner, "container_report", None)
+        if callable(probe):
+            try:
+                detail = probe(self.config.service, CONTAINER_LOG_TAIL)
+            except Exception as exc:  # noqa: BLE001 - jamais bloquant pour le retour arrière
+                detail = f"(diagnostic impossible : {type(exc).__name__}: {exc})"
+        else:
+            detail = "(runner sans diagnostic de conteneur)"
+        body = (
+            f"# Fossor — échec de la mise à jour vers {target}\n"
+            f"# {now()}\n# cause : {reason}\n\n{detail}\n"
+        )
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(body, encoding="utf-8")
+        except OSError as exc:
+            log("diagnostic", f"écriture du journal d'échec impossible : {exc}")
+            return None
+        self._history("container_logs", target=target, path=str(path), reason=reason)
+        log("diagnostic", f"logs du conteneur conservés dans {path}")
+        return path
+
     def wait_healthy(self, expected: str) -> tuple[bool, str]:
         deadline = time.monotonic() + max(1, self.config.health_timeout)
         stopped = 0
         detail = "pas de réponse"
         while time.monotonic() < deadline:
+            started = time.monotonic()
             ok, detail = self.runner.health_once(expected)
+            self._history(
+                "health_attempt",
+                target=expected,
+                url=self.config.health_url,
+                duration_ms=round((time.monotonic() - started) * 1000, 1),
+                ok=bool(ok),
+                detail=detail,
+            )
             if ok:
                 return True, detail
             if self.runner.container_running():
