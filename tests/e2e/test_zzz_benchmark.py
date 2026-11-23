@@ -139,10 +139,17 @@ async def test_benchmark_validation_simulation_resultats_mode(e2e_server):
 
         await page.select_option("#benchApplyMode", "efficiency")
         await page.click("#benchApply")
-        await page.wait_for_function(
-            "() => (document.getElementById('benchApplied').textContent || '').includes('108')",
-            timeout=15000,
-        )
+        try:
+            await page.wait_for_function(
+                "() => (document.getElementById('benchApplied').textContent || '').includes('108')",
+                timeout=15000,
+            )
+        except Exception:
+            raise AssertionError(
+                "application sans 108 W — applique=" + await page.inner_text("#benchApplied")
+                + " erreur=" + await page.inner_text("#benchError")
+                + " statut=" + await page.inner_text("#benchRunStatus")
+            )
         applied = await page.inner_text("#benchApplied")
         assert "108 W" in applied, applied
         assert "Rendement" in applied, applied

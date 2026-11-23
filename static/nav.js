@@ -43,37 +43,48 @@
       "#nav.nav-tabs{display:block;margin:0 auto 20px;padding:0;border-bottom:1px solid var(--border);",
       "font:600 13.5px/1 'Segoe UI',system-ui,sans-serif;position:sticky;top:0;z-index:140;",
       "background:var(--bg,#0d1117);width:100%;max-width:100%;box-sizing:border-box}",
-      "#nav .nav-inner{display:flex;align-items:center;gap:10px;height:56px;width:100%;min-width:0}",
-      "#nav .nav-brand{display:flex;align-items:center;gap:7px;color:var(--txt,#e6edf3);",
+      "#nav .nav-inner{display:flex;align-items:center;gap:6px;height:56px;width:100%;min-width:0}",
+      "#nav .nav-brand{display:flex;align-items:center;gap:6px;color:var(--txt,#e6edf3);",
       "text-decoration:none;font-weight:800;letter-spacing:.02em;padding:0 6px;flex:0 0 auto}",
       "#nav .nav-brand span{color:var(--muted,#8b949e);font-weight:600;font-size:11px}",
       "#nav .nav-groups{display:flex;align-items:stretch;gap:2px;height:56px;min-width:0;flex:1 1 auto;overflow-x:auto;scrollbar-width:none}",
       "#nav .nav-groups::-webkit-scrollbar{display:none}",
       "#nav .nav-group{position:relative;display:flex;align-items:stretch;flex:0 0 auto}",
-      "#nav .nav-group-btn{background:none;border:0;border-bottom:2px solid transparent;color:var(--muted,#8b949e);",
+      "#nav .nav-group-btn{display:none;background:none;border:0;border-bottom:2px solid transparent;color:var(--muted,#8b949e);",
       "font:inherit;font-weight:600;padding:0 13px;cursor:pointer;display:flex;align-items:center;gap:5px;white-space:nowrap}",
       "#nav .nav-group-btn:hover{color:var(--txt,#e6edf3)}",
       "#nav .nav-group.active .nav-group-btn{color:var(--txt,#e6edf3);border-bottom-color:#3fb950}",
       "#nav .nav-group-btn:after{content:'▾';font-size:9px;opacity:.7}",
-      "#nav .nav-drop{display:none;position:absolute;top:56px;left:0;min-width:220px;padding:6px;",
-      "background:var(--card,#161b22);border:1px solid var(--border,#30363d);border-radius:0 0 10px 10px;",
-      "box-shadow:0 10px 26px rgba(0,0,0,.45);flex-direction:column;gap:1px}",
+      "#nav .nav-drop{display:flex;position:static;margin:0;min-width:0;padding:0;background:none;",
+      "border:0;border-radius:0;box-shadow:none;flex-direction:row;align-items:stretch;gap:2px;height:56px}",
       "#nav .nav-group.open .nav-drop{display:flex}",
-      "#nav .nav-drop a{display:flex;align-items:center;gap:8px;color:var(--muted,#8b949e);text-decoration:none;",
-      "padding:9px 11px;border-radius:6px;white-space:nowrap;border:0}",
+      "#nav .nav-drop a{display:flex;align-items:center;gap:6px;color:var(--muted,#8b949e);text-decoration:none;",
+      "padding:0 7px;border-radius:0;white-space:nowrap;border:0;border-bottom:2px solid transparent;",
+      "font:inherit;font-weight:600;font-size:12.5px;letter-spacing:-.01em}",
       "#nav .nav-drop a:hover{color:var(--txt,#e6edf3);background:rgba(110,118,129,.15)}",
-      "#nav .nav-drop a.active{color:#fff;background:rgba(63,185,80,.18);box-shadow:inset 2px 0 0 #3fb950}",
-      "#nav .nav-current{display:none;color:var(--muted,#8b949e);font-weight:600;white-space:nowrap;",
-      "overflow:hidden;text-overflow:ellipsis;flex:1 1 auto;text-align:right;padding-right:4px}",
+      "#nav .nav-drop a.active{color:var(--txt,#e6edf3);background:none;box-shadow:none;border-bottom-color:#3fb950}",
       "@media(max-width:760px){",
       "#nav .nav-brand span{display:none}",
-      "#nav .nav-group-btn{padding:0 9px;font-size:12.5px}",
-      "#nav .nav-drop{position:fixed;top:56px;left:8px;right:8px;min-width:0;max-height:70vh;overflow:auto}",
+      "#nav .nav-group-btn{display:flex;padding:0 9px;font-size:12.5px}",
+      "#nav .nav-drop{display:none;position:fixed;top:56px;left:8px;right:8px;min-width:0;max-height:70vh;",
+      "overflow:auto;background:var(--card,#161b22);border:1px solid var(--border,#30363d);",
+      "border-radius:0 0 10px 10px;box-shadow:0 10px 26px rgba(0,0,0,.45);flex-direction:column;height:auto;padding:6px}",
+      "#nav .nav-group.open .nav-drop{display:flex}",
+      "#nav .nav-drop a{padding:9px 11px;border-radius:6px;border-bottom:0}",
+      "#nav .nav-drop a.active{background:rgba(63,185,80,.18);box-shadow:inset 2px 0 0 #3fb950}",
       "}",
       "@media(max-width:430px){",
       "#nav .nav-brand{display:none}",
-      "#nav .nav-current{display:block;font-size:12px;max-width:38%}",
       "#nav .nav-group-btn{padding:0 8px;font-size:12px}",
+      "}",
+      /* Bureau : les treize liens tiennent sur deux lignes, tous visibles,
+       * aucun bouton de section, aucun défilement horizontal. */
+      "@media(min-width:761px){",
+      "#nav .nav-group-btn{display:none!important}",
+      "#nav .nav-inner{flex-wrap:wrap;height:auto;min-height:56px}",
+      "#nav .nav-groups{flex-wrap:wrap;height:auto;overflow:visible;row-gap:0}",
+      "#nav .nav-drop{flex-wrap:wrap;height:auto}",
+      "#nav .nav-drop a{line-height:34px}",
       "}"
     ].join("");
     document.head.appendChild(style);
@@ -83,14 +94,12 @@
   mount.innerHTML = "";
   var inner = document.createElement("div");
   inner.className = "nav-inner";
-  var brand = document.createElement("a");
+  var brand = document.createElement("span");
   brand.className = "nav-brand";
-  brand.href = "/dashboard";
   brand.innerHTML = "Fossor <span>minage piloté</span>";
   inner.appendChild(brand);
   var groups = document.createElement("div");
   groups.className = "nav-groups";
-  var current = "";
   SECTIONS.forEach(function (section) {
     var active = section.items.some(function (item) { return item[0] === path; });
     var group = document.createElement("div");
@@ -121,11 +130,11 @@
     section.items.forEach(function (item) {
       var link = document.createElement("a");
       link.href = item[0];
+      link.className = "nav-link";
       link.textContent = item[1] + " " + item[2];
       if (item[0] === path) {
-        link.className = "active";
+        link.className = "nav-link active";
         link.setAttribute("aria-current", "page");
-        current = section.label + " · " + item[2];
       }
       drop.appendChild(link);
     });
@@ -134,10 +143,6 @@
     groups.appendChild(group);
   });
   inner.appendChild(groups);
-  var here = document.createElement("span");
-  here.className = "nav-current";
-  here.textContent = current;
-  inner.appendChild(here);
   mount.appendChild(inner);
   document.addEventListener("click", function () {
     Array.prototype.forEach.call(

@@ -47,6 +47,7 @@
 </style>
 </head>
 <body>
+  <nav id="nav"></nav>
 <div class="wrap">
   <h1>Benchmark de la limite de puissance</h1>
   <div class="sub">§10.4 — à la demande, une machine à la fois. Seule la limite de puissance GPU est touchée :
@@ -107,7 +108,6 @@
   </div>
 </div>
 <script src="/static/nav.js" defer></script>
-<nav id="nav"></nav>
 <script>
 (function () {
   "use strict";
@@ -141,6 +141,9 @@
     return minutes >= 60 ? (Math.floor(minutes / 60) + " h " + (minutes % 60) + " min") : (minutes + " min");
   }
   function fillSelect(select, entries, keepFirst) {
+    /* Recharger les options ne doit pas effacer le choix en cours : le mode
+     * « rendement » sélectionné pendant un run restait sinon sur « aucun ». */
+    var previous = select.value;
     var first = keepFirst ? select.firstElementChild : null;
     select.innerHTML = "";
     if (first) { select.appendChild(first); }
@@ -150,6 +153,9 @@
       option.textContent = entry.label;
       select.appendChild(option);
     });
+    if (previous && entries.some(function (entry) { return String(entry.value) === previous; })) {
+      select.value = previous;
+    }
   }
 
   function loadOptions() {
@@ -269,7 +275,14 @@
     state.run = run;
     $("benchRun").classList.remove("hidden");
     $("benchRunStatus").textContent = run.status;
-    $("benchApplyMode").value = run.apply_mode || "none";
+    /* Le polling ne doit pas écraser le mode que l'utilisateur vient de
+     * choisir : on ne réécrit le select que si le run ou son mode serveur
+     * change. Sinon « Appliquer » relisait « aucun » et posait 180 W. */
+    if (state.modeRunId !== run.id || state.serverMode !== run.apply_mode) {
+      $("benchApplyMode").value = run.apply_mode || "none";
+      state.modeRunId = run.id;
+      state.serverMode = run.apply_mode;
+    }
     var body = $("benchResults").querySelector("tbody");
     body.innerHTML = "";
     var bests = run.bests || {};

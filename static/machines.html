@@ -13,10 +13,6 @@ header{display:flex;justify-content:space-between;align-items:center;margin-bott
 header h1{font-size:26px}
 header a{color:var(--accent);font-size:13px;text-decoration:none}
 header a:hover{color:var(--txt)}
-.nav-tabs{display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--border)}
-.nav-tabs a{color:var(--muted);padding:8px 16px;font-size:13.5px;font-weight:600;text-decoration:none;border:1px solid transparent;border-bottom:none;border-radius:10px 10px 0 0;cursor:pointer}
-.nav-tabs a:hover{color:var(--txt)}
-.nav-tabs a.active{background:var(--card);border-color:var(--border);color:var(--txt)}
 table{width:100%;border-collapse:collapse;font-size:12.5px}
 th{background:var(--card);text-align:left;color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.4px;padding:7px 8px;border-bottom:1px solid var(--border)}
 td{padding:8px;border-bottom:1px solid var(--border);vertical-align:top}
@@ -84,6 +80,7 @@ tr.absent td{opacity:.5}
   <script src="/static/nav.js" defer></script>
 </head>
 <body>
+  <nav id="nav"></nav>
 <div class="wrap">
   <header>
     <div><h1>⛏️ Fossor</h1><span style="color:var(--muted);font-size:13px">Gestion des machines</span></div>
@@ -92,8 +89,6 @@ tr.absent td{opacity:.5}
       <button class="btn sm outline" id="logoutBtn">Déconnexion</button>
     </div>
   </header>
-
-  <nav id="nav"></nav>
 
   <!-- ── ASIC (§4.20) : ajout par IP, lecture seule ──────────────── -->
   <div class="card" id="asicCard" style="margin-bottom:18px">
@@ -503,7 +498,8 @@ const minerAlertHTML=(m)=>{
     }
     const key=(miner.pid||'')+':'+(miner.name||'');
     return `<div class="miner-alert">🪨 <b>Lancé hors Fossor</b> — mineur externe détecté : ${txt}`
-      +` <button class="btn small" onclick="openAdoption(${m.id},${JSON.stringify(key).replace(/"/g,'&quot;')})">Adopter</button></div>`;
+      +` <button class="btn small" data-adopt-machine="${m.id}"`
+      +` data-adopt-key="${String(key).replace(/&/g,'&amp;').replace(/"/g,'&quot;')}">Adopter</button></div>`;
   }).join('');
   return alerts;
 };
@@ -847,6 +843,16 @@ const openAdoption=async(machineId,key)=>{
   document.getElementById('adoptConfirm').onchange=e=>{go.disabled=!e.target.checked||!item.adoptable;};
   document.getElementById('adoptModal').classList.add('open');
 };
+/* Les boutons des lignes appellent ces fonctions depuis un attribut onclick :
+ * une déclaration `const` n'est pas une propriété de window, l'appel échouait
+ * en « openAdoption is not defined » et le bouton ne faisait rien. */
+window.openAdoption=openAdoption;
+document.addEventListener('click',(event)=>{
+  const btn=event.target.closest('button[data-adopt-machine]');
+  if(!btn){return;}
+  event.preventDefault();
+  openAdoption(Number(btn.dataset.adoptMachine),btn.dataset.adoptKey);
+});
 const runAdoption=async()=>{
   const go=document.getElementById('adoptGo');
   go.disabled=true; go.textContent='Adoption…';

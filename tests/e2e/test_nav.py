@@ -62,16 +62,16 @@ async def test_same_navigation_on_every_page(e2e_server):
             )
             seen[path] = dom
 
+        # aucun menu codé en dur : tout lien de navigation vit dans #nav
+        outside = await page.evaluate(
+            "() => [...document.querySelectorAll('a')].filter(a => "
+            "['/dashboard','/machines','/profiles','/campaigns','/benchmark','/followup',"
+            "'/history','/mined','/audit','/analysis','/help','/settings','/vault']"
+            ".includes(a.getAttribute('href')) && !a.closest('#nav')).length"
+        )
         await browser.close()
 
     assert len(set(seen.values())) == 1, "menu différent d'une page à l'autre"
-    # aucun menu codé en dur : tout lien de navigation vit dans #nav
-    outside = await page.evaluate(
-        "() => [...document.querySelectorAll('a')].filter(a => "
-        "['/dashboard','/machines','/profiles','/campaigns','/benchmark','/followup',"
-        "'/history','/mined','/audit','/analysis','/help','/settings','/vault']"
-        ".includes(a.getAttribute('href')) && !a.closest('#nav')).length"
-    )
     assert outside == 0, f"{outside} lien(s) de menu hors #nav"
     assert console_errors == [], console_errors
     assert page_errors == [], page_errors

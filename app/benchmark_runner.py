@@ -108,11 +108,21 @@ def devices_for(db: Any, run: Any) -> list[Any]:
 
 
 def resolve_profile(db: Any, machine: Any, algo: str | None = None) -> Any:
-    """Profil de l'algo demande, sinon token par defaut de la machine."""
+    """Profil de l'algo demande **sur cette machine**, sinon son token par defaut.
+
+    Le profil par defaut de la machine passe avant la recherche par coin : un
+    benchmark sur une machine doit tourner avec le binaire et la ligne de
+    commande que cette machine utilise.  Chercher le premier profil du coin
+    dans toute la base ramenait celui d'une autre machine (binaire absent) et
+    le run echouait en 20 ms, sans aucun palier.
+    """
     from app.campaign_runner import default_profile_for
 
-    if algo:
-        wanted = str(algo).strip().upper()
+    default = default_profile_for(db, machine)
+    wanted = str(algo).strip().upper() if algo else None
+    if default is not None and (not wanted or (default.coin or "").upper() == wanted):
+        return default
+    if wanted:
         row = (
             db.query(MinerProfile)
             .filter(MinerProfile.coin == wanted)
@@ -121,7 +131,7 @@ def resolve_profile(db: Any, machine: Any, algo: str | None = None) -> Any:
         )
         if row is not None:
             return row
-    return default_profile_for(db, machine)
+    return default
 
 
 # ── Bornes et application ─────────────────────────────────────────────
