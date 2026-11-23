@@ -1260,3 +1260,39 @@ async def reset_machine_host_key(machine_id: int, actor: str = "system") -> dict
         actor=actor,
     )
     return {"ok": True, "message": "Host key cleared — next SSH test will pin a new key"}
+
+
+#: Sonde de mesure du benchmark (§10.4) : puissance, temperature, limite et
+#: compteurs de shares lus la ou le mineur les expose. Aucune ecriture.
+BENCHMARK_PROBE_COMMAND = textwrap.dedent("""\
+    echo '### NVSMI'
+    if command -v nvidia-smi >/dev/null 2>&1; then
+      nvidia-smi --query-gpu=index,power.draw,temperature.gpu,power.limit --format=csv,noheader,nounits 2>/dev/null
+    fi
+    exit 0
+""").strip()
+
+
+async def ssh_benchmark_probe(machine: Any, actor: str = "benchmark") -> dict[str, Any]:
+    """Puissance et temperature par GPU, en lecture seule."""
+    from app.benchmark import parse_probe
+    from app.hw_parser import split_sections
+
+    raw = await _run_whitelisted(
+        host=machine.host,
+        port=machine.ssh_port,
+        username=machine.ssh_user,
+        secret=_machine_secret(machine),
+        auth_type=machine.auth_type,
+        pinned_fp=(getattr(machine, "host_key", None) or "").strip() or None,
+        pinned_public_key=(getattr(machine, "host_key_public", None) or "").strip() or None,
+        command=BENCHMARK_PROBE_COMMAND,
+        machine_id=machine.id,
+        audit_kind="benchmark-probe",
+        actor=actor,
+    )
+    if not raw.get("ok"):
+        return raw
+    sections = split_sections(raw.get("stdout", ""))
+    return {"ok": True, "gpus": parse_probe(sections.get("NVSMI", "")),
+            "stdout": raw.get("stdout", "")}

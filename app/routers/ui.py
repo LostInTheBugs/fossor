@@ -77,3 +77,12 @@ def profiles_page(request: Request):
         return RedirectResponse(url="/", status_code=303)
     require_login(request)
     return HTMLResponse((STATIC_DIR / "profiles.html").read_text())
+
+
+@router.get("/benchmark", response_class=HTMLResponse)
+def benchmark_page(request: Request):
+    """Benchmark a la demande de la limite de puissance (§10.4)."""
+    if not get_current_user(request):
+        return RedirectResponse(url="/", status_code=303)
+    require_login(request)
+    return HTMLResponse((STATIC_DIR / "benchmark.html").read_text())

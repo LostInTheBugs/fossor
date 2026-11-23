@@ -1078,3 +1078,105 @@ class BoostEvent(Base):
     result: Mapped[str] = mapped_column(String(10), default="ok", server_default="ok")
     simulated: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     detail: Mapped[str] = mapped_column(String(2000), default="", server_default="")
+
+
+class BenchmarkRun(Base):
+    """Benchmark a la demande de la limite de puissance (SPEC 10.4).
+
+    `status` : proposed -> running -> done | cancelled | restore_failed | failed.
+    `stop_requested` porte l'annulation en un clic, `levels_json` et
+    `bounds_json` figent les paliers reellement testes, `bests_json` les
+    paliers retenus. `applied_*` garde ce qui a ete applique pour rejouer la
+    limite apres un redemarrage (nvidia-smi -pl ne survit pas a un reboot).
+    """
+
+    __tablename__ = "benchmark_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    uuid: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    machine_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    device_uuid: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    algo: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="proposed",
+                                        server_default="proposed", index=True)
+    scope: Mapped[str] = mapped_column(String(10), default="all", server_default="all")
+    measure_min: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
+    warmup_s: Mapped[int] = mapped_column(Integer, default=60, server_default="60")
+    temp_limit_c: Mapped[float] = mapped_column(Float, default=80.0, server_default="80")
+    simulated: Mapped[bool] = mapped_column(Boolean, default=True, server_default="0")
+    stop_requested: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    levels_json: Mapped[str] = mapped_column(Text, default="", server_default="")
+    bounds_json: Mapped[str] = mapped_column(Text, default="", server_default="")
+    bests_json: Mapped[str] = mapped_column(Text, default="", server_default="")
+    apply_mode: Mapped[str] = mapped_column(String(12), default="none", server_default="none")
+    applied_watts: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    applied_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    applied_uptime_s: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    hiveos_proposal: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    restore_status: Mapped[str] = mapped_column(String(16), default="pending", server_default="pending")
+    verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    verify_source: Mapped[str] = mapped_column(String(60), default="", server_default="")
+    restore_deadline: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    estimated_s: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    started_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    finished_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    note: Mapped[str] = mapped_column(String(1000), default="", server_default="")
+    created_at: Mapped[str] = mapped_column(String(40), default="", server_default="")
+
+
+class BenchmarkStep(Base):
+    """Un palier mesure : puissance demandee, puis hashrate / watts / temperature."""
+
+    __tablename__ = "benchmark_steps"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(Integer, ForeignKey("benchmark_runs.id"), nullable=False, index=True)
+    device_uuid: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    gpu_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    percent: Mapped[int] = mapped_column(Integer, default=100, server_default="100")
+    watts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    phase: Mapped[str] = mapped_column(String(10), default="measure", server_default="measure")
+    hashrate_hs: Mapped[float | None] = mapped_column(Float, nullable=True)
+    power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    temperature_c: Mapped[float | None] = mapped_column(Float, nullable=True)
+    accepted: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    rejected: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    reject_pct: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    result: Mapped[str] = mapped_column(String(10), default="ok", server_default="ok")
+    stop_reason: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    started_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    ended_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+
+class BenchmarkProfile(Base):
+    """Resultat reutilisable : par modele de carte et par algo (SPEC 10.4)."""
+
+    __tablename__ = "benchmark_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    gpu_model: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    algo: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    mode: Mapped[str] = mapped_column(String(12), nullable=False)
+    watts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    hashrate_hs: Mapped[float | None] = mapped_column(Float, nullable=True)
+    power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    efficiency: Mapped[float | None] = mapped_column(Float, nullable=True)
+    run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    machine_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updated_at: Mapped[str] = mapped_column(String(40), default="", server_default="")
+
+
+class BenchmarkEvent(Base):
+    """Journal du benchmark — il **est** l'idempotence des etapes."""
+
+    __tablename__ = "benchmark_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(Integer, ForeignKey("benchmark_runs.id"), nullable=False, index=True)
+    ts: Mapped[str] = mapped_column(String(40), default="", server_default="")
+    kind: Mapped[str] = mapped_column(String(40), default="", server_default="")
+    message: Mapped[str] = mapped_column(String(1000), default="", server_default="")
+    result: Mapped[str] = mapped_column(String(10), default="ok", server_default="ok")
+    simulated: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    detail: Mapped[str] = mapped_column(String(2000), default="", server_default="")

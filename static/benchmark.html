@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fossor — Benchmark de puissance</title>
+<style>
+  :root{--bg:#0d1117;--card:#161b22;--border:#30363d;--txt:#e6edf3;--muted:#8b949e;
+        --ok:#3fb950;--warn:#d29922;--bad:#f85149;--accent:#58a6ff}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 'Segoe UI',system-ui,sans-serif}
+  .wrap{max-width:1100px;margin:0 auto;padding:24px 20px 60px}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:18px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px}
+  .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
+  label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px;font-weight:600}
+  select,input{background:#0d1117;color:var(--txt);border:1px solid var(--border);
+               border-radius:8px;padding:7px 9px;font-size:13px;min-width:160px}
+  button{background:var(--accent);color:#04121f;border:0;border-radius:8px;padding:8px 14px;
+         font-weight:700;font-size:13px;cursor:pointer}
+  button.secondary{background:#21262d;color:var(--txt);border:1px solid var(--border)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:10px}
+  th,td{padding:7px 8px;border-bottom:1px solid var(--border);text-align:right}
+  th:first-child,td:first-child{text-align:left}
+  th{color:var(--muted);font-weight:600;font-size:11.5px;text-transform:uppercase}
+  .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700}
+  .badge.perf{background:#1f3b1f;color:var(--ok)}
+  .badge.eff{background:#1f2f4a;color:var(--accent)}
+  .badge.stop{background:#3a1f1f;color:var(--bad)}
+  .muted{color:var(--muted)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+  .kv{background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:10px}
+  .kv b{display:block;font-size:16px;margin-top:2px}
+  .bars{margin-top:12px}
+  .bar{display:flex;align-items:center;gap:8px;margin:4px 0;font-size:12px}
+  .bar .track{flex:1;background:#0d1117;border:1px solid var(--border);border-radius:6px;height:16px;position:relative}
+  .bar .fill{height:100%;border-radius:6px;background:linear-gradient(90deg,#1f6feb,#58a6ff)}
+  .bar .fill.eff{background:linear-gradient(90deg,#238636,#3fb950)}
+  .bar .fill.hot{background:linear-gradient(90deg,#8b2c2c,#f85149)}
+  .bar span{width:84px;color:var(--muted)}
+  .note{background:#3a2f1a;color:#f0c674;border:1px solid #6b5620;border-radius:8px;
+        padding:10px 12px;font-size:12.5px;margin-top:10px}
+  .hidden{display:none}
+  .err{color:var(--bad);font-size:12.5px;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Benchmark de la limite de puissance</h1>
+  <div class="sub">§10.4 — à la demande, une machine à la fois. Seule la limite de puissance GPU est touchée :
+    jamais de fréquence cœur ou mémoire, jamais de tension.</div>
+
+  <div class="card">
+    <div class="row">
+      <div><label for="benchMachine">Machine</label><select id="benchMachine"></select></div>
+      <div><label for="benchDevice">GPU</label><select id="benchDevice"><option value="">Tous les GPU</option></select></div>
+      <div><label for="benchAlgo">Token / algo</label><select id="benchAlgo"></select></div>
+      <div><label for="benchMinutes">Mesure (min)</label><input id="benchMinutes" type="number" min="1" max="30" value="3"></div>
+      <div><label for="benchMode">Mode à appliquer</label><select id="benchMode"></select></div>
+      <div><button id="benchPreview">Vérifier</button></div>
+    </div>
+    <div id="benchError" class="err"></div>
+  </div>
+
+  <div id="benchValidation" class="card hidden">
+    <h3 style="margin:0 0 10px;font-size:15px">Écran de validation</h3>
+    <div class="grid">
+      <div class="kv"><span class="muted">Devices GPU</span><b id="benchDevicesText">—</b></div>
+      <div class="kv"><span class="muted">Token / algo</span><b id="benchAlgoText">—</b></div>
+      <div class="kv"><span class="muted">Durée estimée</span><b id="benchDuration">—</b></div>
+      <div class="kv"><span class="muted">Hashrate perdu pendant le test</span><b id="benchLost">—</b></div>
+      <div class="kv"><span class="muted">Consommation mesurée</span><b id="benchPower">—</b></div>
+    </div>
+    <table id="benchLevels"><thead><tr><th>Palier</th><th>Limite (W)</th></tr></thead><tbody></tbody></table>
+    <div id="benchHiveosNote" class="note hidden"></div>
+    <div class="row" style="margin-top:14px">
+      <button id="benchLaunch">Lancer le benchmark</button>
+      <button id="benchCancel" class="secondary">Annuler</button>
+    </div>
+  </div>
+
+  <div id="benchRun" class="card hidden">
+    <div class="row" style="justify-content:space-between">
+      <h3 style="margin:0;font-size:15px">Résultats <span id="benchRunStatus" class="badge eff">—</span></h3>
+      <div class="row">
+        <div><label for="benchApplyMode">Mode</label><select id="benchApplyMode"></select></div>
+        <button id="benchApply">Appliquer la limite</button>
+      </div>
+    </div>
+    <div id="benchApplied" class="muted" style="margin-top:8px"></div>
+    <table id="benchResults">
+      <thead><tr><th>Palier</th><th>Limite (W)</th><th>Hashrate</th><th>Puissance (W)</th>
+        <th>Temp (°C)</th><th>Rejets</th><th>Rendement (H/W)</th><th>Verdict</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div id="benchCurve" class="bars"></div>
+    <div id="benchRestore" class="muted" style="margin-top:10px"></div>
+    <div id="benchHiveosProposal" class="note hidden"></div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin:0 0 8px;font-size:15px">Historique</h3>
+    <table id="benchHistory"><thead><tr><th>#</th><th>Machine</th><th>Algo</th>
+      <th>Statut</th><th>Mode</th><th>Retour</th></tr></thead><tbody></tbody></table>
+  </div>
+</div>
+<script src="/static/nav.js" defer></script>
+<nav id="nav"></nav>
+<script>
+(function () {
+  "use strict";
+  var state = { options: null, run: null, preview: null, machine: null };
+  function $(id) { return document.getElementById(id); }
+  function esc(text) {
+    return String(text == null ? "" : text).replace(/[&<>"']/g, function (c) {
+      return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c];
+    });
+  }
+  function api(path, options) {
+    return fetch(path, Object.assign({headers: {"Content-Type": "application/json"}}, options || {}))
+      .then(function (res) {
+        return res.json().catch(function () { return {}; }).then(function (body) {
+          if (!res.ok) { throw new Error((body && body.detail) || ("HTTP " + res.status)); }
+          return body;
+        });
+      });
+  }
+  function fail(err) { $("benchError").textContent = String(err.message || err); }
+  function fmtHash(value) {
+    if (!value) { return "—"; }
+    if (value >= 1e9) { return (value / 1e9).toFixed(2) + " GH/s"; }
+    if (value >= 1e6) { return (value / 1e6).toFixed(2) + " MH/s"; }
+    if (value >= 1e3) { return (value / 1e3).toFixed(1) + " kH/s"; }
+    return value.toFixed(0) + " H/s";
+  }
+  function fmtDuration(seconds) {
+    if (!seconds) { return "—"; }
+    var minutes = Math.round(seconds / 60);
+    return minutes >= 60 ? (Math.floor(minutes / 60) + " h " + (minutes % 60) + " min") : (minutes + " min");
+  }
+  function fillSelect(select, entries, keepFirst) {
+    var first = keepFirst ? select.firstElementChild : null;
+    select.innerHTML = "";
+    if (first) { select.appendChild(first); }
+    entries.forEach(function (entry) {
+      var option = document.createElement("option");
+      option.value = entry.value;
+      option.textContent = entry.label;
+      select.appendChild(option);
+    });
+  }
+
+  function loadOptions() {
+    return api("/api/benchmark/options").then(function (data) {
+      state.options = data;
+      fillSelect($("benchMachine"), data.machines.map(function (m) {
+        return {value: String(m.id), label: m.name + (m.simulated ? " (simulée)" : "")};
+      }));
+      var modeEntries = data.modes.map(function (m) { return {value: m.value, label: m.label}; });
+      fillSelect($("benchMode"), modeEntries);
+      fillSelect($("benchApplyMode"), modeEntries);
+      $("benchMinutes").value = data.defaults.measure_min;
+      var wanted = new URLSearchParams(window.location.search).get("machine");
+      if (wanted) { $("benchMachine").value = wanted; }
+      onMachineChange();
+      renderHistory();
+    }).catch(fail);
+  }
+
+  function currentMachine() {
+    if (!state.options) { return null; }
+    var id = Number($("benchMachine").value);
+    return state.options.machines.filter(function (m) { return m.id === id; })[0] || null;
+  }
+
+  function onMachineChange() {
+    var machine = currentMachine();
+    state.machine = machine;
+    $("benchValidation").classList.add("hidden");
+    if (!machine) { return; }
+    fillSelect($("benchDevice"), machine.devices.map(function (d) {
+      return {value: d.uuid, label: d.label};
+    }), true);
+    var algos = [];
+    var seen = {};
+    (state.options.profiles || []).forEach(function (p) {
+      var key = (p.coin || "").toUpperCase();
+      if (!key || seen[key]) { return; }
+      seen[key] = true;
+      algos.push({value: key, label: key + (p.algo ? " — " + p.algo : "")});
+    });
+    fillSelect($("benchAlgo"), algos);
+    if (machine.default_algo) { $("benchAlgo").value = machine.default_algo.toUpperCase(); }
+  }
+
+  function preview() {
+    $("benchError").textContent = "";
+    var machine = currentMachine();
+    if (!machine) { return; }
+    return api("/api/benchmark/preview", {
+      method: "POST",
+      body: JSON.stringify({
+        machine_id: machine.id,
+        device_uuid: $("benchDevice").value || null,
+        algo: $("benchAlgo").value || null,
+        measure_min: Number($("benchMinutes").value) || 3
+      })
+    }).then(function (data) {
+      state.preview = data;
+      $("benchDevicesText").textContent = data.devices.map(function (d) {
+        return "GPU " + d.index + " " + (d.model || "");
+      }).join(", ");
+      $("benchAlgoText").textContent = data.algo;
+      $("benchDuration").textContent = fmtDuration(data.duration_s);
+      $("benchLost").textContent = data.hashrate_lost_hs ? fmtHash(data.hashrate_lost_hs) : "non mesuré";
+      $("benchPower").textContent = data.power_w ? (Math.round(data.power_w) + " W") : "non mesuré";
+      var body = $("benchLevels").querySelector("tbody");
+      body.innerHTML = "";
+      data.levels.forEach(function (level) {
+        var tr = document.createElement("tr");
+        tr.innerHTML = "<td>" + level.percent + " %</td><td>" + level.watts + " W</td>";
+        body.appendChild(tr);
+      });
+      var note = $("benchHiveosNote");
+      if (data.note) { note.textContent = data.note; note.classList.remove("hidden"); }
+      else { note.classList.add("hidden"); }
+      $("benchValidation").classList.remove("hidden");
+    }).catch(fail);
+  }
+
+  function launch() {
+    var machine = currentMachine();
+    if (!machine) { return; }
+    $("benchLaunch").disabled = true;
+    $("benchError").textContent = "";
+    api("/api/benchmark", {
+      method: "POST",
+      body: JSON.stringify({
+        machine_id: machine.id,
+        device_uuid: $("benchDevice").value || null,
+        algo: $("benchAlgo").value || null,
+        measure_min: Number($("benchMinutes").value) || 3,
+        apply_mode: $("benchMode").value
+      })
+    }).then(function (run) {
+      return api("/api/benchmark/" + run.id + "/execute", {method: "POST", body: "{}"});
+    }).then(function (payload) {
+      renderRun(payload.run);
+      return loadOptions();
+    }).catch(fail).then(function () { $("benchLaunch").disabled = false; });
+  }
+
+  function renderRun(run) {
+    state.run = run;
+    $("benchRun").classList.remove("hidden");
+    $("benchRunStatus").textContent = run.status;
+    $("benchApplyMode").value = run.apply_mode || "none";
+    var body = $("benchResults").querySelector("tbody");
+    body.innerHTML = "";
+    var bests = run.bests || {};
+    var perfWatts = bests.performance ? bests.performance.watts : null;
+    var effWatts = bests.efficiency ? bests.efficiency.watts : null;
+    (run.steps || []).forEach(function (step) {
+      var verdict = step.result === "ok" ? "mesuré" : "arrêté";
+      if (step.watts === perfWatts) { verdict = '<span class="badge perf">performance</span>'; }
+      if (step.watts === effWatts) {
+        verdict += ' <span class="badge eff">rendement</span>';
+      }
+      if (step.stop_reason) {
+        verdict = '<span class="badge stop" title="' + esc(step.stop_reason) + '">arrêté</span>';
+      }
+      var tr = document.createElement("tr");
+      tr.innerHTML = "<td>" + step.percent + " %</td><td>" + step.watts + "</td>"
+        + "<td>" + fmtHash(step.hashrate_hs) + "</td>"
+        + "<td>" + (step.power_w == null ? "—" : step.power_w) + "</td>"
+        + "<td>" + (step.temperature_c == null ? "—" : step.temperature_c) + "</td>"
+        + "<td>" + (step.reject_pct == null ? "—" : step.reject_pct + " %") + "</td>"
+        + "<td>" + (bests && step.efficiency ? step.efficiency : computeEff(step)) + "</td>"
+        + "<td>" + verdict + "</td>";
+      body.appendChild(tr);
+    });
+    var curve = $("benchCurve");
+    curve.innerHTML = "";
+    var maxHash = Math.max.apply(null, (run.steps || []).map(function (s) { return s.hashrate_hs || 0; }).concat([1]));
+    (run.steps || []).forEach(function (step) {
+      var wrap = document.createElement("div");
+      wrap.className = "bar";
+      var share = Math.round(100 * (step.hashrate_hs || 0) / maxHash);
+      var klass = step.result === "ok" ? "" : "hot";
+      if (step.watts === effWatts) { klass = "eff"; }
+      wrap.innerHTML = '<span>' + step.watts + " W</span>"
+        + '<div class="track"><div class="fill ' + klass + '" style="width:' + share + '%"></div></div>'
+        + "<span>" + fmtHash(step.hashrate_hs) + "</span>";
+      curve.appendChild(wrap);
+    });
+    $("benchRestore").textContent = "Retour au token par défaut : "
+      + (run.restore_status === "ok" ? "vérifié" : run.restore_status)
+      + (run.verify_source ? " (" + run.verify_source + ")" : "");
+    var proposal = $("benchHiveosProposal");
+    if (run.hiveos_proposal) {
+      proposal.textContent = run.hiveos_proposal;
+      proposal.classList.remove("hidden");
+    } else {
+      proposal.classList.add("hidden");
+    }
+    if (run.applied_watts) {
+      $("benchApplied").textContent = "Limite appliquée : " + run.applied_watts + " W (mode "
+        + run.apply_label + ")";
+    }
+  }
+
+  function computeEff(step) {
+    if (!step.hashrate_hs || !step.power_w) { return "—"; }
+    return (step.hashrate_hs / step.power_w).toFixed(1);
+  }
+
+  function applyMode() {
+    if (!state.run) { return; }
+    api("/api/benchmark/" + state.run.id + "/apply", {
+      method: "POST",
+      body: JSON.stringify({mode: $("benchApplyMode").value})
+    }).then(function (payload) { renderRun(payload.run); })
+      .catch(fail);
+  }
+
+  function renderHistory() {
+    api("/api/benchmark").then(function (data) {
+      var body = $("benchHistory").querySelector("tbody");
+      body.innerHTML = "";
+      (data.runs || []).slice(0, 10).forEach(function (run) {
+        var tr = document.createElement("tr");
+        tr.innerHTML = "<td>#" + run.id + "</td><td>" + esc(run.machine_id) + "</td><td>"
+          + esc(run.algo) + "</td><td>" + esc(run.status) + "</td><td>" + esc(run.apply_label)
+          + "</td><td>" + esc(run.restore_status) + "</td>";
+        body.appendChild(tr);
+      });
+    }).catch(function () {});
+  }
+
+  $("benchMachine").addEventListener("change", onMachineChange);
+  $("benchPreview").addEventListener("click", preview);
+  $("benchLaunch").addEventListener("click", launch);
+  $("benchCancel").addEventListener("click", function () {
+    if (!state.run) { $("benchValidation").classList.add("hidden"); return; }
+    api("/api/benchmark/" + state.run.id + "/cancel", {method: "POST", body: "{}"})
+      .then(function (run) { renderRun(run); }).catch(fail);
+  });
+  $("benchApply").addEventListener("click", applyMode);
+  loadOptions();
+})();
+</script>
+</body>
+</html>

@@ -254,3 +254,9 @@ def version():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# §10.4 — benchmark a la demande de la limite de puissance.
+from app.routers import benchmark as benchmark_router_module  # noqa: E402
+
+app.include_router(benchmark_router_module.router)

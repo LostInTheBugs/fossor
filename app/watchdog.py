@@ -660,6 +660,10 @@ async def _apply_rule(db: Any, machine: Any, device: Any, rule: str, *, active: 
                       measure: str, minutes: int, config: dict[str, Any], moment: datetime,
                       stdout: str, runner: Any, events: list[dict[str, Any]]) -> None:
     """Suit une règle dans le temps et déclenche l'action au bon moment."""
+    from app import benchmark_runner as BMR
+
+    if BMR.machine_muted(db, machine.id):
+        return  # §10.4 : le watchdog se tait sur une machine en benchmark
     device_id = int(getattr(device, "id", 0) or 0)
     state = _state(db, machine.id, device_id, rule)
     if not active:

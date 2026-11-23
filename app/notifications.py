@@ -60,6 +60,7 @@ EVENTS: dict[str, dict[str, str]] = {
     "update_done": {"label": "Mise à jour terminée", "level": "info"},
     "update_rolled_back": {"label": "Mise à jour annulée (retour arrière)", "level": "critique"},
     "watchdog_action": {"label": "Action du watchdog", "level": "alerte"},
+    "benchmark": {"label": "Benchmark de puissance", "level": "info"},
     "watchdog_blocked": {"label": "Watchdog bloqué (limite de relances)", "level": "critique"},
 }
 
