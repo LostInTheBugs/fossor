@@ -345,7 +345,7 @@ async def sync_luckypool_wallet(db: Any, wallet: Any) -> dict[str, Any]:
 
     if offline():
         return {"ok": False, "skipped": True, "error": "réseau désactivé (FOSSOR_OFFLINE=1)"}
-    address = (getattr(wallet, "address", "") or "").strip()
+    address = pools.normalize_address(getattr(wallet, "address", "") or "")
     if not address:
         return {"ok": False, "error": "adresse de wallet absente"}
     try:

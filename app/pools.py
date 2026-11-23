@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import quote
@@ -105,8 +106,43 @@ def stats_url(host: str) -> str:
     return f"https://{host}/api/stats"
 
 
+# A bech32 address is at least this long; below it, a dot starts a label, not a worker.
+MIN_ADDRESS_LEN = 20
+
+
+def normalize_address(address: str | None) -> str:
+    """Bare wallet address, stripped of every stratum decoration.
+
+    A miner profile stores what SRBMiner receives on the stratum, sometimes
+    recorded as ``adresse+diff`` — and Hive OS users write ``adresse.worker``
+    or ``adresse/worker``.  ``/api/stats_address`` only knows the bare address:
+    called with the decorated string the site answers ``404`` and
+    ``{"error": "Address not found"}``, which reads like an unknown wallet when
+    the wallet is in fact mining.  Every Luckypool request goes through here
+    first, so the decoration never reaches the wire.
+    """
+    text = str(address or "").strip()
+    if not text:
+        return ""
+    cut = len(text)
+    for separator in ("+", "/"):
+        index = text.find(separator)
+        if index != -1:
+            cut = min(cut, index)
+    space = re.search(r"\s", text)
+    if space:
+        cut = min(cut, space.start())
+    text = text[:cut].strip()
+    head, dot, _tail = text.partition(".")
+    if dot and len(head) >= MIN_ADDRESS_LEN:
+        text = head
+    return text
+
+
 def address_url(host: str, address: str) -> str:
-    return f"https://{host}/api/stats_address?address={quote(address, safe='')}"
+    """``/api/stats_address`` URL for *address*, normalised (last lock)."""
+    bare = normalize_address(address)
+    return f"https://{host}/api/stats_address?address={quote(bare, safe='')}"
 
 
 def _units_per_coin(config: dict[str, Any]) -> tuple[float, bool]:
@@ -302,6 +338,9 @@ async def luckypool_balance(address: str, coin: str = "PRL", pool_host: str = ""
         return {"ok": False, "error": "réseau désactivé (FOSSOR_OFFLINE=1)", "pool": "luckypool"}
     if not (address or "").strip():
         return {"ok": False, "error": "adresse de wallet absente", "pool": "luckypool"}
+    address = normalize_address(address)
+    if not address:
+        return {"ok": False, "error": "adresse de wallet absente", "pool": "luckypool"}
     try:
         host = luckypool_host(coin, pool_host)
     except ValueError as exc:
@@ -321,7 +360,7 @@ async def luckypool_balance(address: str, coin: str = "PRL", pool_host: str = ""
                 verified = parsed["units_verified"]
             except Exception as exc:  # stats is optional: address still readable
                 logger.warning("Luckypool /api/stats indisponible (%s): %s", host, exc)
-            url = address_url(host, address.strip())
+            url = address_url(host, address)
             payload = await _get(client, url)
     except Exception as exc:
         logger.warning("Luckypool stats_address indisponible (%s): %s", host, exc)
