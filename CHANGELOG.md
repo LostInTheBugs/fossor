@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026.11.038 — 2026-11-24
+
+### Pilotage réel des ASIC
+
+- **Un ASIC s'arme comme une machine** : son périmètre réel se limite au redémarrage du watchdog et au bouton manuel, sans campagne ni boost.
+- **Redémarrage AxeOS réel** (`POST /api/system/restart`), suivi d'une vérification : l'ASIC coupe puis revient, `uptime_s` repart de zéro, domaines et hashrate sont relus.
+- **IceRiver et cgminer** : notification seule.
+- La vérification après redémarrage tourne en tâche de fond, sans jamais bloquer l'application.
+
 ## 2026.11.020 (en cours)
 
 ### Benchmark de puissance — fin
