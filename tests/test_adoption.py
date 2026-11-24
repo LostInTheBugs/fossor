@@ -73,6 +73,14 @@ PROBES = (
     "W /home/administrateur/.bigcoin/wallet.dat 286720\n"
 )
 
+LS = (
+    f"LS {BIGCOIN_DIR}\n"
+    "total 8\n"
+    "-rwxr-xr-x 1 administrateur administrateur 900 Jan  1 00:00 bitcoind\n"
+    "-rwxr-xr-x 1 administrateur administrateur 100 Jan  1 00:00 bitcoin-cli\n"
+    "LSEND\n"
+)
+
 UNITS = "fossor-miner-ryzen-pearl-gpu-srbminer.service enabled\n"
 
 CRONTABS = {
@@ -109,6 +117,8 @@ def make_runner(
     units: str = UNITS,
     probes: str = PROBES,
     found: str = "",
+    ls: str = LS,
+    proc: str = PROC,
 ):
     crontabs = CRONTABS if crontabs is None else crontabs
     calls: list[str] = []
@@ -124,7 +134,9 @@ def make_runner(
         if "list-unit-files" in command:
             return 0, units, ""
         if "readlink /proc/" in command:
-            return 0, PROC, ""
+            return 0, proc, ""
+        if "ls -l " in command:
+            return 0, ls, ""
         if "grep -rls" in command:
             return 0, found, ""
         if "sudo -n cat" in command or "FILE " in command:
@@ -463,3 +475,67 @@ async def test_update_preparation_formulaire_seulement_en_secours(monkeypatch):
     with pytest.raises(provision.ProvisionError) as exc:
         await provision.update_preparation(machine)
     assert "secours" in str(exc.value)
+
+
+# --------------------------------------------------------------------------- #
+# 6.7-sondes — sudo -n obligatoire, CLI du nœud résolu dans son répertoire
+# --------------------------------------------------------------------------- #
+NUD = (
+    "SUDO denied\n"
+    "PID 3602\n"
+    "EXE \n"
+    "CWD \n"
+    "UNIT \n"
+    "PPID 1\n"
+    "CMD ./bitcoind -datadir=/home/administrateur/.bigcoin -daemon\n"
+)
+
+LS_UNIQUE = (
+    f"LS {BIGCOIN_DIR}\n"
+    "total 8\n"
+    "-rwxr-xr-x 1 administrateur administrateur 900 Jan  1 00:00 bitcoind\n"
+    "-rwxr-xr-x 1 administrateur administrateur 100 Jan  1 00:00 bigcoin-cli\n"
+    "LSEND\n"
+)
+PROBES_UNIQUE = f"X {BIGCOIN_DIR}/bigcoin-cli\nW /home/administrateur/.bigcoin/wallet.dat 286720\n"
+LS_MANY = (
+    f"LS {BIGCOIN_DIR}\n"
+    "-rwxr-xr-x 1 administrateur administrateur 900 Jan  1 00:00 bitcoind\n"
+    "-rwxr-xr-x 1 administrateur administrateur 100 Jan  1 00:00 alpha-cli\n"
+    "-rwxr-xr-x 1 administrateur administrateur 100 Jan  1 00:00 beta-cli\n"
+    "LSEND\n"
+)
+LS_NONE = (
+    f"LS {BIGCOIN_DIR}\n"
+    "-rwxr-xr-x 1 administrateur administrateur 900 Jan  1 00:00 bitcoind\n"
+    "LSEND\n"
+)
+
+
+async def test_proc_sans_sudo_bloque_droits_insuffisants():
+    plan, _calls = await _plan(proc=NUD)
+    solo = next(m for m in plan["miners"] if m["pid"] == 3602)
+    assert solo["adoptable"] is False
+    assert "droits insuffisants" in solo["blocked_reason"]
+
+
+async def test_cli_unique_du_repertoire_retenu():
+    plan, _calls = await _plan(ls=LS_UNIQUE, probes=PROBES_UNIQUE)
+    solo = next(m for m in plan["miners"] if m["pid"] == 3602)
+    assert solo["profile"]["cli"] == f"{BIGCOIN_DIR}/bigcoin-cli"
+    assert solo["adoptable"] is True
+
+
+async def test_plusieurs_cli_bloquent_le_noeud():
+    plan, _calls = await _plan(ls=LS_MANY, probes="")
+    solo = next(m for m in plan["miners"] if m["pid"] == 3602)
+    assert solo["adoptable"] is False
+    assert "plusieurs" in solo["blocked_reason"]
+
+
+async def test_aucun_cli_bloque_le_noeud_sans_preuve():
+    plan, _calls = await _plan(ls=LS_NONE, probes="")
+    solo = next(m for m in plan["miners"] if m["pid"] == 3602)
+    assert solo["adoptable"] is False
+    assert "aucun *-cli" in solo["blocked_reason"]
+    assert "RPC stop" in solo["blocked_reason"]

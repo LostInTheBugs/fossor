@@ -132,10 +132,20 @@ def parse_screens(text: str) -> list[str]:
 
 
 def _script_path(args: str) -> str:
+    """Script ``.sh`` d'une ligne cron : tous les jetons, pas seulement le premier.
+
+    ``@reboot sleep 30 && /usr/local/bin/x.sh`` n'a que deux champs et la commande
+    peut être composée : chercher le ``.sh`` dans tous les jetons.
+    """
     tokens = shlex.split(args or "")
-    if len(tokens) >= 2 and tokens[0].split("/")[-1] in ("sh", "bash", "dash"):
+    if not tokens:
+        return ""
+    if tokens[0].split("/")[-1] in ("sh", "bash", "dash") and len(tokens) >= 2:
         return tokens[1] if tokens[1].endswith(".sh") else ""
-    return tokens[0] if tokens and tokens[0].endswith(".sh") else ""
+    for token in tokens:
+        if token.endswith(".sh") and not token.startswith("-"):
+            return token
+    return ""
 
 
 def _clean_path(value: str) -> str:
@@ -214,7 +224,11 @@ def parse_wallet_info(text: str) -> dict[str, dict[str, Any]]:
                 size = int(parts[2])
             except ValueError:
                 continue
-            out[parts[1].strip()] = {"present": size >= 0, "size": max(size, 0)}
+            out[parts[1].strip()] = {
+                "present": size >= 0,
+                "size": max(size, 0),
+                "denied": size == -2,
+            }
     return out
 
 
@@ -274,6 +288,7 @@ def launcher_of(
     *,
     account: str,
     crontabs: dict[str, str] | None = None,
+    crontabs_ok: dict[str, bool] | None = None,
     screens: Sequence[str] = (),
     units: Sequence[str] = (),
     hints: Sequence[str] = (),
@@ -372,6 +387,17 @@ def launcher_of(
                          verified=True, reason=f"cgroup {own_unit}")
 
     # 7. Rien de sûr : bloqué avec la raison, jamais deviné.
+    if crontabs_ok is not None and crontabs_ok.get(account) is False:
+        denied_launcher = _launcher(
+            "",
+            account,
+            "processus " + (raw_args.split()[0].split("/")[-1] if raw_args.split() else "inconnu"),
+            verified=False,
+            reason="droits insuffisants : crontab du compte " + account + " illisible sans sudo -n",
+        )
+        denied_launcher["denied_reason"] = denied_launcher["reason"]
+        return denied_launcher
+
     return _launcher(
         "manuel", account, f"processus {binary or names[0] if names else '?'}",
         verified=False,
@@ -412,6 +438,66 @@ def _version_from_path(binary: str) -> str:
     return ""
 
 
+def parse_ls_exec(text: str) -> dict[str, dict[str, str]]:
+    """``ls -l`` par répertoire : nom -> mode des entrées exécutables (fichier ou lien)."""
+    out: dict[str, dict[str, str]] = {}
+    current = ""
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if line.startswith("LS "):
+            current = line[3:].strip()
+            out.setdefault(current, {})
+            continue
+        if line in ("LSEND", "LS_DENIED", ""):
+            continue
+        if not current or len(line) < 11:
+            continue
+        mode = line.split(" ", 1)[0]
+        if mode[0] not in ("-", "l") or len(mode) < 10:
+            continue
+        if mode[0] == "-" and "x" not in mode[1:]:
+            continue
+        rest = line[len(mode):].split(None, 7)
+        if len(rest) < 8:
+            continue
+        out[current][rest[7].split(" -> ")[0]] = mode
+    return out
+
+
+def resolve_cli(binary: str, execs: dict[str, dict[str, str]]) -> dict[str, Any]:
+    """CLI du nœud : ``<base>-cli``, sinon l'unique ``*-cli`` du répertoire du démon.
+
+    Le démon lui-même n'est **jamais** retenu faute de preuve d'un RPC ``stop``
+    documenté : cette preuve ne peut pas être obtenue sans arrêter le nœud.
+    """
+    if not binary.startswith("/"):
+        return {
+            "path": "",
+            "reason": "chemin absolu du démon inconnu (droits insuffisants ou processus disparu)",
+            "candidates": [],
+        }
+    directory = binary.rsplit("/", 1)[0]
+    names = sorted(execs.get(directory) or {})
+    expected = _cli_for(binary)
+    candidates = [n for n in names if n.endswith("-cli")]
+    if expected in names:
+        return {"path": directory + "/" + expected, "reason": "", "candidates": candidates}
+    if len(candidates) == 1:
+        return {"path": directory + "/" + candidates[0], "reason": "", "candidates": candidates}
+    if len(candidates) > 1:
+        reason = (
+            "plusieurs *-cli dans " + directory + " (" + ", ".join(candidates) + ") : aucun choix prouvé"
+        )
+    elif not names:
+        reason = "répertoire " + directory + " illisible ou vide (sudo -n ls -l)"
+    else:
+        reason = (
+            "aucun *-cli dans " + directory + " ; " + binary.split("/")[-1]
+            + " n'est pas retenu sans preuve d'un RPC stop documenté"
+        )
+    return {"path": "", "reason": reason, "candidates": candidates}
+
+
 def profile_for(miner: dict[str, Any]) -> dict[str, Any]:
     """Profil Fossor proposé, au plus près de ce qui tourne déjà."""
     solo = str(miner.get("kind") or "") == "solo"
@@ -441,6 +527,7 @@ def profile_for(miner: dict[str, Any]) -> dict[str, Any]:
         profile["node_binary"] = str(miner.get("binary") or miner.get("daemon") or "")
         profile["datadir"] = str(miner.get("datadir") or "")
         profile["cli"] = str(miner.get("cli") or "")
+        profile["cli_candidates"] = list(miner.get("cli_candidates") or [])
     return profile
 
 
@@ -512,8 +599,10 @@ def build_item(
     wallet_path = _wallet_path(datadir) if solo else ""
     wallet_info = dict(wallet or {})
     wallet_present = bool(wallet_info.get("present")) if wallet_info else False
+    wallet_denied = bool(wallet_info.get("denied")) if wallet_info else False
     wallet_size = int(wallet_info.get("size") or 0) if wallet_present else 0
-    cli = _cli_path(binary) if solo else ""
+    cli = str(miner.get("cli") or "") if solo else ""
+    cli_reason = str(miner.get("cli_reason") or "")
     profile = profile_for({**miner, "binary": binary, "cli": cli})
     # Le compte d'origine pilote l'unité ; fossor n'intervient que par sudo.
     unit_user = account
@@ -529,18 +618,21 @@ def build_item(
     warnings: list[str] = []
     blocked = ""
     mode = str(launcher.get("mode") or "")
+    denied = str((proc or {}).get("denied_reason") or launcher.get("denied_reason") or "")
     if not binary:
-        blocked = "binaire non résolu en chemin absolu (readlink /proc/<pid>/exe)"
+        blocked = denied or "binaire non résolu en chemin absolu (readlink /proc/<pid>/exe)"
     elif not argv:
         blocked = "ligne de commande du processus illisible"
     elif mode == "service":
         blocked = f"déjà lancé par l'unité {launcher.get('unit') or launcher.get('detail')} : rien à adopter"
     elif not launcher.get("verified"):
-        blocked = "lanceur incertain : " + str(launcher.get("reason") or "aucun lanceur identifié")
+        blocked = str(launcher.get("denied_reason") or ("lanceur incertain : " + str(launcher.get("reason") or "aucun lanceur identifié")))
     elif solo and not datadir:
         blocked = "datadir illisible : impossible de sauvegarder le wallet"
-    elif solo and not cli_ok.get(cli):
-        blocked = f"CLI {cli or '?'} introuvable ou non exécutable dans le répertoire du démon"
+    elif solo and (not cli or not cli_ok.get(cli)):
+        blocked = cli_reason or f"CLI {cli or '?'} introuvable ou non exécutable dans le répertoire du démon"
+    elif solo and wallet_denied:
+        blocked = "droits insuffisants : wallet.dat de " + str(miner.get("datadir") or "?") + " illisible sans sudo -n"
     elif solo and not wallet_present:
         blocked = f"wallet.dat introuvable dans {datadir} : sauvegarde impossible"
     if unit["name"] in set(units):
@@ -964,19 +1056,34 @@ PROBE_UNITS = "systemctl list-unit-files 'fossor-miner-*' --no-legend --no-pager
 
 
 def _proc_command(pids: Sequence[str]) -> str:
-    lines: list[str] = []
+    lines: list[str] = ['if sudo -n true 2>/dev/null; then echo "SUDO ok"; else echo "SUDO denied"; fi']
     for pid in pids:
         p = re.sub(r"[^0-9]", "", str(pid or ""))
         if not p:
             continue
+        lines.append("echo 'PID " + p + "'")
+        lines.append('echo "EXE $(sudo -n readlink /proc/{p}/exe 2>/dev/null || readlink /proc/{p}/exe 2>/dev/null)"'.replace("{p}", p))
+        lines.append('echo "CWD $(sudo -n readlink /proc/{p}/cwd 2>/dev/null || readlink /proc/{p}/cwd 2>/dev/null)"'.replace("{p}", p))
+        lines.append('echo "UNIT $( (sudo -n cat /proc/{p}/cgroup 2>/dev/null || cat /proc/{p}/cgroup 2>/dev/null) | tail -1 | sed \'s|.*/||\')"'.replace("{p}", p))
+        lines.append('echo "PPID $( (sudo -n sed -n \'s/^PPid:[[:space:]]*//p\' /proc/{p}/status 2>/dev/null || sed -n \'s/^PPid:[[:space:]]*//p\' /proc/{p}/status 2>/dev/null) | head -1)"'.replace("{p}", p))
+        lines.append('echo "CMD $( (sudo -n tr \'\\0\' \' \' < /proc/{p}/cmdline 2>/dev/null || tr \'\\0\' \' \' < /proc/{p}/cmdline 2>/dev/null) )"'.replace("{p}", p))
+    return "sh -c " + _sq("\n".join(lines))
+
+
+def _ls_command(dirs: Sequence[str]) -> str:
+    """``sudo -n ls -l`` du répertoire du démon : noms et droits, jamais le contenu."""
+    lines: list[str] = []
+    for raw in dirs:
+        path = _clean_path(raw)
+        if not path:
+            continue
         lines += [
-            "echo 'PID " + p + "'",
-            'echo "EXE $(readlink /proc/' + p + '/exe 2>/dev/null)"',
-            'echo "CWD $(readlink /proc/' + p + '/cwd 2>/dev/null)"',
-            'echo "UNIT $(awk -F: \'{print $3}\' /proc/' + p + '/cgroup 2>/dev/null | tail -1 | sed \'s|.*/||\')"',
-            'echo "PPID $(awk \'/^PPid:/{print $2}\' /proc/' + p + '/status 2>/dev/null)"',
-            'echo "CMD $(tr \'\\0\' \' \' < /proc/' + p + '/cmdline 2>/dev/null)"',
+            "echo " + _sq("LS " + path),
+            "sudo -n ls -l " + _sq(path) + " 2>/dev/null || ls -l " + _sq(path) + " 2>/dev/null || echo LS_DENIED",
+            "echo LSEND",
         ]
+    if not lines:
+        return ""
     return "sh -c " + _sq("\n".join(lines))
 
 
@@ -1002,7 +1109,7 @@ def _search_command(names: Sequence[str]) -> str:
     args = " ".join("-e " + _sq(n) for n in wanted)
     dirs = " ".join(SEARCH_DIRS)
     return (
-        f"grep -rls --binary-files=without-match {args} {dirs} 2>/dev/null | head -20 || true"
+        f"sudo -n grep -rls --binary-files=without-match {args} {dirs} 2>/dev/null | head -20 || true"
     )
 
 
@@ -1011,13 +1118,21 @@ def _probe_command(wallets: Sequence[str], clis: Sequence[str]) -> str:
     for raw in clis:
         path = _clean_path(raw)
         if path:
-            lines.append(f"if test -x {_sq(path)}; then echo {_sq('X ' + path)}; else echo {_sq('N ' + path)}; fi")
+            lines.append(
+                "if sudo -n test -x " + _sq(path) + " 2>/dev/null || test -x " + _sq(path) + " 2>/dev/null; "
+                "then echo " + _sq("X " + path) + "; else echo " + _sq("N " + path) + "; fi"
+            )
     for raw in wallets:
         path = _clean_path(raw)
         if path:
             lines.append(
-                f"if test -f {_sq(path)}; then echo {_sq('W ' + path)} $(stat -c %s {_sq(path)} 2>/dev/null); "
-                f"else echo {_sq('W ' + path)} -1; fi"
+                "if sudo -n test -f " + _sq(path) + " 2>/dev/null; then "
+                "echo " + _sq("W " + path) + " $(sudo -n stat -c %s " + _sq(path) + " 2>/dev/null); "
+                "elif test -f " + _sq(path) + " 2>/dev/null; then "
+                "echo " + _sq("W " + path) + " $(stat -c %s " + _sq(path) + " 2>/dev/null); "
+                "elif sudo -n true 2>/dev/null; then echo " + _sq("W " + path) + " -1; "
+                "elif ! test -r $(dirname " + _sq(path) + ") 2>/dev/null; then echo " + _sq("W " + path) + " -2; "
+                "else echo " + _sq("W " + path) + " -1; fi"
             )
     if not lines:
         return ""
@@ -1025,7 +1140,11 @@ def _probe_command(wallets: Sequence[str], clis: Sequence[str]) -> str:
 
 
 async def read_host(runner, miners: Sequence[dict[str, Any]]) -> dict[str, Any]:
-    """Lectures **seulement** : ps, écrans, unités, crontabs, /proc, scripts, CLI, wallets."""
+    """Lectures **seulement** : ps, écrans, unités, crontabs, /proc, scripts, CLI, wallets.
+
+    Toute lecture d'un processus, d'un fichier ou d'une crontab d'un autre compte passe
+    par ``sudo -n`` ; si ``sudo -n`` échoue, le mineur est marqué « droits insuffisants ».
+    """
     _status, ps_text, _err = await runner(PROBE_PS)
     _status, screens, _err = await runner("screen -ls 2>/dev/null || true")
     _status, units_text, _err = await runner(PROBE_UNITS)
@@ -1039,18 +1158,37 @@ async def read_host(runner, miners: Sequence[dict[str, Any]]) -> dict[str, Any]:
     for miner in miners or []:
         accounts.add(str(miner.get("user") or ""))
     crontabs: dict[str, str] = {}
+    crontabs_ok: dict[str, bool] = {}
     for account in sorted({a for a in accounts if a}):
         cleaned = re.sub(r"[^a-z0-9_.-]", "", str(account).lower())
         if not cleaned:
             continue
-        _s, text, _e = await runner(
-            f"sudo -n -u {cleaned} crontab -l 2>/dev/null || crontab -l 2>/dev/null || true"
+        script = (
+            "if sudo -n -u " + cleaned + " true 2>/dev/null; then\n"
+            "  out=$(sudo -n -u " + cleaned + " crontab -l 2>&1); rc=$?\n"
+            "  if [ $rc -eq 0 ]; then printf '%s\\n' \"$out\"; echo __CRON_OK__;\n"
+            "  elif printf '%s' \"$out\" | grep -q 'no crontab'; then echo __CRON_EMPTY__;\n"
+            "  else printf '%s\\n' \"$out\"; echo __CRON_DENIED__; fi\n"
+            "elif [ \"$(id -un)\" = '" + cleaned + "' ]; then\n"
+            "  out=$(crontab -l 2>&1); rc=$?\n"
+            "  if [ $rc -eq 0 ]; then printf '%s\\n' \"$out\"; echo __CRON_OK__;\n"
+            "  elif printf '%s' \"$out\" | grep -q 'no crontab'; then echo __CRON_EMPTY__;\n"
+            "  else printf '%s\\n' \"$out\"; echo __CRON_DENIED__; fi\n"
+            "else echo __CRON_DENIED__; fi\n"
         )
-        crontabs[account] = text
+        _s, text, _e = await runner("sh -c " + _sq(script))
+        text = text or ""
+        crontabs_ok[account] = "__CRON_DENIED__" not in text
+        crontabs[account] = "\n".join(
+            line
+            for line in text.splitlines()
+            if line not in ("__CRON_OK__", "__CRON_EMPTY__", "__CRON_DENIED__")
+        )
 
     pids = [str(m.get("pid") or "") for m in miners or []]
     _s, proc_text, _e = await runner(_proc_command(pids))
     proc = parse_proc_info(proc_text)
+    sudo_ok = "SUDO ok" in (proc_text or "")
 
     script_paths: set[str] = set()
     for text in crontabs.values():
@@ -1060,7 +1198,8 @@ async def read_host(runner, miners: Sequence[dict[str, Any]]) -> dict[str, Any]:
                 script_paths.add(path)
     names: list[str] = []
     wallets: list[str] = []
-    clis: list[str] = []
+    cli_dirs: list[str] = []
+    binaries: dict[str, str] = {}
     for miner in miners or []:
         pid = str(miner.get("pid") or "")
         facts = proc.get(pid, {})
@@ -1070,9 +1209,16 @@ async def read_host(runner, miners: Sequence[dict[str, Any]]) -> dict[str, Any]:
             names.append(binary)
         if str(miner.get("kind")) == "solo":
             raw_row = str((by_pid.get(pid) or {}).get("args") or facts.get("cmd") or "")
+            absolute = exe if exe.startswith("/") else str(miner.get("binary") or "")
+            if not absolute.startswith("/"):
+                absolute = ""
+            binaries[pid] = absolute
             datadir = str(miner.get("datadir") or "") or _datadir(raw_row)
+            if not datadir and absolute:
+                datadir = absolute.rsplit("/", 1)[0] + "/data"
             wallets.append(_wallet_path(datadir))
-            clis.append(_cli_path(exe))
+            if absolute:
+                cli_dirs.append(absolute.rsplit("/", 1)[0])
     search = _search_command(names)
     if search:
         _s, found, _e = await runner(search)
@@ -1084,36 +1230,98 @@ async def read_host(runner, miners: Sequence[dict[str, Any]]) -> dict[str, Any]:
     if script_paths:
         _s, files, _e = await runner(_read_files_command(sorted(script_paths)))
         scripts = parse_files(files)
-    probe = _probe_command(wallets, clis)
+
+    if scripts:
+        extra: set[str] = set()
+        for path, body in list(scripts.items()):
+            directory = path.rsplit("/", 1)[0] if "/" in path else ""
+            for token in re.findall(r"[A-Za-z0-9_./-]+\.sh", body or ""):
+                child = token if token.startswith("/") else (directory + "/" + token if directory else token)
+                if child not in scripts:
+                    extra.add(child)
+        if extra:
+            _s, more, _e = await runner(_read_files_command(sorted(extra)[:5]))
+            children = parse_files(more)
+            for path, body in list(scripts.items()):
+                directory = path.rsplit("/", 1)[0] if "/" in path else ""
+                linked: list[str] = []
+                for token in re.findall(r"[A-Za-z0-9_./-]+\.sh", body or ""):
+                    child = token if token.startswith("/") else (directory + "/" + token if directory else token)
+                    if child in children:
+                        linked.append("# --- " + child + " (chaîne de lancement, lu par Fossor) ---\n" + children[child])
+                if linked:
+                    scripts[path] = body + "\n" + "\n".join(linked)
+
+    execs: dict[str, dict[str, str]] = {}
+    listing_cmd = _ls_command(cli_dirs)
+    if listing_cmd:
+        _s, listing, _e = await runner(listing_cmd)
+        execs = parse_ls_exec(listing)
+
+    clis: dict[str, dict[str, Any]] = {}
+    resolved: list[str] = []
+    for pid, absolute in binaries.items():
+        info = resolve_cli(absolute, execs)
+        clis[pid] = info
+        if info["path"]:
+            resolved.append(str(info["path"]))
+    probe = _probe_command(wallets, resolved)
     cli_ok: dict[str, bool] = {}
     wallet_info: dict[str, dict[str, Any]] = {}
     if probe:
         _s, probed, _e = await runner(probe)
         cli_ok = parse_cli_ok(probed)
         wallet_info = parse_wallet_info(probed)
+        for pid, info in list(clis.items()):
+            path = str(info.get("path") or "")
+            if path and cli_ok.get(path) is False:
+                clis[pid] = {
+                    "path": "",
+                    "reason": "CLI " + path + " non exécutable",
+                    "candidates": list(info.get("candidates") or []),
+                }
+    denied: dict[str, str] = {}
+    for pid in binaries:
+        if not str((proc.get(pid) or {}).get("exe") or "") and not sudo_ok:
+            denied[pid] = "droits insuffisants : /proc/" + pid + "/exe illisible sans sudo -n"
     return {
         "ps": ps_text,
         "tree": parse_ps_tree(ps_text),
         "screens": parse_screens(screens),
         "units": units,
         "crontabs": crontabs,
+        "crontabs_ok": crontabs_ok,
         "proc": proc,
         "scripts": scripts,
         "cli_ok": cli_ok,
+        "clis": clis,
+        "denied": denied,
         "wallets": wallet_info,
     }
 
 
-def _enrich_solo(miner: dict[str, Any], raw_args: str, facts: dict[str, Any]) -> dict[str, Any]:
+def _enrich_solo(
+    miner: dict[str, Any],
+    raw_args: str,
+    facts: dict[str, Any],
+    *,
+    cli_info: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     argv = shlex.split(raw_args or "")
     exe = str(facts.get("exe") or "")
-    binary = exe if exe.startswith("/") else (argv[0] if argv and argv[0].startswith("/") else "")
+    declared = str(miner.get("binary") or "")
+    binary = exe if exe.startswith("/") else (declared if declared.startswith("/") else (argv[0] if argv and argv[0].startswith("/") else ""))
     datadir = str(miner.get("datadir") or "") or _datadir(raw_args)
+    if not datadir and binary.startswith("/"):
+        datadir = binary.rsplit("/", 1)[0] + "/data"
+    info = dict(cli_info or {})
     return {
         **miner,
         "binary": binary,
         "datadir": datadir,
-        "cli": _cli_path(binary),
+        "cli": str(info.get("path") or ""),
+        "cli_reason": str(info.get("reason") or ""),
+        "cli_candidates": list(info.get("candidates") or []),
     }
 
 
@@ -1131,8 +1339,10 @@ async def build_plan(runner, machine, miners: Sequence[dict[str, Any]], *, inclu
         account = str(row.get("user") or miner.get("user") or "")
         facts = dict(host["proc"].get(pid) or {})
         facts["pid"] = pid
+        if pid in host["denied"]:
+            facts["denied_reason"] = host["denied"][pid]
         if str(miner.get("kind")) == "solo":
-            miner = _enrich_solo(miner, raw, facts)
+            miner = _enrich_solo(miner, raw, facts, cli_info=host["clis"].get(pid))
         hints = [
             str(miner.get("coin") or ""),
             str(miner.get("name") or "").split("-")[0],
@@ -1141,6 +1351,7 @@ async def build_plan(runner, machine, miners: Sequence[dict[str, Any]], *, inclu
             raw,
             account=account,
             crontabs=host["crontabs"],
+            crontabs_ok=host["crontabs_ok"],
             screens=host["screens"],
             units=host["units"],
             hints=[h for h in hints if h],
