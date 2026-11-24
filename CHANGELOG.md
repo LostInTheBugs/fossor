@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026.11.037 — 2026-11-24
+
+### Watchdog ASIC
+
+- **Plafond et délai minimum par mode** : le compteur de redémarrages et le délai minimum se comptent désormais séparément par mode.
+- **Simulation et réel séparés** : les redémarrages simulés n'empêchent plus un redémarrage réel.
+- **Vérification après redémarrage** : elle tourne aussi en mode simulation ; plafond atteint donne le rouge et la notification « intervention manuelle ».
+
 ## 2026.11.020 (en cours)
 
 ### Benchmark de puissance — fin
