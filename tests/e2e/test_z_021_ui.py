@@ -73,7 +73,7 @@ async def test_bandeau_absent_general_effectif_et_coffre(e2e_server):
             effective = await page.inner_text("#simEffective")
             assert "en pilotage réel" in effective, effective
             assert "en simulation" in effective, effective
-            assert "ASIC en suivi" in effective, effective
+            assert "ASIC (redémarrage seulement)" in effective, effective
             await page.screenshot(path=f"{SHOTS}/021-general.png", full_page=True)
 
             # Onglet principal « Coffre » : visible dans la navigation et ouvre le panneau.

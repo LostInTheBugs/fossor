@@ -109,10 +109,10 @@ async def test_interrupteur_de_pilotage_sur_une_carte_asic(e2e_server):
             await _login(context)
             page = await context.new_page()
             await page.goto(f"{E2E_URL}/machines", wait_until="networkidle", timeout=15000)
-            row = page.locator("tr", has_text="bitaxe-e2e-68").first
+            row = page.locator("#machBody tr", has_text="bitaxe-e2e-68").first
             await row.wait_for(timeout=10000)
-            assert "ASIC — suivi" not in await row.inner_text()
-            assert "Simulation" in await row.inner_text()
+            text = await row.inner_text()
+            assert "Simulation" in text and "redémarrage seulement" in text
 
             page.once("dialog", lambda dialog: dialog.accept("PILOTER"))
             async with page.expect_response(
@@ -127,7 +127,7 @@ async def test_interrupteur_de_pilotage_sur_une_carte_asic(e2e_server):
             assert payload["pilotage"] == "Pilotage réel"
 
             await page.reload(wait_until="networkidle")
-            row = page.locator("tr", has_text="bitaxe-e2e-68").first
+            row = page.locator("#machBody tr", has_text="bitaxe-e2e-68").first
             await row.wait_for(timeout=10000)
             text = await row.inner_text()
             assert "Pilotage réel" in text and "redémarrage seul" in text
