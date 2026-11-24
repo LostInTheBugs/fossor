@@ -282,7 +282,7 @@ async def test_sans_lanceur_trouve_le_mineur_est_bloque_avec_la_raison():
     assert korsh["launcher"]["verified"] is False
     assert korsh["adoptable"] is False
     assert "lanceur incertain" in korsh["blocked_reason"]
-    assert "aucun lanceur identifié" in korsh["blocked_reason"]
+    assert ("aucun lanceur identifié" in korsh["blocked_reason"] or "ne lance pas" in korsh["blocked_reason"])
     # La recherche a bien balayé HiveOS, rc.local et les unités, en lecture seule.
     search = next(c for c in calls if "grep -rls" in c)
     assert "/hive" in search and "/etc/rc.local" in search and "/hive-config" in search

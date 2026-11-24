@@ -331,6 +331,7 @@ def launcher_of(
             )
 
     # 2. Cron : la ligne lance le binaire, ou un script dont le contenu le lance.
+    weak: tuple[str, dict[str, Any], str] | None = None
     for owner, text in (crontabs or {}).items():
         for entry in parse_crontab(text):
             command = entry["command"]
@@ -350,6 +351,23 @@ def launcher_of(
                     script=script, verified=True, reason=how,
                     schedule=entry["schedule"],
                 )
+            if (
+                script
+                and script in (scripts or {})
+                and any(n.lower() in script.lower() for n in names if len(n) >= 3)
+            ):
+                weak = (owner, entry, script)
+
+    if weak:
+        owner, entry, script = weak
+        return _launcher(
+            "cron @reboot" if entry["reboot"] else "cron", owner, entry["line"],
+            script=script, verified=False, schedule=entry["schedule"],
+            reason=(
+                "cron lu, script " + script + " ne lance pas " + binary
+                + " directement (chaîne intermédiaire non prouvée)"
+            ),
+        )
 
     # 3. Écran détaché nommé comme le binaire.
     for session in screens:
