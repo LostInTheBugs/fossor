@@ -154,7 +154,9 @@ def _drop(db: Any, row: Any) -> None:
         db.delete(row)
 
 
-def restarts_in_window(db: Any, machine_id: int, moment: datetime, *, hours: int = 24) -> int:
+def restarts_in_window(db: Any, machine_id: int, moment: datetime, *, hours: int = 24,
+                       simulated: bool = False) -> int:
+    """Redémarrages du même mode sur la fenêtre : un simulé ne compte jamais comme un réel."""
     from app.models import WatchdogEvent
 
     limit = _iso(moment - timedelta(hours=hours))
@@ -162,12 +164,14 @@ def restarts_in_window(db: Any, machine_id: int, moment: datetime, *, hours: int
         db.query(WatchdogEvent)
         .filter(WatchdogEvent.machine_id == machine_id,
                 WatchdogEvent.action == RESTART_ACTION,
+                WatchdogEvent.simulated.is_(bool(simulated)),
                 WatchdogEvent.ts >= limit)
         .count()
     )
 
 
-def last_restart(db: Any, machine_id: int, moment: datetime, *, hours: int = 24) -> datetime | None:
+def last_restart(db: Any, machine_id: int, moment: datetime, *, hours: int = 24,
+                 simulated: bool = False) -> datetime | None:
     from app.models import WatchdogEvent
 
     limit = _iso(moment - timedelta(hours=hours))
@@ -175,6 +179,7 @@ def last_restart(db: Any, machine_id: int, moment: datetime, *, hours: int = 24)
         db.query(WatchdogEvent)
         .filter(WatchdogEvent.machine_id == machine_id,
                 WatchdogEvent.action == RESTART_ACTION,
+                WatchdogEvent.simulated.is_(bool(simulated)),
                 WatchdogEvent.ts >= limit)
         .order_by(WatchdogEvent.ts.desc())
         .first()
@@ -274,16 +279,19 @@ async def _default_probe(db: Any, machine: Any) -> dict[str, Any]:
 
 
 async def _verify(db: Any, machine: Any, cfg: dict[str, Any], moment: datetime, *,
-                  probe: Any = None, sleep: Any = None) -> tuple[bool, dict[str, Any] | None]:
-    """Attend que l'ASIC réponde, puis contrôle domaines et hashrate."""
+                  probe: Any = None, sleep: Any = None,
+                  simulated: bool = False) -> tuple[bool, dict[str, Any] | None]:
+    """Contrôle domaines et hashrate ; en simulation, rien n'a redémarré : une seule lecture."""
     import asyncio
 
     probe = probe or _default_probe
     interval = 15
-    attempts = max(1, int(cfg.get("verify_seconds", 90)) // interval)
+    attempts = 1 if simulated else max(1, int(cfg.get("verify_seconds", 90)) // interval)
     last: dict[str, Any] | None = None
-    for _ in range(attempts):
-        if sleep is not None:
+    for index in range(attempts):
+        if simulated and index == 0:
+            pass
+        elif sleep is not None:
             await sleep(interval)
         else:
             await asyncio.sleep(interval)
@@ -332,23 +340,32 @@ async def _do_restart(db: Any, machine: Any, cfg: dict[str, Any], moment: dateti
         row.stage = int(row.stage or 0) + 1
         row.last_action_at = _iso(moment)
     db.commit()
-    if simulated:
-        return {"action": RESTART_ACTION, "result": "ok", "simulated": True, "detail": detail}
-    ok, seen = await _verify(db, machine, cfg, moment, probe=probe, sleep=sleep)
+    ok, seen = await _verify(db, machine, cfg, moment, probe=probe, sleep=sleep,
+                             simulated=simulated)
     if ok:
-        _journal(db, machine, RULE_VERIFY, measure, "verify", "restored", False,
+        _journal(db, machine, RULE_VERIFY, measure, "verify", "restored", simulated,
                  "ASIC rétabli : tous les domaines actifs et hashrate au-dessus du seuil", moment)
         _notify(db, machine, RULE_VERIFY, measure, "verify", "restored",
-                "ASIC rétabli après redémarrage", False)
+                "ASIC rétabli après redémarrage", simulated)
         _clear(db, machine)
     else:
-        _journal(db, machine, RULE_VERIFY, measure, "verify", "failed", False,
+        _journal(db, machine, RULE_VERIFY, measure, "verify", "failed", simulated,
                  "ASIC non rétabli après redémarrage : la tentative compte", moment)
         _notify(db, machine, RULE_VERIFY, measure, "verify", "failed",
-                "ASIC non rétabli après redémarrage", False)
+                "ASIC non rétabli après redémarrage", simulated)
+        maximum = int(cfg.get("max_per_day", 3))
+        counted = restarts_in_window(db, machine.id, moment, simulated=simulated)
+        if counted >= maximum:
+            _mark_red(db, machine, moment, MANUAL_TEXT)
+            detail = f"{counted} redémarrage(s) sur 24 h (limite {maximum}) : {MANUAL_TEXT}"
+            _journal(db, machine, rule, measure, "notify", "manual", simulated, detail, moment)
+            _notify(db, machine, rule, measure, "notify", "manual", detail, simulated)
     db.commit()
-    return {"action": RESTART_ACTION, "result": "ok", "verified": ok,
-            "detail": detail, "state": seen}
+    outcome = {"action": RESTART_ACTION, "result": "ok", "verified": ok,
+               "detail": detail, "state": seen}
+    if simulated:
+        outcome["simulated"] = True
+    return outcome
 
 
 async def evaluate(db: Any, machine: Any, state: dict[str, Any] | None, *,
@@ -417,7 +434,7 @@ async def evaluate(db: Any, machine: Any, state: dict[str, Any] | None, *,
         return [{"rule": active_rule, "action": "notify", "result": "blocked",
                  "machine_id": machine.id}]
     maximum = int(cfg.get("max_per_day", 3))
-    counted = restarts_in_window(db, machine.id, moment)
+    counted = restarts_in_window(db, machine.id, moment, simulated=simulated)
     if counted >= maximum:
         _mark_red(db, machine, moment, MANUAL_TEXT)
         _journal(db, machine, active_rule, measure, "notify", "manual", simulated,
@@ -428,7 +445,7 @@ async def evaluate(db: Any, machine: Any, state: dict[str, Any] | None, *,
         db.commit()
         return [{"rule": active_rule, "action": "notify", "result": "manual",
                  "machine_id": machine.id}]
-    last = last_restart(db, machine.id, moment)
+    last = last_restart(db, machine.id, moment, simulated=simulated)
     delay = int(cfg.get("min_delay_minutes", 15)) * 60
     if last is not None and (moment - last).total_seconds() < delay:
         db.commit()
@@ -462,13 +479,13 @@ async def manual_restart(db: Any, machine: Any, *, confirm: str,
     if reason and not simulated:
         raise RestartRefused(f"garde-fou : {reason}")
     maximum = int(cfg.get("max_per_day", 3))
-    counted = restarts_in_window(db, machine.id, moment)
+    counted = restarts_in_window(db, machine.id, moment, simulated=simulated)
     if counted >= maximum:
         _mark_red(db, machine, moment, MANUAL_TEXT)
         db.commit()
         raise RestartLimited(
             f"limite atteinte : {counted} redémarrage(s) sur 24 h (maximum {maximum})")
-    last = last_restart(db, machine.id, moment)
+    last = last_restart(db, machine.id, moment, simulated=simulated)
     delay = int(cfg.get("min_delay_minutes", 15)) * 60
     if last is not None and (moment - last).total_seconds() < delay:
         raise RestartRefused(
@@ -489,7 +506,8 @@ def summary(db: Any, machine: Any, *, now: datetime | None = None,
     moment = _now(now)
     full = config if isinstance(config, dict) else wd.get_config(db)
     cfg = settings(wd.machine_config(full, machine))
-    counted = restarts_in_window(db, machine.id, moment)
+    simulated = wd._is_simulated(db, machine)
+    counted = restarts_in_window(db, machine.id, moment, simulated=simulated)
     last = (
         db.query(WatchdogEvent)
         .filter(WatchdogEvent.machine_id == machine.id)
@@ -503,6 +521,7 @@ def summary(db: Any, machine: Any, *, now: datetime | None = None,
         "host": machine.host,
         "restart": bool(cfg.get("restart", False)),
         "restarts_24h": counted,
+        "simulated": simulated,
         "max_per_day": int(cfg.get("max_per_day", 3)),
         "red": is_red(db, machine.id) or counted >= int(cfg.get("max_per_day", 3)),
         "last": None if last is None else {

@@ -185,15 +185,24 @@ def test_simulation_produit_une_action_simulee(db, monkeypatch):
     async def restart(target):
         calls.append(target.id)
 
+    async def probe(session, target):
+        return _state(inactive=0, hashrate=1.4e12)
+
+    async def noop(_seconds):
+        return None
+
     start = datetime(2026, 11, 23, 10, 0, tzinfo=timezone.utc)
     cfg = _config(restart=True, domains_minutes=10)
     _run(asic_watchdog.evaluate(db, machine, _state(), now=start, config=cfg, restart=restart))
     _run(asic_watchdog.evaluate(db, machine, _state(), now=start + timedelta(minutes=10),
-                                config=cfg, restart=restart))
+                                config=cfg, restart=restart, probe=probe, sleep=noop))
     assert calls == []
     row = db.query(WatchdogEvent).filter(
         WatchdogEvent.machine_id == machine.id, WatchdogEvent.action == "restart_asic").one()
     assert row.simulated is True
+    verified = db.query(WatchdogEvent).filter(
+        WatchdogEvent.machine_id == machine.id, WatchdogEvent.rule == "asic_verify").one()
+    assert verified.result == "restored" and verified.simulated is True
 
 
 def test_iceriver_notification_seule(db):
@@ -277,3 +286,116 @@ def test_endpoint_axeos_post_system_restart_contre_un_faux_serveur():
         server.server_close()
     assert seen == [("POST", "/api/system/restart")]
     assert result["status"] == 200 and result["path"] == "/api/system/restart"
+
+
+def _simulated_restart_event(db, machine, moment):
+    db.add(WatchdogEvent(
+        ts=asic_watchdog._iso(moment), machine_id=machine.id, machine_name=machine.name,
+        device_id=0, device_label="ASIC", rule=asic_watchdog.RULE_NAMES[0],
+        measure="domaines inactifs", action="restart_asic", result="ok",
+        simulated=True, detail="action simulée (mode simulation) : aucun appel réseau",
+    ))
+    db.commit()
+
+
+def test_trois_redemarrages_simules_ne_bloquent_pas_un_reel(db):
+    """Le plafond et le délai ne comptent que les redémarrages réels (6.8-fix)."""
+    machine = _machine(db)
+    calls = []
+
+    async def restart(target):
+        calls.append(target.id)
+
+    async def probe(session, target):
+        return _state(inactive=0, hashrate=1.4e12)
+
+    async def noop(_seconds):
+        return None
+
+    start = datetime(2026, 11, 23, 10, 0, tzinfo=timezone.utc)
+    for minutes in (8, 24, 40):
+        _simulated_restart_event(db, machine, start + timedelta(minutes=minutes))
+    cfg = _config(restart=True, domains_minutes=10, min_delay_minutes=15, max_per_day=3,
+                  verify_seconds=15)
+    assert asic_watchdog.restarts_in_window(db, machine.id, start + timedelta(hours=1)) == 0
+    assert asic_watchdog.restarts_in_window(db, machine.id, start + timedelta(hours=1),
+                                            simulated=True) == 3
+    assert asic_watchdog.last_restart(db, machine.id, start + timedelta(hours=1)) is None
+    _run(asic_watchdog.evaluate(db, machine, _state(), now=start, config=cfg,
+                                restart=restart, probe=probe, sleep=noop))
+    events = _run(asic_watchdog.evaluate(
+        db, machine, _state(), now=start + timedelta(minutes=10), config=cfg,
+        restart=restart, probe=probe, sleep=noop))
+    assert calls == [machine.id], "un simulé ne doit pas consommer le plafond réel"
+    assert events[0]["action"] == "restart_asic"
+    assert asic_watchdog.restarts_in_window(db, machine.id, start + timedelta(hours=1)) == 1
+    assert asic_watchdog.is_red(db, machine.id) is False
+
+
+def test_simulation_plafond_rouge_et_intervention_manuelle(db, monkeypatch):
+    """Chaque mode compte ses propres tentatives ; plafond simulé → rouge + manuel."""
+    machine = _machine(db)
+    calls = []
+    monkeypatch.setattr(watchdog, "_is_simulated", lambda db, machine: True)
+
+    async def restart(target):
+        calls.append(target.id)
+
+    async def probe(session, target):
+        return _state(inactive=1, hashrate=1.39e12)  # toujours 3/4 actifs
+
+    async def noop(_seconds):
+        return None
+
+    start = datetime(2026, 11, 23, 10, 0, tzinfo=timezone.utc)
+    cfg = _config(restart=True, domains_minutes=10, min_delay_minutes=15, max_per_day=3,
+                  verify_seconds=15)
+    _run(asic_watchdog.evaluate(db, machine, _state(), now=start, config=cfg,
+                                restart=restart, probe=probe, sleep=noop))
+    for minutes in (10, 30, 50):
+        _run(asic_watchdog.evaluate(
+            db, machine, _state(), now=start + timedelta(minutes=minutes), config=cfg,
+            restart=restart, probe=probe, sleep=noop))
+    assert calls == []
+    assert asic_watchdog.restarts_in_window(db, machine.id, start + timedelta(hours=1),
+                                            simulated=True) == 3
+    assert asic_watchdog.restarts_in_window(db, machine.id, start + timedelta(hours=1)) == 0
+    assert asic_watchdog.is_red(db, machine.id) is True
+    rows = db.query(WatchdogEvent).filter(
+        WatchdogEvent.machine_id == machine.id, WatchdogEvent.result == "manual").all()
+    assert rows, "la notification « intervention manuelle » doit être journalisée en simulation"
+    assert rows[0].simulated is True
+    assert asic_watchdog.MANUAL_TEXT in rows[0].detail
+
+
+def test_simulation_verifie_l_etat_et_compte_l_echec(db, monkeypatch):
+    """En simulation la vérification tourne sur l'état lu (une lecture) et l'échec compte."""
+    machine = _machine(db)
+    calls = []
+    sleeps = []
+    monkeypatch.setattr(watchdog, "_is_simulated", lambda db, machine: True)
+
+    async def restart(target):
+        calls.append(target.id)
+
+    async def probe(session, target):
+        return _state(inactive=1, hashrate=1.39e12)
+
+    async def noop(seconds):
+        sleeps.append(seconds)
+
+    start = datetime(2026, 11, 23, 10, 0, tzinfo=timezone.utc)
+    cfg = _config(restart=True, domains_minutes=10, verify_seconds=90)
+    _run(asic_watchdog.evaluate(db, machine, _state(), now=start, config=cfg,
+                                restart=restart, probe=probe, sleep=noop))
+    events = _run(asic_watchdog.evaluate(
+        db, machine, _state(), now=start + timedelta(minutes=10), config=cfg,
+        restart=restart, probe=probe, sleep=noop))
+    assert calls == []
+    assert events[0]["action"] == "restart_asic"
+    rows = db.query(WatchdogEvent).filter(
+        WatchdogEvent.machine_id == machine.id, WatchdogEvent.rule == "asic_verify").all()
+    assert rows and rows[-1].result == "failed" and rows[-1].simulated is True
+    assert sleeps == [], "rien n'a redémarré : une seule lecture, sans attente"
+    assert asic_watchdog.restarts_in_window(db, machine.id, start + timedelta(hours=1),
+                                            simulated=True) == 1
