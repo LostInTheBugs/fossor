@@ -136,13 +136,23 @@ async def test_auth_state_exposes_bypass_without_secret():
 
 
 @pytest.mark.asyncio
-async def test_asic_cannot_be_armed_for_real_piloting(client):
+async def test_asic_can_be_armed_but_stays_out_of_campaigns(client):
+    """6.8-réel : l'ASIC reçoit l'interrupteur ; son périmètre reste le redémarrage."""
     machine_id = _asic()
     response = await client.put(
         f"/api/machines/{machine_id}/simulation", json={"real": True, "confirm": "PILOTER"}
     )
-    assert response.status_code == 400
-    assert "ASIC" in response.json()["detail"]
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["simulation_disabled"] is True
+    assert body["pilotage"] == "Pilotage réel"
+    assert body["simulated"] is False
+
+    response = await client.put(
+        f"/api/machines/{machine_id}/simulation", json={"real": False}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["pilotage"].startswith("Simulation")
 
 
 @pytest.mark.asyncio
