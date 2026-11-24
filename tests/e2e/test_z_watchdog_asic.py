@@ -31,6 +31,16 @@ def _seed_asic() -> int:
         db.close()
 
 
+def _disarm(machine_id: int) -> None:
+    """Un test qui arme un ASIC le désarme : la base e2e est partagée."""
+    db = sqlite3.connect(DB_PATH)
+    try:
+        db.execute("UPDATE machines SET simulation_disabled=0 WHERE id=?", (machine_id,))
+        db.commit()
+    finally:
+        db.close()
+
+
 def _cleanup(machine_id: int) -> None:
     db = sqlite3.connect(DB_PATH)
     try:
@@ -83,6 +93,7 @@ async def test_section_asic_watchdog_et_redemarrage_manuel(e2e_server):
             await page.wait_for_selector("#wdAsics", timeout=5000)
             await browser.close()
     finally:
+        _disarm(machine_id)
         _cleanup(machine_id)
 
 
@@ -122,4 +133,5 @@ async def test_interrupteur_de_pilotage_sur_une_carte_asic(e2e_server):
             assert "Pilotage réel" in text and "redémarrage seul" in text
             await browser.close()
     finally:
+        _disarm(machine_id)
         _cleanup(machine_id)

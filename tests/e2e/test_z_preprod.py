@@ -39,6 +39,21 @@ def _cleanup(names: tuple[str, ...]) -> None:
     engine.dispose()
 
 
+def _restore_security() -> None:
+    """Réactive l'authentification : sans ça, toute la suite suivante est cassée."""
+    import urllib.request
+
+    payload = json.dumps({"auth_enabled": True}).encode()
+    request = urllib.request.Request(
+        E2E_URL + "/api/security/settings", data=payload, method="PUT",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        urllib.request.urlopen(request, timeout=10).close()
+    except Exception:
+        pass
+
+
 def _seed() -> dict[str, int | str]:
     """ASIC (jamais pilotable) + machine hôte, et deux états de routine."""
     # Session dédiée : le conftest racine redirige DATABASE_URL vers tmp_path,
@@ -100,81 +115,85 @@ async def test_preprod_banner_routines_asic_and_simulation(e2e_server):
     console_errors: list[str] = []
     page_errors: list[str] = []
 
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
-        context = await browser.new_context()
-        context.on(
-            "console",
-            lambda msg: console_errors.append(msg.text) if msg.type == "error" else None,
-        )
-        context.on("pageerror", lambda err: page_errors.append(str(err)))
-        page = await context.new_page()
-        await _login(page)
-        # Semé APRÈS le démarrage : le collecteur de démarrage a déjà écrit son
-        # propre état, on veut voir un voyant rouge et un vert côte à côte.
-        _seed()
+    try:
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True)
+            context = await browser.new_context()
+            context.on(
+                "console",
+                lambda msg: console_errors.append(msg.text) if msg.type == "error" else None,
+            )
+            context.on("pageerror", lambda err: page_errors.append(str(err)))
+            page = await context.new_page()
+            await _login(page)
+            # Semé APRÈS le démarrage : le collecteur de démarrage a déjà écrit son
+            # propre état, on veut voir un voyant rouge et un vert côte à côte.
+            _seed()
 
-        # 1. Voyants de routine : vert pour la sauvegarde, rouge pour la collecte.
-        await page.goto(E2E_URL + "/dashboard", wait_until="domcontentloaded")
-        await page.wait_for_function(
-            "() => document.getElementById('routineStrip') && "
-            "document.getElementById('routineStrip').textContent.includes('Sauvegarde')",
-            timeout=15000,
-        )
-        strip = await page.inner_text("#routineStrip")
-        assert "Sauvegarde : OK" in strip
-        assert "Veille Hermes : ÉCHEC" in strip
+            # 1. Voyants de routine : vert pour la sauvegarde, rouge pour la collecte.
+            await page.goto(E2E_URL + "/dashboard", wait_until="domcontentloaded")
+            await page.wait_for_function(
+                "() => document.getElementById('routineStrip') && "
+                "document.getElementById('routineStrip').textContent.includes('Sauvegarde')",
+                timeout=15000,
+            )
+            strip = await page.inner_text("#routineStrip")
+            assert "Sauvegarde : OK" in strip
+            assert "Veille Hermes : ÉCHEC" in strip
 
-        # 2. Bandeau d'authentification désactivée (réseau de confiance).
-        response = await page.request.put(
-            E2E_URL + "/api/security/settings",
-            data=json.dumps(
-                {"auth_enabled": False, "trusted_networks": ["127.0.0.1"]}
-            ),
-            headers={"Content-Type": "application/json"},
-        )
-        assert response.status == 200, await response.text()
-        await page.goto(E2E_URL + "/dashboard", wait_until="domcontentloaded")
-        await page.wait_for_selector("#authBanner", timeout=15000)
-        banner = await page.inner_text("#authBanner")
-        assert "Authentification désactivée (réseau de confiance)" in banner
+            # 2. Bandeau d'authentification désactivée (réseau de confiance).
+            response = await page.request.put(
+                E2E_URL + "/api/security/settings",
+                data=json.dumps(
+                    {"auth_enabled": False, "trusted_networks": ["127.0.0.1"]}
+                ),
+                headers={"Content-Type": "application/json"},
+            )
+            assert response.status == 200, await response.text()
+            await page.goto(E2E_URL + "/dashboard", wait_until="domcontentloaded")
+            await page.wait_for_selector("#authBanner", timeout=15000)
+            banner = await page.inner_text("#authBanner")
+            assert "Authentification désactivée (réseau de confiance)" in banner
 
-        # 3. Les campagnes ne proposent jamais l'ASIC.
-        options = await page.evaluate(
-            "() => fetch('/api/campaigns/options',{credentials:'same-origin'})"
-            ".then(r=>r.json())"
-        )
-        names = [row["name"] for row in options["machines"]]
-        assert "ASIC-E2E" not in names
-        assert "athlon-e2e" in names
-        await page.goto(E2E_URL + "/campaigns", wait_until="domcontentloaded")
-        body = await page.inner_text("body")
-        assert "ASIC-E2E" not in body
+            # 3. Les campagnes ne proposent jamais l'ASIC.
+            options = await page.evaluate(
+                "() => fetch('/api/campaigns/options',{credentials:'same-origin'})"
+                ".then(r=>r.json())"
+            )
+            names = [row["name"] for row in options["machines"]]
+            assert "ASIC-E2E" not in names
+            assert "athlon-e2e" in names
+            await page.goto(E2E_URL + "/campaigns", wait_until="domcontentloaded")
+            body = await page.inner_text("body")
+            assert "ASIC-E2E" not in body
 
-        # 4. La fiche machine affiche « Simulation » et propose le pilotage réel.
-        await page.goto(E2E_URL + "/machines", wait_until="domcontentloaded")
-        await page.wait_for_selector("#machBody tr", timeout=15000)
-        await page.wait_for_function(
-            "() => document.getElementById('machBody').innerText.includes('athlon-e2e')",
-            timeout=15000,
-        )
-        machines_text = await page.inner_text("#tableWrap")
-        upper = machines_text.upper()
-        assert "PILOTAGE" in upper
-        assert "SIMULATION" in upper
-        assert "ASIC — SUIVI" in upper
+            # 4. La fiche machine affiche « Simulation » et propose le pilotage réel.
+            await page.goto(E2E_URL + "/machines", wait_until="domcontentloaded")
+            await page.wait_for_selector("#machBody tr", timeout=15000)
+            await page.wait_for_function(
+                "() => document.getElementById('machBody').innerText.includes('athlon-e2e')",
+                timeout=15000,
+            )
+            machines_text = await page.inner_text("#tableWrap")
+            upper = machines_text.upper()
+            assert "PILOTAGE" in upper
+            assert "SIMULATION" in upper
+            assert "REDÉMARRAGE SEULEMENT" in upper
 
-        # Remise du réglage par défaut : les autres suites e2e se connectent.
-        restored = await page.request.put(
-            E2E_URL + "/api/security/settings",
-            data=json.dumps({"auth_enabled": True}),
-            headers={"Content-Type": "application/json"},
-        )
-        assert restored.status == 200
+            # Remise du réglage par défaut : les autres suites e2e se connectent.
+            restored = await page.request.put(
+                E2E_URL + "/api/security/settings",
+                data=json.dumps({"auth_enabled": True}),
+                headers={"Content-Type": "application/json"},
+            )
+            assert restored.status == 200
 
-        await browser.close()
+            await browser.close()
+    finally:
+        # La base e2e est partagée : auth et machines semées se rendent toujours.
+        _restore_security()
+        _cleanup(("ASIC-E2E", "athlon-e2e"))
 
-    _cleanup(("ASIC-E2E", "athlon-e2e"))
 
     assert not page_errors, page_errors
     assert not console_errors, console_errors

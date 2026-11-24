@@ -285,7 +285,7 @@ header h1{font-size:26px}
   <div id="panel-general">
     <div class="card" id="pilotCard">
       <h2>Simulation par défaut des nouvelles machines</h2>
-      <div class="sub">Ce réglage n'est <b>pas</b> l'état du parc : il ne s'applique qu'aux machines <b>non armées</b>. Une machine armée (« PILOTER ») agit en réel quel que soit ce réglage ; un ASIC n'est jamais piloté. L'état effectif est affiché sous le bouton.</div>
+      <div class="sub">Ce réglage n'est <b>pas</b> l'état du parc : il ne s'applique qu'aux machines <b>non armées</b>. Une machine armée (« PILOTER ») agit en réel quel que soit ce réglage ; un ASIC s'arme avec le même interrupteur, mais son périmètre réel se limite au redémarrage du watchdog et au bouton manuel (jamais campagne ni boost). L'état effectif est affiché sous le bouton.</div>
       <div class="field"><label><input type="checkbox" id="simToggle" checked> Simulation par défaut (machines non armées)</label></div>
       <div class="field" id="simConfirmBox" style="display:none">
         <label>Pour désactiver, saisissez « PILOTER »</label>
@@ -1420,7 +1420,7 @@ const loadPilot=async()=>{
   if($('#simEffective')){
     const real=p.real_count||0, sim=p.simulated_count||0, asics=p.asic_count||0;
     $('#simEffective').textContent=real+' machine'+(real>1?'s':'')+' en pilotage réel · '+
-      sim+' en simulation · '+asics+' ASIC en suivi';
+      sim+' en simulation · '+asics+' ASIC (redémarrage seulement)';
   }
   if($('#defProfile')){
   $('#defProfile').innerHTML='<option value="">— aucun —</option>'+

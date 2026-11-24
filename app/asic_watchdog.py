@@ -330,7 +330,7 @@ async def _read(probe: Any, db: Any, machine: Any) -> dict[str, Any] | None:
 async def _wait_cycle(db: Any, machine: Any, cfg: dict[str, Any],
                       probe: Any, sleep: Any) -> tuple[bool, dict[str, Any] | None]:
     """Attend la coupure puis le retour, dans un délai borné par la config."""
-    wait = int(cfg.get("restart_wait_seconds", 180))
+    wait = min(int(cfg.get("restart_wait_seconds", 180)), VERIFY_DEADLINE_SECONDS)
     down = False
     last: dict[str, Any] | None = None
     for _ in range(max(1, wait // POLL_SECONDS)):
@@ -343,6 +343,51 @@ async def _wait_cycle(db: Any, machine: Any, cfg: dict[str, Any],
         if down:
             return True, last
     return False, last
+
+
+#: Plafond absolu de la vérification : au-delà, on conclut « non rétabli ».
+VERIFY_DEADLINE_SECONDS = 300
+
+#: Tâches de vérification de fond : référencées pour ne pas être ramassées.
+_VERIFY_TASKS: set = set()
+
+
+def _schedule_verify(*, machine_id: int, cfg: dict[str, Any], moment: datetime, rule: str,
+                     measure: str, reason: str, detail: str, simulated: bool,
+                     probe: Any = None, sleep: Any = None) -> Any:
+    """Vérifie le retour de l'ASIC hors de la boucle appelante (collecte).
+
+    La collecte ne doit jamais attendre ``restart_wait_seconds`` : la preuve
+    (coupure, retour, relecture de ``uptime_s``) tourne dans une tâche de fond
+    avec sa propre session, bornée par ``VERIFY_DEADLINE_SECONDS``.
+    """
+    import asyncio
+
+    from app.database import SessionLocal
+    from app.models import Machine
+
+    async def _run() -> None:
+        own = SessionLocal()
+        try:
+            machine = own.get(Machine, machine_id)
+            if machine is None:
+                return
+            await _settle(own, machine, cfg, moment, rule=rule, measure=measure,
+                          reason=reason, detail=detail, simulated=simulated,
+                          probe=probe, sleep=sleep)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "watchdog ASIC : vérification de fond en échec", exc_info=True)
+            own.rollback()
+        finally:
+            own.close()
+
+    task = asyncio.get_event_loop().create_task(_run())
+    _VERIFY_TASKS.add(task)
+    task.add_done_callback(_VERIFY_TASKS.discard)
+    return task
 
 
 def reboot_proven(state: dict[str, Any] | None, cfg: dict[str, Any]) -> tuple[bool, str]:
@@ -358,38 +403,10 @@ def reboot_proven(state: dict[str, Any] | None, cfg: dict[str, Any]) -> tuple[bo
     return True, f"uptime_s={float(uptime):.0f}"
 
 
-async def _do_restart(db: Any, machine: Any, cfg: dict[str, Any], moment: datetime, *,
-                      rule: str, measure: str, reason: str, restart: Any = None,
-                      probe: Any = None, sleep: Any = None, simulated: bool) -> dict[str, Any]:
-    from app import asic_client
-
-    if simulated:
-        detail = "action simulée (mode simulation) : aucun appel réseau"
-    elif (machine.asic_driver or "").strip().lower() != "axeos":
-        _journal(db, machine, rule, measure, "notify", "unsupported", False,
-                 UNSUPPORTED, moment)
-        _notify(db, machine, rule, measure, "notify", "unsupported", UNSUPPORTED, False)
-        db.commit()
-        return {"action": "notify", "result": "unsupported", "detail": UNSUPPORTED}
-    else:
-        try:
-            if restart is not None:
-                await restart(machine)
-            else:
-                await asic_client.restart_asic(machine.asic_driver or "", machine.host)
-            detail = f"POST {AXEOS_RESTART_PATH} accepté"
-        except asic_client.AsicUnsupported:
-            _journal(db, machine, rule, measure, "notify", "unsupported", False,
-                     UNSUPPORTED, moment)
-            _notify(db, machine, rule, measure, "notify", "unsupported", UNSUPPORTED, False)
-            db.commit()
-            return {"action": "notify", "result": "unsupported", "detail": UNSUPPORTED}
-        except Exception as exc:
-            detail = f"échec du redémarrage : {exc}"
-            _journal(db, machine, rule, measure, RESTART_ACTION, "failed", False, detail, moment)
-            _notify(db, machine, rule, measure, RESTART_ACTION, "failed", detail, False)
-            db.commit()
-            return {"action": RESTART_ACTION, "result": "failed", "detail": detail}
+async def _settle(db: Any, machine: Any, cfg: dict[str, Any], moment: datetime, *,
+                  rule: str, measure: str, reason: str, detail: str, simulated: bool,
+                  probe: Any = None, sleep: Any = None) -> tuple[bool, dict[str, Any] | None, str, str]:
+    """Journalise le redémarrage puis attend la preuve de retour (bornée)."""
     _journal(db, machine, rule, measure, RESTART_ACTION, "ok", simulated,
              f"{reason} — {detail}", moment)
     _notify(db, machine, rule, measure, RESTART_ACTION, "ok", detail, simulated)
@@ -420,8 +437,54 @@ async def _do_restart(db: Any, machine: Any, cfg: dict[str, Any], moment: dateti
             _journal(db, machine, rule, measure, "notify", "manual", simulated, detail, moment)
             _notify(db, machine, rule, measure, "notify", "manual", detail, simulated)
     db.commit()
+    return ok, seen, why, detail
+
+
+async def _do_restart(db: Any, machine: Any, cfg: dict[str, Any], moment: datetime, *,
+                      rule: str, measure: str, reason: str, restart: Any = None,
+                      probe: Any = None, sleep: Any = None, simulated: bool,
+                      background_verify: bool = False) -> dict[str, Any]:
+    from app import asic_client
+
+    if simulated:
+        detail = "action simulée (mode simulation) : aucun appel réseau"
+    elif (machine.asic_driver or "").strip().lower() != "axeos":
+        _journal(db, machine, rule, measure, "notify", "unsupported", False,
+                 UNSUPPORTED, moment)
+        _notify(db, machine, rule, measure, "notify", "unsupported", UNSUPPORTED, False)
+        db.commit()
+        return {"action": "notify", "result": "unsupported", "detail": UNSUPPORTED}
+    else:
+        try:
+            if restart is not None:
+                await restart(machine)
+            else:
+                await asic_client.restart_asic(machine.asic_driver or "", machine.host)
+            detail = f"POST {AXEOS_RESTART_PATH} accepté"
+        except asic_client.AsicUnsupported:
+            _journal(db, machine, rule, measure, "notify", "unsupported", False,
+                     UNSUPPORTED, moment)
+            _notify(db, machine, rule, measure, "notify", "unsupported", UNSUPPORTED, False)
+            db.commit()
+            return {"action": "notify", "result": "unsupported", "detail": UNSUPPORTED}
+        except Exception as exc:
+            detail = f"échec du redémarrage : {exc}"
+            _journal(db, machine, rule, measure, RESTART_ACTION, "failed", False, detail, moment)
+            _notify(db, machine, rule, measure, RESTART_ACTION, "failed", detail, False)
+            db.commit()
+            return {"action": RESTART_ACTION, "result": "failed", "detail": detail}
+    if background_verify and not simulated:
+        _schedule_verify(machine_id=machine.id, cfg=dict(cfg), moment=moment, rule=rule,
+                         measure=measure, reason=reason, detail=detail, simulated=simulated,
+                         probe=probe, sleep=sleep)
+        return {"action": RESTART_ACTION, "result": "ok", "verified": None,
+                "verification": "en cours (tâche de fond)", "detail": detail,
+                "state": None, "proof": "vérification planifiée hors de la collecte"}
+    ok, seen, why, note = await _settle(db, machine, cfg, moment, rule=rule, measure=measure,
+                                        reason=reason, detail=detail, simulated=simulated,
+                                        probe=probe, sleep=sleep)
     outcome = {"action": RESTART_ACTION, "result": "ok", "verified": ok,
-               "detail": detail, "state": seen, "proof": why}
+               "detail": note, "state": seen, "proof": why}
     if simulated:
         outcome["simulated"] = True
     return outcome
@@ -429,7 +492,8 @@ async def _do_restart(db: Any, machine: Any, cfg: dict[str, Any], moment: dateti
 
 async def evaluate(db: Any, machine: Any, state: dict[str, Any] | None, *,
                    now: datetime | None = None, config: dict[str, Any] | None = None,
-                   probe: Any = None, restart: Any = None, sleep: Any = None) -> list[dict[str, Any]]:
+                   probe: Any = None, restart: Any = None, sleep: Any = None,
+                   background_verify: bool = False) -> list[dict[str, Any]]:
     """Évalue la section ASIC pour une machine ; renvoie les déclenchements."""
     from app import watchdog as wd
 
@@ -512,7 +576,7 @@ async def evaluate(db: Any, machine: Any, state: dict[str, Any] | None, *,
     outcome = await _do_restart(db, machine, cfg, moment, rule=active_rule, measure=measure,
                                 reason=f"condition {measure} depuis {minutes} min",
                                 restart=restart, probe=probe, sleep=sleep,
-                                simulated=simulated)
+                                simulated=simulated, background_verify=background_verify)
     events.append({"rule": active_rule, "action": outcome["action"],
                    "result": outcome["result"], "machine_id": machine.id})
     return events

@@ -1017,7 +1017,7 @@ async def _collect_asic(machine_id: int) -> dict[str, Any]:
         try:
             from app import asic_watchdog
 
-            await asic_watchdog.evaluate(db, machine, state)
+            await asic_watchdog.evaluate(db, machine, state, background_verify=True)
         except Exception:  # le watchdog ne casse jamais une collecte
             db.rollback()
             logger.warning("watchdog ASIC : évaluation en échec", exc_info=True)

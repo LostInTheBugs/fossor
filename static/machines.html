@@ -689,7 +689,7 @@ const simChip=(m)=>{
   const armed=m.simulation_disabled===true;
   const label=m.pilotage||(armed?'Pilotage réel':'Simulation');
   const cls=label==='Pilotage réel'?'on':'off';
-  const scope=asic?' · redémarrage seul':''; 
+  const scope=asic?' · redémarrage seulement':''; 
   const title=asic
     ? 'ASIC : le pilotage réel autorise uniquement le redémarrage du watchdog et le bouton manuel (jamais campagne ni boost)'
     : (armed?'machine armée':'simulation héritée');
