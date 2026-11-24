@@ -7,6 +7,7 @@ fait que lire la base, enregistrer une configuration et déclencher une
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any
 
@@ -53,8 +54,15 @@ def _machine_rows(db: Session, config: dict[str, Any]) -> list[dict[str, Any]]:
 
 @router.get("")
 def get_watchdog(db: Session = Depends(get_db), _: str = Depends(require_login)) -> dict[str, Any]:
+    from app import asic_watchdog
+
     config = watchdog.get_config(db)
-    return {"config": config, "machines": _machine_rows(db, config),
+    asics = [
+        asic_watchdog.summary(db, machine, config=config)
+        for machine in db.query(Machine).filter(Machine.machine_kind == "asic")
+        .order_by(Machine.name).all()
+    ]
+    return {"config": config, "machines": _machine_rows(db, config), "asics": asics,
             "rules": list(watchdog.RULE_NAMES), "actions": list(watchdog.ACTION_NAMES)}
 
 
@@ -128,3 +136,36 @@ async def run_now(machine_id: int, db: Session = Depends(get_db),
     events = await watchdog.evaluate_machine(db, machine)
     return {"ok": True, "machine_id": machine_id, "events": events,
             "now": datetime.now(timezone.utc).isoformat()}
+
+
+@router.post("/asics/{machine_id}/restart")
+async def restart_asic(machine_id: int, payload: dict[str, Any] = Body(...),
+                       db: Session = Depends(get_db),
+                       user: str = Depends(require_login)) -> dict[str, Any]:
+    """Redémarrage manuel d'un ASIC : confirmation VALIDER, mêmes garde-fous.
+
+    Aucun identifiant n'est lu ni renvoyé : seule la sonde publique et le
+    journal sont utilisés.
+    """
+    from app import asic_watchdog
+
+    machine = _machine(db, machine_id)
+    if machine.machine_kind != "asic":
+        raise HTTPException(status_code=400, detail="cette cible n'est pas un ASIC")
+    try:
+        outcome = await asic_watchdog.manual_restart(
+            db, machine, confirm=str(payload.get("confirm") or ""))
+    except asic_watchdog.RestartLimited as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except asic_watchdog.RestartRefused as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    _audit(db, user, "watchdog-asic-restart", json.dumps({
+        "asic": machine.name, "action": outcome.get("action"),
+        "result": outcome.get("result"), "simulated": bool(outcome.get("simulated")),
+    }, ensure_ascii=False))
+    config = watchdog.get_config(db)
+    return {"ok": True, "outcome": outcome, "asics": [
+        asic_watchdog.summary(db, row, config=config)
+        for row in db.query(Machine).filter(Machine.machine_kind == "asic")
+        .order_by(Machine.name).all()
+    ]}

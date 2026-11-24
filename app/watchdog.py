@@ -13,7 +13,8 @@ redémarrer la machine, power cycle (§4.17), notifier.  Une étape n'est franch
 qu'après ``escalation_minutes`` sans rétablissement.
 
 Garde-fous (tous testés) : grâce de 10 min, 3 relances par heure et par cible,
-jamais d'action sur un mineur externe ni sur un ASIC, jamais pendant une
+jamais d'action SSH sur un mineur externe ni sur un ASIC (la section ASIC
+§6.8 n'agit que par l'API documentée du constructeur, sur option), jamais pendant une
 campagne en bascule, simulation → action simulée, reboot et power cycle
 subordonnés à un mot ``VALIDER`` par machine.
 
@@ -65,6 +66,18 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "escalation_minutes": 5,
     "grace_minutes": 10,
     "max_per_hour": 3,
+    #: §6.8 : section ASIC — « notifier » par défaut ; le redémarrage par
+    #: l'API AxeOS est une option explicite, plafonnée sur 24 h.
+    "asic": {
+        "enabled": True,
+        "restart": False,
+        "domains_minutes": 10,
+        "hashrate_pct": 70.0,
+        "hashrate_minutes": 10,
+        "max_per_day": 3,
+        "min_delay_minutes": 15,
+        "verify_seconds": 90,
+    },
     #: Surcharge par machine : {"<id>": {"rules": {...}, "actions": {...}, ...}}
     "machines": {},
 }
@@ -123,6 +136,15 @@ def normalize(raw: Any) -> dict[str, Any]:
     config["escalation_minutes"] = int(_number(config["escalation_minutes"], 5))
     config["grace_minutes"] = int(_number(config["grace_minutes"], 10))
     config["max_per_hour"] = int(_number(config["max_per_hour"], 3, 1.0))
+    asic = config["asic"]
+    asic["enabled"] = bool(asic.get("enabled", True))
+    asic["restart"] = bool(asic.get("restart", False))
+    asic["domains_minutes"] = int(_number(asic.get("domains_minutes"), 10, 1))
+    asic["hashrate_pct"] = _number(asic.get("hashrate_pct"), 70.0, 1.0)
+    asic["hashrate_minutes"] = int(_number(asic.get("hashrate_minutes"), 10, 1))
+    asic["max_per_day"] = int(min(5.0, max(1.0, _number(asic.get("max_per_day"), 3, 1))))
+    asic["min_delay_minutes"] = int(_number(asic.get("min_delay_minutes"), 15, 1))
+    asic["verify_seconds"] = int(_number(asic.get("verify_seconds"), 90, 15))
     machines = config.get("machines")
     if not isinstance(machines, dict):
         machines = {}

@@ -736,6 +736,24 @@ async def fetch_axeos(host: str, timeout: float = TIMEOUT_S) -> dict[str, Any]:
     return payload
 
 
+async def restart_axeos(host: str, timeout: float = TIMEOUT_S) -> dict[str, Any]:
+    """``POST /api/system/restart`` — AxeOS.
+
+    Source : ESP-Miner **v2.12.2**, ``main/http_server/http_server.c``
+    lignes 1318-1323 (``.uri = "/api/system/restart", .method = HTTP_POST,
+    .handler = POST_restart``) ; le handler répond « System will restart
+    shortly. » puis appelle ``esp_restart()``.
+    """
+    url = _url(host, "/api/system/restart")
+    async with _Session(timeout) as session:
+        response = await session.request("POST", url, headers={"User-Agent": "Fossor/0.1"})
+        try:
+            response.raise_for_status()
+        except Exception as exc:
+            raise AsicError(f"{url} : {exc}") from exc
+    return {"ok": True, "status": response.status_code, "path": "/api/system/restart"}
+
+
 async def fetch_iceriver(
     host: str,
     timeout: float = TIMEOUT_S,

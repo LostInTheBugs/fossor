@@ -499,6 +499,18 @@ header h1{font-size:26px}
       <div class="actions"><button class="btn" id="wdSave">Enregistrer</button><span id="wdState" class="chip off">—</span></div>
     </div>
     <div class="card">
+      <h2>ASIC</h2>
+      <div class="sub">Domaines de hachage incomplets (3/4) ou hashrate sous le seuil pendant N minutes. « Notifier » seulement par défaut ; le redémarrage par l'API AxeOS (POST /api/system/restart, ESP-Miner v2.12.2) est une option, plafonnée sur 24 h. IceRiver et cgminer : notification seule, aucun endpoint documenté.</div>
+      <div class="field"><label><input type="checkbox" id="wdAsicEnabled" checked> Section ASIC active</label></div>
+      <div class="field"><label><input type="checkbox" id="wdAsicRestart"> Redémarrer l'ASIC par son API — désactivé par défaut</label></div>
+      <div class="field narrow"><label>Domaines incomplets pendant (min)</label><input type="number" id="wdAsicDomainsMin" min="1" value="10"></div>
+      <div class="field narrow"><label>Hashrate sous (% du nominal)</label><input type="number" id="wdAsicPct" min="1" max="100" value="70"></div>
+      <div class="field narrow"><label>Hashrate bas pendant (min)</label><input type="number" id="wdAsicHashMin" min="1" value="10"></div>
+      <div class="field narrow"><label>Redémarrages max sur 24 h (1 à 5)</label><input type="number" id="wdAsicMax" min="1" max="5" value="3"></div>
+      <div class="field narrow"><label>Délai minimum entre deux (min)</label><input type="number" id="wdAsicDelay" min="1" value="15"></div>
+      <div id="wdAsics" class="sub">Chargement…</div>
+    </div>
+    <div class="card">
       <h2>Surcharge par machine</h2>
       <div class="sub">Vide = valeurs globales. Une surcharge ne peut qu'affiner les seuils de cette machine ; les garde-fous (grâce, 3 par heure, mineur externe, ASIC, campagne en bascule) restent obligatoires.</div>
       <div id="wdMachines" class="sub">Chargement…</div>
@@ -2035,7 +2047,32 @@ loadIgpu();
     actions:{notify:$('#wdActNotify').checked,restart_miner:$('#wdActMiner').checked,
       restart_vm:$('#wdActVm').checked,reboot:$('#wdActReboot').checked,power_cycle:$('#wdActPower').checked},
     escalation_minutes:wdNum('#wdEscalation'),grace_minutes:wdNum('#wdGrace'),max_per_hour:wdNum('#wdMax'),
+    asic:{enabled:$('#wdAsicEnabled').checked,restart:$('#wdAsicRestart').checked,
+      domains_minutes:wdNum('#wdAsicDomainsMin'),hashrate_pct:wdNum('#wdAsicPct'),
+      hashrate_minutes:wdNum('#wdAsicHashMin'),max_per_day:wdNum('#wdAsicMax'),
+      min_delay_minutes:wdNum('#wdAsicDelay')},
   });
+  const wdRenderAsics=(asics)=>{
+    const rows=(asics||[]).map(a=>{
+      const last=a.last?wdEsc(a.last.ts)+' · '+wdEsc(a.last.action)+' · '+wdEsc(a.last.result)+(a.last.simulated?' · simulé':''):'—';
+      const red=a.red?'<span class="chip off" style="background:var(--red);color:#fff">rouge · intervention manuelle</span>':'<span class="chip">ok</span>';
+      return '<tr id="wdAsicRow-'+a.id+'"><td>'+wdEsc(a.name)+'</td><td class="mono">'+wdEsc(a.host)+'</td>'
+        +'<td>'+wdEsc(a.driver)+'</td><td class="mono">'+a.restarts_24h+' / '+a.max_per_day+'</td>'
+        +'<td>'+red+'</td><td class="mono">'+last+'</td>'
+        +'<td><button class="btn sm outline" onclick="wdRestartAsic('+a.id+')">Redémarrer</button></td></tr>';
+    }).join('');
+    $('#wdAsics').innerHTML='<table><thead><tr><th>ASIC</th><th>Adresse</th><th>Pilote</th><th>Redémarrages 24 h</th><th>État</th><th>Dernière action</th><th></th></tr></thead><tbody>'
+      +(rows||'<tr><td colspan="7">Aucun ASIC enregistré.</td></tr>')+'</tbody></table>';
+  };
+  window.wdRestartAsic=async(id)=>{
+    const word=prompt('Redémarrer cet ASIC ? Saisissez VALIDER');
+    if(word===null)return;
+    const r=await fetch('/api/watchdog/asics/'+id+'/restart',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:word})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){toast(d.detail||'Redémarrage refusé','err');return;}
+    toast(d.outcome&&d.outcome.simulated?'Redémarrage simulé':'Redémarrage envoyé');
+    loadWatchdog();
+  };
   const wdRenderMachines=(machines)=>{
     WDMACHINES=machines||[];
     const rows=WDMACHINES.map(m=>{
@@ -2077,6 +2114,12 @@ loadIgpu();
     wdSet('#wdActNotify',actions.notify);wdSet('#wdActMiner',actions.restart_miner);
     wdSet('#wdActVm',actions.restart_vm);wdSet('#wdActReboot',actions.reboot);wdSet('#wdActPower',actions.power_cycle);
     wdSet('#wdEscalation',c.escalation_minutes);wdSet('#wdGrace',c.grace_minutes);wdSet('#wdMax',c.max_per_hour);
+    const a=c.asic||{};
+    wdSet('#wdAsicEnabled',a.enabled);wdSet('#wdAsicRestart',a.restart);
+    wdSet('#wdAsicDomainsMin',a.domains_minutes);wdSet('#wdAsicPct',a.hashrate_pct);
+    wdSet('#wdAsicHashMin',a.hashrate_minutes);wdSet('#wdAsicMax',a.max_per_day);
+    wdSet('#wdAsicDelay',a.min_delay_minutes);
+    wdRenderAsics(d.asics);
     wdRenderMachines(d.machines);
     const j=await fetch('/api/watchdog/events?limit=100',{credentials:'include'});
     if(j.ok){const je=await j.json();wdRenderJournal(je.events);}

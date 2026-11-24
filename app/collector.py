@@ -1014,6 +1014,13 @@ async def _collect_asic(machine_id: int) -> dict[str, Any]:
             return {"machine_id": machine_id, "online": False, "error": "machine absente"}
         state = await probe_machine(machine, db)
         db.commit()
+        try:
+            from app import asic_watchdog
+
+            await asic_watchdog.evaluate(db, machine, state)
+        except Exception:  # le watchdog ne casse jamais une collecte
+            db.rollback()
+            logger.warning("watchdog ASIC : évaluation en échec", exc_info=True)
         return {"machine_id": machine_id, "online": bool(state.get("online")), "asic": True}
     except Exception as exc:  # pragma: no cover - défensif
         db.rollback()
