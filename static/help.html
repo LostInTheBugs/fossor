@@ -137,7 +137,7 @@ tr:last-child td{border-bottom:none}
 
   <div class="card">
     <h2><span class="num">j.</span> Lancement automatique</h2>
-    <p><b>Pilotage réel par machine.</b> Une machine armée avec le mot <span class="mono">PILOTER</span> agit en réel, <b>même si la simulation globale est active</b>. Une machine non armée reste toujours simulée, quel que soit le global : le global ON est la valeur par défaut des machines non armées, et le passer à OFF n'arme aucune machine. Les ASIC ne sont jamais pilotés, armés ou non.</p>
+    <p><b>Pilotage réel par machine.</b> Une machine armée avec le mot <span class="mono">PILOTER</span> agit en réel, <b>même si la simulation globale est active</b>. Une machine non armée reste toujours simulée, quel que soit le global : le global ON est la valeur par défaut des machines non armées, et le passer à OFF n'arme aucune machine. Un ASIC s'arme avec le même interrupteur, mais son périmètre réel se limite au <b>redémarrage du watchdog</b> et au <b>bouton manuel</b> : il reste exclu des campagnes, des boosts et des lancements de mineurs.</p>
     <p>La règle <span class="mono">auto_launch</span> peut être activée séparément pour le GPU et pour le CPU. Quand elle est active, une proposition validée par Fossor est lancée sans approbation, <b>uniquement</b> sur des devices autorisés et des machines dont la simulation est désactivée ; sinon, elle est simulée. Elle est livrée désactivée : Fred confirme avant de l'activer.</p>
   </div>
 </div>

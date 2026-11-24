@@ -2,15 +2,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
+import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from app import asic_watchdog, watchdog
+from app import asic, asic_client, asic_watchdog, boost_runner, pilotage, watchdog
 from app.database import SessionLocal
-from app.models import Boost, Machine, UsageEnum, WatchdogEvent
+from app.models import Boost, Device, Machine, UsageEnum, WatchdogEvent
 
 
 def _machine(db, driver="axeos", nominal=1.4e12):
@@ -29,9 +32,9 @@ def _config(**asic):
     return watchdog.normalize({"asic": dict(asic)})
 
 
-def _state(total=4, inactive=1, hashrate=1.39e12):
+def _state(total=4, inactive=1, hashrate=1.39e12, uptime=10):
     return {"online": True, "domains_total": total, "domains_inactive": inactive,
-            "hashrate_hs": hashrate}
+            "hashrate_hs": hashrate, "uptime_s": uptime}
 
 
 def _run(coroutine):
@@ -399,3 +402,136 @@ def test_simulation_verifie_l_etat_et_compte_l_echec(db, monkeypatch):
     assert sleeps == [], "rien n'a redémarré : une seule lecture, sans attente"
     assert asic_watchdog.restarts_in_window(db, machine.id, start + timedelta(hours=1),
                                             simulated=True) == 1
+
+
+# ── 6.8-réel : armement, driver, preuve par l'uptime ──────────────────
+def test_asic_s_arme_comme_une_machine_et_reste_hors_campagnes(db):
+    machine = _machine(db)
+    with pytest.raises(ValueError):
+        pilotage.set_machine_real(db, machine, True, "NON")
+    assert pilotage.set_machine_real(db, machine, True, "PILOTER") == "Pilotage réel"
+    assert machine.simulation_disabled is True
+    assert pilotage.machine_armed(machine) is True
+    assert pilotage.simulated_for(db, machine) is False
+    assert pilotage.label(db, machine) == "Pilotage réel"
+    assert machine not in pilotage.pilotable_machines(db)
+    assert pilotage.set_machine_real(db, machine, False, None).startswith("Simulation")
+
+
+def test_asic_jamais_dans_le_pool_de_boost(db):
+    machine = _machine(db)
+    device = Device(
+        uuid=str(uuid.uuid4()), machine_id=machine.id, kind="gpu", index=0,
+        model="carte factice", boost_pool=True, present=True,
+        enabled_for_mining=True, role="default_and_spec",
+    )
+    db.add(device)
+    db.commit()
+    payload = boost_runner.pool_payload(db)
+    assert device.uuid not in {row["uuid"] for row in payload["devices"]}
+    assert machine not in pilotage.pilotable_machines(db)
+
+
+def _axeos_server(*, reboot: bool = True, outage: float = 20.0):
+    """Faux AxeOS : ``POST /api/system/restart`` coupe puis remet l'uptime à zéro."""
+    clock = {"boot": time.monotonic() - 5000.0, "down_until": 0.0, "posts": 0}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            if time.monotonic() < clock["down_until"]:
+                self.send_response(503)
+                self.end_headers()
+                return
+            info = {
+                "hashRate": 1400.0, "hashRate_1h": 1400.0, "expectedHashrate": 1400.0,
+                "uptimeSeconds": int(time.monotonic() - clock["boot"]),
+                "hashrateMonitor": {"asics": [{"domains": [430.0, 430.0, 430.0, 430.0]}]},
+            }
+            body = json.dumps(info).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):  # noqa: N802
+            if self.path != "/api/system/restart":
+                self.send_response(404)
+                self.end_headers()
+                return
+            clock["posts"] += 1
+            clock["down_until"] = time.monotonic() + (outage if reboot else 5.0)
+            if reboot:
+                clock["boot"] = clock["down_until"]
+            body = b"System will restart shortly."
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, fmt, *args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, clock
+
+
+async def _axeos_probe(session, target):
+    return asic.parse_axeos(await asic_client.fetch_axeos(target.host))
+
+
+def test_redemarrage_reel_prouve_par_uptime_puis_retabli(db):
+    server, clock = _axeos_server(reboot=True, outage=20.0)
+    try:
+        machine = _machine(db)
+        machine.host = f"127.0.0.1:{server.server_port}"
+        db.commit()
+        cfg = _config(restart=True, restart_wait_seconds=60, uptime_max_s=120,
+                      verify_seconds=15)
+        outcome = _run(asic_watchdog._do_restart(
+            db, machine, cfg, datetime.now(timezone.utc), rule=asic_watchdog.RULE_MANUAL,
+            measure="redémarrage manuel", reason="test réel", probe=_axeos_probe,
+            simulated=False))
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert clock["posts"] == 1, "le POST AxeOS doit partir une seule fois"
+    assert outcome["result"] == "ok" and outcome["verified"] is True
+    assert outcome["proof"].startswith("uptime_s=")
+    assert float(outcome["proof"].split("=")[1]) <= 120
+    rows = db.query(WatchdogEvent).filter(
+        WatchdogEvent.machine_id == machine.id, WatchdogEvent.rule == "asic_verify").all()
+    assert rows and rows[-1].result == "restored" and rows[-1].simulated is False
+    assert "uptime_s=" in rows[-1].detail
+
+
+def test_uptime_inchange_echec_meme_si_domaines_ok(db):
+    server, clock = _axeos_server(reboot=False)
+    try:
+        machine = _machine(db)
+        machine.host = f"127.0.0.1:{server.server_port}"
+        db.commit()
+        cfg = _config(restart=True, restart_wait_seconds=30, uptime_max_s=300,
+                      verify_seconds=15)
+        outcome = _run(asic_watchdog._do_restart(
+            db, machine, cfg, datetime.now(timezone.utc), rule=asic_watchdog.RULE_MANUAL,
+            measure="redémarrage manuel", reason="test sans redémarrage",
+            probe=_axeos_probe, simulated=False))
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert clock["posts"] == 1
+    assert outcome["verified"] is False
+    assert "uptime_s=" in outcome["proof"] and "non prouvé" in outcome["proof"]
+    rows = db.query(WatchdogEvent).filter(
+        WatchdogEvent.machine_id == machine.id, WatchdogEvent.rule == "asic_verify").all()
+    assert rows[-1].result == "failed" and "uptime_s=" in rows[-1].detail
+
+
+def test_restart_asic_iceriver_leve_non_pris_en_charge():
+    with pytest.raises(asic_client.AsicUnsupported):
+        _run(asic_client.restart_asic("iceriver", "192.0.2.10"))
+    with pytest.raises(asic_client.AsicUnsupported):
+        _run(asic_client.restart_asic("cgminer", "192.0.2.10"))

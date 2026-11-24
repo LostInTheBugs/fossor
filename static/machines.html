@@ -685,16 +685,18 @@ const startMiner=()=>minerCall('start');
 const stopMiner=()=>minerCall('stop');
 const minerStatus=()=>minerCall('status');
 const simChip=(m)=>{
-  if(m.machine_kind==='asic'||m.pilotable===false){
-    return '<span class="chip off" title="Un ASIC sert uniquement au suivi : jamais piloté">ASIC — suivi</span>';
-  }
+  const asic=m.machine_kind==='asic';
   const armed=m.simulation_disabled===true;
   const label=m.pilotage||(armed?'Pilotage réel':'Simulation');
   const cls=label==='Pilotage réel'?'on':'off';
+  const scope=asic?' · redémarrage seul':''; 
+  const title=asic
+    ? 'ASIC : le pilotage réel autorise uniquement le redémarrage du watchdog et le bouton manuel (jamais campagne ni boost)'
+    : (armed?'machine armée':'simulation héritée');
   const button=armed
     ? `<button class="btn sm outline" onclick="setSimulation(${m.id},false)" title="Revenir à la simulation héritée du global">↩︎ Simulation</button>`
-    : `<button class="btn sm outline" onclick="setSimulation(${m.id},true)" title="Autoriser le pilotage réel de cette machine (mot PILOTER)">⚡ Réel</button>`;
-  return `<span class="chip ${cls}" title="Global : ${armed?'machine armée':'simulation héritée'}">${label}</span><div style="margin-top:5px">${button}</div>`;
+    : `<button class="btn sm outline" onclick="setSimulation(${m.id},true)" title="${asic?'Autoriser le redémarrage réel de cet ASIC (mot PILOTER)':'Autoriser le pilotage réel de cette machine (mot PILOTER)'}">⚡ Réel</button>`;
+  return `<span class="chip ${cls}" title="${title}">${label}${scope}</span><div style="margin-top:5px">${button}</div>`;
 };
 const setSimulation=async(id,real)=>{
   let confirm='';

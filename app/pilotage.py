@@ -38,9 +38,10 @@ def without_asic(entries: Iterable[dict[str, Any]], ids: set[int]) -> list[dict[
 
 
 def asic_refusal(machine: Any) -> str:
+    """Refus d'un ASIC là où seules des machines hôtes ont un sens (campagne)."""
     return (
-        f"{getattr(machine, 'name', 'machine')} : un ASIC n'est pas pilotable — "
-        "il sert uniquement au suivi (lecture seule, par IP)"
+        f"{getattr(machine, 'name', 'machine')} : un ASIC reste hors des campagnes — "
+        "seul son redémarrage (watchdog, bouton manuel) est pilotable"
     )
 
 
@@ -107,9 +108,14 @@ def campaign_simulated(db: Any, campaign: Any) -> bool:
 
 
 def set_machine_real(db: Any, machine: Any, real: bool, confirm: str | None) -> str:
-    """Arme (mot « PILOTER ») ou désarme le pilotage réel d'une machine."""
-    if is_asic(machine):
-        raise ValueError(asic_refusal(machine))
+    """Arme (mot « PILOTER ») ou désarme le pilotage réel d'une machine.
+
+    Un ASIC s'arme comme une machine : il reçoit le même interrupteur, et son
+    périmètre réel se limite au redémarrage du watchdog et au bouton manuel.
+    Les campagnes, les boosts et les lancements de mineurs restent fermés aux
+    ASIC par leurs propres sélections (``pilotable_machines``, ``asic_refusal``),
+    pas par l'armement.
+    """
     if real and str(confirm or "").strip() != CONFIRM_WORD:
         raise ValueError(
             f"Désactivation de la simulation refusée : saisissez « {CONFIRM_WORD} » pour confirmer"

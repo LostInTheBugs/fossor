@@ -56,6 +56,9 @@ CONFIRM_WORD = "VALIDER"
 #: Réponse du firmware AxeOS au POST de redémarrage (ESP-Miner v2.12.2).
 AXEOS_RESTART_PATH = "/api/system/restart"
 
+#: Intervalle d'attente entre deux lectures pendant la coupure puis le retour.
+POLL_SECONDS = 5
+
 
 class RestartRefused(RuntimeError):
     """Redémarrage refusé par un garde-fou (limite, pilote, cible)."""
@@ -280,52 +283,107 @@ async def _default_probe(db: Any, machine: Any) -> dict[str, Any]:
 
 async def _verify(db: Any, machine: Any, cfg: dict[str, Any], moment: datetime, *,
                   probe: Any = None, sleep: Any = None,
-                  simulated: bool = False) -> tuple[bool, dict[str, Any] | None]:
-    """Contrôle domaines et hashrate ; en simulation, rien n'a redémarré : une seule lecture."""
+                  simulated: bool = False) -> tuple[bool, dict[str, Any] | None, str]:
+    """Preuve réelle : coupure, retour, uptime bas, puis domaines et hashrate.
+
+    En simulation rien n'a redémarré : une seule lecture, sans attente et sans
+    preuve d'uptime.
+    """
+    probe = probe or _default_probe
+    if simulated:
+        last = await _read(probe, db, machine)
+        if last and restored(last, cfg, machine.asic_expected_hashrate_hs):
+            return True, last, "état lu en simulation"
+        return False, last, "ASIC non rétabli (simulation) : une seule lecture"
+
+    cycled, last = await _wait_cycle(db, machine, cfg, probe, sleep)
+    proven, proof = reboot_proven(last, cfg)
+    if not proven:
+        prefix = "" if cycled else "coupure non observée ; "
+        return False, last, prefix + proof
+    attempts = max(1, int(cfg.get("verify_seconds", 90)) // 15)
+    for index in range(attempts):
+        if index:
+            await _pause(sleep, 15)
+            last = await _read(probe, db, machine)
+        if last and restored(last, cfg, machine.asic_expected_hashrate_hs):
+            return True, last, proof
+    return False, last, f"redémarrage prouvé ({proof}) mais ASIC non rétabli"
+
+
+async def _pause(sleep: Any, seconds: float) -> None:
     import asyncio
 
-    probe = probe or _default_probe
-    interval = 15
-    attempts = 1 if simulated else max(1, int(cfg.get("verify_seconds", 90)) // interval)
+    if sleep is not None:
+        await sleep(seconds)
+    else:
+        await asyncio.sleep(seconds)
+
+
+async def _read(probe: Any, db: Any, machine: Any) -> dict[str, Any] | None:
+    try:
+        return await probe(db, machine)
+    except Exception:
+        return None
+
+
+async def _wait_cycle(db: Any, machine: Any, cfg: dict[str, Any],
+                      probe: Any, sleep: Any) -> tuple[bool, dict[str, Any] | None]:
+    """Attend la coupure puis le retour, dans un délai borné par la config."""
+    wait = int(cfg.get("restart_wait_seconds", 180))
+    down = False
     last: dict[str, Any] | None = None
-    for index in range(attempts):
-        if simulated and index == 0:
-            pass
-        elif sleep is not None:
-            await sleep(interval)
-        else:
-            await asyncio.sleep(interval)
-        try:
-            last = await probe(db, machine)
-        except Exception:
+    for _ in range(max(1, wait // POLL_SECONDS)):
+        await _pause(sleep, POLL_SECONDS)
+        state = await _read(probe, db, machine)
+        if state is None or state.get("online") is False:
+            down = True
             continue
-        if last and restored(last, cfg, machine.asic_expected_hashrate_hs):
+        last = state
+        if down:
             return True, last
     return False, last
+
+
+def reboot_proven(state: dict[str, Any] | None, cfg: dict[str, Any]) -> tuple[bool, str]:
+    """``uptime_s`` faible : preuve que l'ASIC est reparti de zéro."""
+    if not state or state.get("online") is False:
+        return False, "ASIC injoignable après redémarrage"
+    uptime = state.get("uptime_s")
+    if uptime is None:
+        return False, "uptime_s illisible : redémarrage non prouvé"
+    maximum = int(cfg.get("uptime_max_s", 300))
+    if float(uptime) < 0 or float(uptime) > maximum:
+        return False, f"uptime_s={float(uptime):.0f} > {maximum} : redémarrage non prouvé"
+    return True, f"uptime_s={float(uptime):.0f}"
 
 
 async def _do_restart(db: Any, machine: Any, cfg: dict[str, Any], moment: datetime, *,
                       rule: str, measure: str, reason: str, restart: Any = None,
                       probe: Any = None, sleep: Any = None, simulated: bool) -> dict[str, Any]:
-    from app import watchdog as wd
+    from app import asic_client
 
     if simulated:
         detail = "action simulée (mode simulation) : aucun appel réseau"
+    elif (machine.asic_driver or "").strip().lower() != "axeos":
+        _journal(db, machine, rule, measure, "notify", "unsupported", False,
+                 UNSUPPORTED, moment)
+        _notify(db, machine, rule, measure, "notify", "unsupported", UNSUPPORTED, False)
+        db.commit()
+        return {"action": "notify", "result": "unsupported", "detail": UNSUPPORTED}
     else:
-        if machine.asic_driver != "axeos":
+        try:
+            if restart is not None:
+                await restart(machine)
+            else:
+                await asic_client.restart_asic(machine.asic_driver or "", machine.host)
+            detail = f"POST {AXEOS_RESTART_PATH} accepté"
+        except asic_client.AsicUnsupported:
             _journal(db, machine, rule, measure, "notify", "unsupported", False,
                      UNSUPPORTED, moment)
             _notify(db, machine, rule, measure, "notify", "unsupported", UNSUPPORTED, False)
             db.commit()
             return {"action": "notify", "result": "unsupported", "detail": UNSUPPORTED}
-        try:
-            if restart is not None:
-                await restart(machine)
-            else:
-                from app import asic_client
-
-                await asic_client.restart_axeos(machine.host)
-            detail = f"POST {AXEOS_RESTART_PATH} accepté"
         except Exception as exc:
             detail = f"échec du redémarrage : {exc}"
             _journal(db, machine, rule, measure, RESTART_ACTION, "failed", False, detail, moment)
@@ -340,19 +398,20 @@ async def _do_restart(db: Any, machine: Any, cfg: dict[str, Any], moment: dateti
         row.stage = int(row.stage or 0) + 1
         row.last_action_at = _iso(moment)
     db.commit()
-    ok, seen = await _verify(db, machine, cfg, moment, probe=probe, sleep=sleep,
-                             simulated=simulated)
+    ok, seen, why = await _verify(db, machine, cfg, moment, probe=probe, sleep=sleep,
+                                  simulated=simulated)
     if ok:
         _journal(db, machine, RULE_VERIFY, measure, "verify", "restored", simulated,
-                 "ASIC rétabli : tous les domaines actifs et hashrate au-dessus du seuil", moment)
+                 f"ASIC rétabli : tous les domaines actifs et hashrate au-dessus du seuil ({why})",
+                 moment)
         _notify(db, machine, RULE_VERIFY, measure, "verify", "restored",
-                "ASIC rétabli après redémarrage", simulated)
+                f"ASIC rétabli après redémarrage ({why})", simulated)
         _clear(db, machine)
     else:
         _journal(db, machine, RULE_VERIFY, measure, "verify", "failed", simulated,
-                 "ASIC non rétabli après redémarrage : la tentative compte", moment)
+                 f"ASIC non rétabli après redémarrage ({why}) : la tentative compte", moment)
         _notify(db, machine, RULE_VERIFY, measure, "verify", "failed",
-                "ASIC non rétabli après redémarrage", simulated)
+                f"ASIC non rétabli après redémarrage ({why})", simulated)
         maximum = int(cfg.get("max_per_day", 3))
         counted = restarts_in_window(db, machine.id, moment, simulated=simulated)
         if counted >= maximum:
@@ -362,7 +421,7 @@ async def _do_restart(db: Any, machine: Any, cfg: dict[str, Any], moment: dateti
             _notify(db, machine, rule, measure, "notify", "manual", detail, simulated)
     db.commit()
     outcome = {"action": RESTART_ACTION, "result": "ok", "verified": ok,
-               "detail": detail, "state": seen}
+               "detail": detail, "state": seen, "proof": why}
     if simulated:
         outcome["simulated"] = True
     return outcome
@@ -469,8 +528,6 @@ async def manual_restart(db: Any, machine: Any, *, confirm: str,
         raise RestartRefused(f"confirmation requise : saisir {CONFIRM_WORD}")
     if getattr(machine, "machine_kind", "") != "asic":
         raise RestartRefused("cette cible n'est pas un ASIC")
-    if machine.asic_driver != "axeos":
-        raise RestartRefused(UNSUPPORTED)
     moment = _now(now)
     full = wd.get_config(db)
     cfg = settings(wd.machine_config(full, machine))

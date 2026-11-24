@@ -65,6 +65,10 @@ class IceRiverLegacyFirmware(AsicError):
     """Le panneau ne sert pas ``/overview`` : firmware ICM168, repli ``post=4``."""
 
 
+class AsicUnsupported(AsicError):
+    """Action non prise en charge par le pilote : notification seule."""
+
+
 def clean_host(value: str) -> str:
     """Nettoie et valide une cible : IP (v4/v6) ou nom d'hôte, port optionnel.
 
@@ -752,6 +756,21 @@ async def restart_axeos(host: str, timeout: float = TIMEOUT_S) -> dict[str, Any]
         except Exception as exc:
             raise AsicError(f"{url} : {exc}") from exc
     return {"ok": True, "status": response.status_code, "path": "/api/system/restart"}
+
+
+async def restart_asic(driver: str, host: str, timeout: float = TIMEOUT_S) -> dict[str, Any]:
+    """Redémarre un ASIC par le pilote de la machine.
+
+    AxeOS : ``POST /api/system/restart`` (ESP-Miner v2.12.2).  IceRiver et
+    cgminer n'ont aucun endpoint documenté : :class:`AsicUnsupported`, que le
+    watchdog traduit en simple notification.
+    """
+    if (driver or "").strip().lower() != "axeos":
+        raise AsicUnsupported(
+            f"pilote {driver or 'inconnu'} : redémarrage non pris en charge, "
+            "aucun endpoint documenté"
+        )
+    return await restart_axeos(host, timeout=timeout)
 
 
 async def fetch_iceriver(

@@ -77,6 +77,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_per_day": 3,
         "min_delay_minutes": 15,
         "verify_seconds": 90,
+        #: Attente bornée de la coupure puis du retour après le POST de redémarrage.
+        "restart_wait_seconds": 180,
+        #: Un uptime sous ce seuil prouve que l'ASIC a bien redémarré.
+        "uptime_max_s": 300,
     },
     #: Surcharge par machine : {"<id>": {"rules": {...}, "actions": {...}, ...}}
     "machines": {},
@@ -145,6 +149,10 @@ def normalize(raw: Any) -> dict[str, Any]:
     asic["max_per_day"] = int(min(5.0, max(1.0, _number(asic.get("max_per_day"), 3, 1))))
     asic["min_delay_minutes"] = int(_number(asic.get("min_delay_minutes"), 15, 1))
     asic["verify_seconds"] = int(_number(asic.get("verify_seconds"), 90, 15))
+    asic["restart_wait_seconds"] = int(min(900.0, max(30.0, _number(
+        asic.get("restart_wait_seconds"), 180, 30))))
+    asic["uptime_max_s"] = int(min(3600.0, max(30.0, _number(
+        asic.get("uptime_max_s"), 300, 30))))
     machines = config.get("machines")
     if not isinstance(machines, dict):
         machines = {}

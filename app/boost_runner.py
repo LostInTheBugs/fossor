@@ -118,10 +118,15 @@ def _label(machine: Any, device: Any) -> str:
 def pool_payload(db: Any) -> dict[str, Any]:
     """Vue « Campagnes → Boost » : pool, machines, ce qui est exclu et pourquoi."""
     from app import hiveos as HV
+    from app import pilotage
 
     machines = _machine_rows(db)
     coins = default_coin_map(db)
-    devices = db.query(Device).order_by(Device.machine_id, Device.kind, Device.index).all()
+    devices = [
+        device
+        for device in db.query(Device).order_by(Device.machine_id, Device.kind, Device.index).all()
+        if not pilotage.is_asic(machines.get(device.machine_id))
+    ]
     rows = B.pool_rows(devices, coins)
     by_uuid = {device.uuid: device for device in devices}
     for row in rows:

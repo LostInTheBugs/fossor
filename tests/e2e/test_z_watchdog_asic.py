@@ -84,3 +84,42 @@ async def test_section_asic_watchdog_et_redemarrage_manuel(e2e_server):
             await browser.close()
     finally:
         _cleanup(machine_id)
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_interrupteur_de_pilotage_sur_une_carte_asic(e2e_server):
+    """L'ASIC reçoit le même interrupteur ; l'arme en réel, sans campagne."""
+    machine_id = _seed_asic()
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch()
+            context = await browser.new_context(viewport={"width": 1440, "height": 1000})
+            await _login(context)
+            page = await context.new_page()
+            await page.goto(f"{E2E_URL}/machines", wait_until="networkidle", timeout=15000)
+            row = page.locator("tr", has_text="bitaxe-e2e-68").first
+            await row.wait_for(timeout=10000)
+            assert "ASIC — suivi" not in await row.inner_text()
+            assert "Simulation" in await row.inner_text()
+
+            page.once("dialog", lambda dialog: dialog.accept("PILOTER"))
+            async with page.expect_response(
+                lambda r: f"/api/machines/{machine_id}/simulation" in r.url
+                and r.request.method == "PUT"
+            ) as info:
+                await row.get_by_role("button", name="⚡ Réel").click()
+            response = await info.value
+            assert response.ok, await response.text()
+            payload = await response.json()
+            assert payload["simulation_disabled"] is True
+            assert payload["pilotage"] == "Pilotage réel"
+
+            await page.reload(wait_until="networkidle")
+            row = page.locator("tr", has_text="bitaxe-e2e-68").first
+            await row.wait_for(timeout=10000)
+            text = await row.inner_text()
+            assert "Pilotage réel" in text and "redémarrage seul" in text
+            await browser.close()
+    finally:
+        _cleanup(machine_id)

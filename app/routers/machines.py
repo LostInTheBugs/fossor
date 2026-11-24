@@ -527,8 +527,8 @@ def set_machine_simulation(
     """Arme (« PILOTER ») ou désarme le pilotage réel d'une machine.
 
     Le global reste maître : même armée, une machine reste simulée tant que la
-    simulation globale est active.  Un ASIC est refusé ici, pas seulement dans
-    l'UI.
+    simulation globale est active.  Un ASIC s'arme ici comme une machine ; son
+    périmètre réel se limite au redémarrage du watchdog et au bouton manuel.
     """
     from app import pilotage
 
