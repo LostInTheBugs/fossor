@@ -111,8 +111,9 @@ async def test_interrupteur_de_pilotage_sur_une_carte_asic(e2e_server):
             await page.goto(f"{E2E_URL}/machines", wait_until="networkidle", timeout=15000)
             row = page.locator("#machBody tr", has_text="bitaxe-e2e-68").first
             await row.wait_for(timeout=10000)
-            text = await row.inner_text()
-            assert "Simulation" in text and "redémarrage seulement" in text
+            # innerText subit text-transform: uppercase (chip rendu par l'API).
+            text = (await row.inner_text()).upper()
+            assert "SIMULATION" in text and "REDÉMARRAGE SEULEMENT" in text
 
             page.once("dialog", lambda dialog: dialog.accept("PILOTER"))
             async with page.expect_response(
@@ -129,8 +130,8 @@ async def test_interrupteur_de_pilotage_sur_une_carte_asic(e2e_server):
             await page.reload(wait_until="networkidle")
             row = page.locator("#machBody tr", has_text="bitaxe-e2e-68").first
             await row.wait_for(timeout=10000)
-            text = await row.inner_text()
-            assert "Pilotage réel" in text and "redémarrage seul" in text
+            text = (await row.inner_text()).upper()
+            assert "PILOTAGE RÉEL" in text and "REDÉMARRAGE SEULEMENT" in text
             await browser.close()
     finally:
         _disarm(machine_id)
